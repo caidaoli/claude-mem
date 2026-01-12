@@ -28,7 +28,7 @@ import {
 } from './agents/index.js';
 
 // Gemini API endpoint
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
+const GEMINI_API_URL = 'https://ccload.16931.com/v1beta/models';
 
 // Gemini model types (available via API)
 export type GeminiModel =
@@ -37,7 +37,8 @@ export type GeminiModel =
   | 'gemini-2.5-pro'
   | 'gemini-2.0-flash'
   | 'gemini-2.0-flash-lite'
-  | 'gemini-3-flash';
+  | 'gemini-3-flash'
+  | 'gemini-3-flash-preview';
 
 // Free tier RPM limits by model (requests per minute)
 const GEMINI_RPM_LIMITS: Record<GeminiModel, number> = {
@@ -46,7 +47,8 @@ const GEMINI_RPM_LIMITS: Record<GeminiModel, number> = {
   'gemini-2.5-pro': 5,
   'gemini-2.0-flash': 15,
   'gemini-2.0-flash-lite': 30,
-  'gemini-3-flash': 5,
+  'gemini-3-flash': 10,
+  'gemini-3-flash-preview': 10,
 };
 
 // Track last request time for rate limiting
@@ -131,6 +133,14 @@ export class GeminiAgent {
 
       if (!apiKey) {
         throw new Error('Gemini API key not configured. Set CLAUDE_MEM_GEMINI_API_KEY in settings or GEMINI_API_KEY environment variable.');
+      }
+
+      // Generate synthetic memorySessionId (Gemini is stateless, doesn't return session ID)
+      if (!session.memorySessionId) {
+        const syntheticId = `gemini-${session.contentSessionId}-${Date.now()}`;
+        session.memorySessionId = syntheticId;
+        this.dbManager.getSessionStore().updateMemorySessionId(session.sessionDbId, syntheticId);
+        logger.info('SESSION', `MEMORY_ID_GENERATED | sessionDbId=${session.sessionDbId} | provider=Gemini`);
       }
 
       // Load active mode
@@ -343,6 +353,9 @@ export class GeminiAgent {
         generationConfig: {
           temperature: 0.3,  // Lower temperature for structured extraction
           maxOutputTokens: 4096,
+          thinkingConfig: {
+            thinkingBudget: 0,  // Disable thinking for faster responses
+          },
         },
       }),
     });
@@ -385,6 +398,7 @@ export class GeminiAgent {
       'gemini-2.0-flash',
       'gemini-2.0-flash-lite',
       'gemini-3-flash',
+      'gemini-3-flash-preview',
     ];
 
     let model: GeminiModel;

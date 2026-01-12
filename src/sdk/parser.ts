@@ -162,14 +162,55 @@ export function parseSummary(text: string, sessionId?: number): ParsedSummary | 
 /**
  * Extract a simple field value from XML content
  * Returns null for missing or empty/whitespace-only fields
+ *
+ * BUGFIX: Use [\s\S]*? instead of [^<]* to support content containing < symbols
+ * (e.g., code comparisons like "a < b", HTML references, math expressions)
+ *
+ * BUGFIX: Strip any simple XML wrapper tags that models (e.g., Gemini) may use.
+ * Uses a generic approach to handle <item>, <fact>, <point>, <bullet>, <entry>, etc.
+ *
+ * BUGFIX: Handle nested same-name tags from Gemini (e.g., <investigated><investigated>...</investigated></investigated>)
+ * The non-greedy regex matches to the first closing tag, leaving an orphan opening tag.
  */
 function extractField(content: string, fieldName: string): string | null {
-  const regex = new RegExp(`<${fieldName}>([^<]*)</${fieldName}>`);
+  const regex = new RegExp(`<${fieldName}>([\\s\\S]*?)</${fieldName}>`);
   const match = regex.exec(content);
   if (!match) return null;
 
-  const trimmed = match[1].trim();
-  return trimmed === '' ? null : trimmed;
+  let rawContent = match[1].trim();
+  if (rawContent === '') return null;
+
+  // Strip orphan same-name opening tags left by non-greedy matching
+  // Handles: <investigated><investigated>content</investigated></investigated>
+  // After first match: rawContent = "<investigated>content"
+  const sameNameOpenTagRegex = new RegExp(`^<${fieldName}>\\s*`, 'i');
+  rawContent = rawContent.replace(sameNameOpenTagRegex, '').trim();
+
+  // Also strip any trailing orphan closing tags of the same name
+  const sameNameCloseTagRegex = new RegExp(`\\s*</${fieldName}>$`, 'i');
+  rawContent = rawContent.replace(sameNameCloseTagRegex, '').trim();
+
+  if (rawContent === '') return null;
+
+  // Generic XML wrapper tag stripper
+  // Matches any <tagname>content</tagname> pattern where tagname is a simple identifier
+  // Examples: <item>, <fact>, <point>, <bullet>, <entry>, <step>, etc.
+  const wrapperRegex = /<([a-z_][a-z0-9_]*)>([^<]*)<\/\1>/gi;
+  const items: string[] = [];
+  let itemMatch;
+  while ((itemMatch = wrapperRegex.exec(rawContent)) !== null) {
+    const itemContent = itemMatch[2].trim();
+    if (itemContent) {
+      items.push(itemContent);
+    }
+  }
+
+  // If wrapper tags were found, join them; otherwise return raw content
+  if (items.length > 0) {
+    return items.join('\n');
+  }
+
+  return rawContent;
 }
 
 /**
