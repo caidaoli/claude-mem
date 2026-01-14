@@ -2,21 +2,28 @@ import { join, dirname, basename, sep } from 'path';
 import { homedir } from 'os';
 import { existsSync, mkdirSync } from 'fs';
 import { execSync } from 'child_process';
-import { fileURLToPath } from 'url';
 import { SettingsDefaultsManager } from './SettingsDefaultsManager.js';
 import { logger } from '../utils/logger.js';
 
-// Get __dirname that works in both ESM (hooks) and CJS (worker) contexts
-function getDirname(): string {
-  // CJS context - __dirname exists
-  if (typeof __dirname !== 'undefined') {
-    return __dirname;
+/**
+ * Get the runtime script directory.
+ *
+ * When bundled by esbuild, `__dirname` gets inlined to the *source* path at build time,
+ * not the runtime path. This breaks path resolution since we need paths relative to
+ * where the script actually runs (e.g., ~/.claude/plugins/.../plugin/scripts/).
+ *
+ * Solution: Use process.argv[1] which always points to the actual running script.
+ */
+function getRuntimeScriptDir(): string {
+  // process.argv[1] is the path to the script being executed
+  // This works correctly even after bundling
+  const scriptPath = process.argv[1];
+  if (scriptPath) {
+    return dirname(scriptPath);
   }
-  // ESM context - use import.meta.url
-  return dirname(fileURLToPath(import.meta.url));
+  // Fallback for edge cases (e.g., REPL)
+  return process.cwd();
 }
-
-const _dirname = getDirname();
 
 /**
  * Simple path configuration for claude-mem
@@ -118,7 +125,7 @@ export function getCurrentProjectName(): string {
  * so package root is always one level up (the plugin directory)
  */
 export function getPackageRoot(): string {
-  return join(_dirname, '..');
+  return join(getRuntimeScriptDir(), '..');
 }
 
 /**

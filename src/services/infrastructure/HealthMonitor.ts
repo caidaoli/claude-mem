@@ -11,15 +11,27 @@
 
 import path from 'path';
 import { readFileSync, existsSync } from 'fs';
-import { fileURLToPath } from 'url';
 import { logger } from '../../utils/logger.js';
 
-// ESM __dirname equivalent
-// In bundled CJS (esbuild), import.meta.url is undefined but CJS globals exist
-const __filename = (typeof globalThis.__filename !== 'undefined')
-  ? globalThis.__filename
-  : (typeof import.meta?.url !== 'undefined' ? fileURLToPath(import.meta.url) : process.argv[1]);
-const __dirname = path.dirname(__filename);
+/**
+ * Get the runtime script directory.
+ *
+ * When bundled by esbuild, `__dirname` gets inlined to the *source* path at build time,
+ * not the runtime path. This breaks version detection since we need to find package.json
+ * relative to where the script actually runs (e.g., ~/.claude/plugins/.../plugin/scripts/).
+ *
+ * Solution: Use process.argv[1] which always points to the actual running script.
+ */
+function getRuntimeScriptDir(): string {
+  // process.argv[1] is the path to the script being executed
+  // This works correctly even after bundling
+  const scriptPath = process.argv[1];
+  if (scriptPath) {
+    return path.dirname(scriptPath);
+  }
+  // Fallback for edge cases (e.g., REPL)
+  return process.cwd();
+}
 
 /**
  * Check if a port is in use by querying the health endpoint
@@ -102,15 +114,15 @@ export async function httpShutdown(port: number): Promise<boolean> {
  * Get the plugin version from the installed marketplace package.json
  * This is the "expected" version that should be running
  *
- * Uses __dirname to resolve path relative to the running code, supporting:
+ * Uses getRuntimeScriptDir() to resolve path relative to the running code, supporting:
  * - Custom CLAUDE_CONFIG_DIR environments
  * - Organization-specific directories (~/.claude-orgname/)
  * - Standard installations (~/.claude/)
  */
 export function getInstalledPluginVersion(): string {
-  // Walk up from current file to find package.json
+  // Walk up from current script location to find package.json
   // This works regardless of where the plugin is installed
-  let dir = __dirname;
+  let dir = getRuntimeScriptDir();
   while (dir !== path.dirname(dir)) {
     const pkgPath = path.join(dir, 'package.json');
     if (existsSync(pkgPath)) {
