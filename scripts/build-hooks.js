@@ -53,7 +53,7 @@ async function buildHooks() {
     // Note: bun:sqlite is a Bun built-in, no external dependencies needed for SQLite
     console.log('\n📦 Generating plugin package.json...');
     const pluginPackageJson = {
-      name: 'claude-mem-plugin',
+      name: 'claude-mem',
       version: version,
       private: true,
       description: 'Runtime dependencies for claude-mem bundled hooks',
