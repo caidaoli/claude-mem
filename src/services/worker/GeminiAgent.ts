@@ -343,6 +343,21 @@ export class GeminiAgent {
     // Enforce RPM rate limit for free tier (skipped if rate limiting disabled)
     await enforceRateLimitForModel(model, rateLimitingEnabled);
 
+    // Build generation config
+    const generationConfig: Record<string, unknown> = {
+      temperature: 0.3,  // Lower temperature for structured extraction
+      maxOutputTokens: 4096,
+    };
+
+    // Add thinking config for Gemini 3 models
+    // Gemini 3 Flash supports: minimal, low, medium, high
+    // Gemini 3 Pro supports: low, high
+    if (model.startsWith('gemini-3')) {
+      generationConfig.thinkingConfig = {
+        thinkingLevel: 'minimal',
+      };
+    }
+
     const response = await fetch(url, {
       method: 'POST',
       headers: {
@@ -350,10 +365,7 @@ export class GeminiAgent {
       },
       body: JSON.stringify({
         contents,
-        generationConfig: {
-          temperature: 0.3,  // Lower temperature for structured extraction
-          maxOutputTokens: 4096,
-        },
+        generationConfig,
       }),
     });
 
