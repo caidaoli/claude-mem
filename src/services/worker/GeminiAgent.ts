@@ -353,9 +353,6 @@ export class GeminiAgent {
         generationConfig: {
           temperature: 0.3,  // Lower temperature for structured extraction
           maxOutputTokens: 4096,
-          thinkingConfig: {
-            thinkingBudget: 0,  // Disable thinking for faster responses
-          },
         },
       }),
     });
