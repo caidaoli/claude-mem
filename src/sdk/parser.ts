@@ -1,6 +1,7 @@
 /**
  * XML Parser Module
  * Parses observation and summary XML blocks from SDK responses
+ * Also supports JSON parsing for Gemini responses
  */
 
 import { logger } from '../utils/logger.js';
@@ -115,16 +116,24 @@ export function parseSummary(text: string, sessionId?: number): ParsedSummary | 
     return null;
   }
 
+  // Strip Markdown code block wrapper if present (e.g., ```xml ... ```)
+  let cleanedText = text;
+  const markdownBlockRegex = /^```(?:xml|XML)?\s*\n?([\s\S]*?)\n?```$/;
+  const markdownMatch = markdownBlockRegex.exec(text.trim());
+  if (markdownMatch) {
+    cleanedText = markdownMatch[1];
+  }
+
   // Match <summary>...</summary> block (non-greedy)
   const summaryRegex = /<summary>([\s\S]*?)<\/summary>/;
-  const summaryMatch = summaryRegex.exec(text);
+  const summaryMatch = summaryRegex.exec(cleanedText);
 
   if (!summaryMatch) {
     // Log for debugging: no <summary> tag found in response
     logger.warn('PARSER', 'No <summary> tag found in response', {
       sessionId,
       responseLength: text.length,
-      responsePreview: text.substring(0, 500)
+      responsePreview: text.substring(0, 200)
     });
     return null;
   }
@@ -239,4 +248,228 @@ function extractArrayElements(content: string, arrayName: string, elementName: s
   }
 
   return elements;
+}
+
+/**
+ * Extract a balanced JSON object from text by tracking brace depth
+ * Handles cases where JSON is embedded in other text or truncated
+ */
+function extractBalancedJson(text: string): string | null {
+  const startIdx = text.indexOf('{');
+  if (startIdx === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = startIdx; i < text.length; i++) {
+    const char = text[i];
+
+    if (escape) {
+      escape = false;
+      continue;
+    }
+
+    if (char === '\\' && inString) {
+      escape = true;
+      continue;
+    }
+
+    if (char === '"' && !escape) {
+      inString = !inString;
+      continue;
+    }
+
+    if (!inString) {
+      if (char === '{') {
+        depth++;
+      } else if (char === '}') {
+        depth--;
+        if (depth === 0) {
+          return text.substring(startIdx, i + 1);
+        }
+      }
+    }
+  }
+
+  // If we couldn't find balanced braces, return null
+  return null;
+}
+
+/**
+ * Common preprocessing for JSON responses
+ * Strips Markdown code blocks and extracts balanced JSON
+ * @param text Raw response text
+ * @param allowArray If true, also accepts JSON arrays (starting with '[')
+ * @returns Cleaned JSON text ready for parsing
+ */
+function preprocessJsonResponse(text: string, allowArray: boolean = false): string {
+  let jsonText = text.trim();
+
+  // Strip Markdown code block if present (```json ... ``` or ``` ... ```)
+  const codeBlockRegex = /```(?:json)?\s*\n?([\s\S]*?)\n?```/;
+  const codeBlockMatch = codeBlockRegex.exec(jsonText);
+  if (codeBlockMatch) {
+    jsonText = codeBlockMatch[1].trim();
+  }
+
+  // Check if already valid JSON
+  const startsWithJson = jsonText.startsWith('{') || (allowArray && jsonText.startsWith('['));
+  if (startsWithJson) {
+    return jsonText;
+  }
+
+  // Try to extract balanced JSON object from text
+  const extracted = extractBalancedJson(jsonText);
+  return extracted || jsonText;
+}
+
+/**
+ * Parse summary from JSON response (used by Gemini with responseMimeType)
+ * More reliable than XML parsing as Gemini API guarantees valid JSON output
+ *
+ * Note: Some Gemini proxies may not support responseMimeType, so we also
+ * handle Markdown-wrapped JSON and try to extract JSON from text responses.
+ */
+export function parseSummaryJson(text: string, sessionId?: number): ParsedSummary | null {
+  const jsonText = preprocessJsonResponse(text);
+
+  try {
+    const data = JSON.parse(jsonText);
+
+    // Validate and extract fields
+    const summary: ParsedSummary = {
+      request: typeof data.request === 'string' ? data.request : null,
+      investigated: typeof data.investigated === 'string' ? data.investigated : null,
+      learned: typeof data.learned === 'string' ? data.learned : null,
+      completed: typeof data.completed === 'string' ? data.completed : null,
+      next_steps: typeof data.next_steps === 'string' ? data.next_steps : null,
+      notes: typeof data.notes === 'string' ? data.notes : null,
+    };
+
+    // Log warning if all required fields are empty
+    if (!summary.request && !summary.investigated && !summary.learned && !summary.completed && !summary.next_steps) {
+      logger.warn('PARSER', 'JSON summary parsed but all fields are empty', {
+        sessionId,
+        keys: Object.keys(data)
+      });
+    }
+
+    return summary;
+  } catch (error) {
+    logger.error('PARSER', 'Failed to parse JSON summary', {
+      sessionId,
+      textLength: text.length,
+      textPreview: text.substring(0, 200)
+    }, error as Error);
+    return null;
+  }
+}
+
+/**
+ * Parse observations from JSON response (used by CustomAgent with responseMimeType)
+ * More reliable than XML parsing as API guarantees valid JSON output
+ *
+ * Expected JSON format:
+ * {
+ *   "observations": [
+ *     {
+ *       "type": "discovery",
+ *       "title": "...",
+ *       "narrative": "...",
+ *       "files_read": ["..."],
+ *       "files_modified": ["..."],
+ *       "concepts": ["..."]
+ *     }
+ *   ]
+ * }
+ *
+ * Or single observation (wrapped automatically):
+ * {
+ *   "type": "discovery",
+ *   "title": "...",
+ *   ...
+ * }
+ */
+export function parseObservationsJson(text: string, correlationId?: string): ParsedObservation[] {
+  const jsonText = preprocessJsonResponse(text, true);
+
+  try {
+    const data = JSON.parse(jsonText);
+
+    // Handle array of observations or single observation
+    let rawObservations: unknown[];
+    if (Array.isArray(data)) {
+      rawObservations = data;
+    } else if (data.observations && Array.isArray(data.observations)) {
+      rawObservations = data.observations;
+    } else if (data.type) {
+      // Single observation object
+      rawObservations = [data];
+    } else {
+      logger.warn('PARSER', 'JSON response has no observations', {
+        correlationId,
+        keys: Object.keys(data)
+      });
+      return [];
+    }
+
+    const mode = ModeManager.getInstance().getActiveMode();
+    const validTypes = mode.observation_types.map(t => t.id);
+    const fallbackType = validTypes[0];
+
+    const observations: ParsedObservation[] = [];
+
+    for (const raw of rawObservations) {
+      if (typeof raw !== 'object' || raw === null) continue;
+
+      const obs = raw as Record<string, unknown>;
+
+      // Determine type with validation
+      let finalType = fallbackType;
+      if (typeof obs.type === 'string') {
+        if (validTypes.includes(obs.type.trim())) {
+          finalType = obs.type.trim();
+        } else {
+          logger.error('PARSER', `Invalid observation type: ${obs.type}, using "${fallbackType}"`, { correlationId });
+        }
+      }
+
+      // Extract arrays with type checking
+      const files_read = Array.isArray(obs.files_read)
+        ? obs.files_read.filter((f): f is string => typeof f === 'string')
+        : [];
+      const files_modified = Array.isArray(obs.files_modified)
+        ? obs.files_modified.filter((f): f is string => typeof f === 'string')
+        : [];
+      const concepts = Array.isArray(obs.concepts)
+        ? obs.concepts.filter((c): c is string => typeof c === 'string')
+        : [];
+
+      // Filter out type from concepts
+      const cleanedConcepts = concepts.filter(c => c !== finalType);
+
+      observations.push({
+        type: finalType,
+        title: typeof obs.title === 'string' ? obs.title : null,
+        subtitle: typeof obs.subtitle === 'string' ? obs.subtitle : null,
+        facts: Array.isArray(obs.facts)
+          ? obs.facts.filter((f): f is string => typeof f === 'string')
+          : [],
+        narrative: typeof obs.narrative === 'string' ? obs.narrative : null,
+        concepts: cleanedConcepts,
+        files_read,
+        files_modified
+      });
+    }
+
+    return observations;
+  } catch (error) {
+    logger.error('PARSER', 'Failed to parse JSON observations', {
+      correlationId,
+      textLength: text.length,
+      textPreview: text.substring(0, 200)
+    }, error as Error);
+    return [];
+  }
 }

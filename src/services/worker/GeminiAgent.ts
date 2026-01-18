@@ -28,7 +28,7 @@ import {
 } from './agents/index.js';
 
 // Gemini API endpoint
-const GEMINI_API_URL = 'https://ccload.16931.com/v1beta/models';
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 // Gemini model types (available via API)
 export type GeminiModel =
@@ -37,8 +37,7 @@ export type GeminiModel =
   | 'gemini-2.5-pro'
   | 'gemini-2.0-flash'
   | 'gemini-2.0-flash-lite'
-  | 'gemini-3-flash'
-  | 'gemini-3-flash-preview';
+  | 'gemini-3-flash';
 
 // Free tier RPM limits by model (requests per minute)
 const GEMINI_RPM_LIMITS: Record<GeminiModel, number> = {
@@ -47,8 +46,7 @@ const GEMINI_RPM_LIMITS: Record<GeminiModel, number> = {
   'gemini-2.5-pro': 5,
   'gemini-2.0-flash': 15,
   'gemini-2.0-flash-lite': 30,
-  'gemini-3-flash': 10,
-  'gemini-3-flash-preview': 10,
+  'gemini-3-flash': 5,
 };
 
 // Track last request time for rate limiting
@@ -133,14 +131,6 @@ export class GeminiAgent {
 
       if (!apiKey) {
         throw new Error('Gemini API key not configured. Set CLAUDE_MEM_GEMINI_API_KEY in settings or GEMINI_API_KEY environment variable.');
-      }
-
-      // Generate synthetic memorySessionId (Gemini is stateless, doesn't return session ID)
-      if (!session.memorySessionId) {
-        const syntheticId = `gemini-${session.contentSessionId}-${Date.now()}`;
-        session.memorySessionId = syntheticId;
-        this.dbManager.getSessionStore().updateMemorySessionId(session.sessionDbId, syntheticId);
-        logger.info('SESSION', `MEMORY_ID_GENERATED | sessionDbId=${session.sessionDbId} | provider=Gemini`);
       }
 
       // Load active mode
@@ -240,7 +230,7 @@ export class GeminiAgent {
 
         } else if (message.type === 'summarize') {
           // Build summary prompt
-          const baseSummaryPrompt = buildSummaryPrompt({
+          const summaryPrompt = buildSummaryPrompt({
             id: session.sessionDbId,
             memory_session_id: session.memorySessionId,
             project: session.project,
@@ -248,45 +238,9 @@ export class GeminiAgent {
             last_assistant_message: message.last_assistant_message || ''
           }, mode);
 
-          // Add XML format enforcement for Gemini (it tends to output Markdown instead)
-          const summaryPrompt = baseSummaryPrompt + `
-
-CRITICAL: You MUST respond with ONLY the XML structure shown above. Do NOT use Markdown formatting. Do NOT add any text outside the <summary> tags. Your entire response must start with <summary> and end with </summary>.`;
-
           // Add to conversation history and query Gemini with full context
           session.conversationHistory.push({ role: 'user', content: summaryPrompt });
-          let summaryResponse = await this.queryGeminiMultiTurn(session.conversationHistory, apiKey, model, rateLimitingEnabled);
-
-          // Retry logic: if Gemini returns Markdown instead of XML, ask it to fix
-          const maxRetries = 2;
-          let retryCount = 0;
-          while (summaryResponse.content && !summaryResponse.content.includes('<summary>') && retryCount < maxRetries) {
-            retryCount++;
-            logger.warn('SDK', `Gemini returned non-XML response, retrying (${retryCount}/${maxRetries})`, {
-              sessionId: session.sessionDbId,
-              responsePreview: summaryResponse.content.substring(0, 200)
-            });
-
-            // Add the incorrect response to history
-            session.conversationHistory.push({ role: 'assistant', content: summaryResponse.content });
-
-            // Send a correction prompt
-            const correctionPrompt = `Your response was NOT in the required XML format. You MUST output ONLY XML, starting with <summary> and ending with </summary>. No Markdown, no explanations. Just the XML structure:
-
-<summary>
-  <request>[fill in your actual summary of the request]</request>
-  <investigated>[fill in what was investigated]</investigated>
-  <learned>[fill in what was learned]</learned>
-  <completed>[fill in what was completed]</completed>
-  <next_steps>[fill in next steps]</next_steps>
-  <notes>[fill in any notes]</notes>
-</summary>
-
-Output ONLY this XML structure now, with your actual content filled in. Replace the bracketed placeholders with real content.`;
-
-            session.conversationHistory.push({ role: 'user', content: correctionPrompt });
-            summaryResponse = await this.queryGeminiMultiTurn(session.conversationHistory, apiKey, model, rateLimitingEnabled);
-          }
+          const summaryResponse = await this.queryGeminiMultiTurn(session.conversationHistory, apiKey, model, rateLimitingEnabled);
 
           let tokensUsed = 0;
           if (summaryResponse.content) {
@@ -296,18 +250,6 @@ Output ONLY this XML structure now, with your actual content filled in. Replace 
             tokensUsed = summaryResponse.tokensUsed || 0;
             session.cumulativeInputTokens += Math.floor(tokensUsed * 0.7);
             session.cumulativeOutputTokens += Math.floor(tokensUsed * 0.3);
-
-            // Log summary response for debugging
-            logger.debug('SDK', 'Gemini summary response received', {
-              sessionId: session.sessionDbId,
-              responseLength: summaryResponse.content.length,
-              hasSummaryTag: summaryResponse.content.includes('<summary>'),
-              responsePreview: summaryResponse.content.substring(0, 300)
-            });
-          } else {
-            logger.warn('SDK', 'Gemini returned empty summary response', {
-              sessionId: session.sessionDbId
-            });
           }
 
           // Process response using shared ResponseProcessor
@@ -391,21 +333,6 @@ Output ONLY this XML structure now, with your actual content filled in. Replace 
     // Enforce RPM rate limit for free tier (skipped if rate limiting disabled)
     await enforceRateLimitForModel(model, rateLimitingEnabled);
 
-    // Build generation config
-    const generationConfig: Record<string, unknown> = {
-      temperature: 0.3,  // Lower temperature for structured extraction
-      maxOutputTokens: 4096,
-    };
-
-    // Add thinking config for Gemini 3 models
-    // Gemini 3 Flash supports: minimal, low, medium, high
-    // Gemini 3 Pro supports: low, high
-    if (model.startsWith('gemini-3')) {
-      generationConfig.thinkingConfig = {
-        thinkingLevel: 'minimal',
-      };
-    }
-
     const response = await fetch(url, {
       method: 'POST',
       headers: {
@@ -413,7 +340,10 @@ Output ONLY this XML structure now, with your actual content filled in. Replace 
       },
       body: JSON.stringify({
         contents,
-        generationConfig,
+        generationConfig: {
+          temperature: 0.3,  // Lower temperature for structured extraction
+          maxOutputTokens: 4096,
+        },
       }),
     });
 
@@ -455,7 +385,6 @@ Output ONLY this XML structure now, with your actual content filled in. Replace 
       'gemini-2.0-flash',
       'gemini-2.0-flash-lite',
       'gemini-3-flash',
-      'gemini-3-flash-preview',
     ];
 
     let model: GeminiModel;

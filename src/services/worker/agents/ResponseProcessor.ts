@@ -12,7 +12,7 @@
  */
 
 import { logger } from '../../../utils/logger.js';
-import { parseObservations, parseSummary, type ParsedObservation, type ParsedSummary } from '../../../sdk/parser.js';
+import { parseObservations, parseObservationsJson, parseSummary, parseSummaryJson, type ParsedObservation, type ParsedSummary } from '../../../sdk/parser.js';
 import { updateCursorContextForProject } from '../../integrations/CursorHooksInstaller.js';
 import { updateFolderClaudeMdFiles } from '../../../utils/claude-md-utils.js';
 import { getWorkerPort } from '../../../shared/worker-utils.js';
@@ -24,6 +24,20 @@ import type { SessionManager } from '../SessionManager.js';
 import type { WorkerRef, StorageResult } from './types.js';
 import { broadcastObservation, broadcastSummary } from './ObservationBroadcaster.js';
 import { cleanupProcessedMessages } from './SessionCleanupHelper.js';
+
+/**
+ * Options for processAgentResponse
+ */
+export interface ProcessAgentResponseOptions {
+  /** If true, parse summary as JSON instead of XML (for Gemini with responseMimeType) */
+  parseJsonSummary?: boolean;
+  /** Separate summary text to parse (when using JSON format, summary comes from different API call) */
+  summaryText?: string;
+  /** If true, parse observations as JSON instead of XML (for CustomAgent with responseMimeType) */
+  parseJsonObservation?: boolean;
+  /** Separate observation text to parse (when using JSON format) */
+  observationText?: string;
+}
 
 /**
  * Process agent response text (parse XML, save to database, sync to Chroma, broadcast SSE)
@@ -44,6 +58,8 @@ import { cleanupProcessedMessages } from './SessionCleanupHelper.js';
  * @param discoveryTokens - Token cost delta for this response
  * @param originalTimestamp - Original epoch when message was queued (for accurate timestamps)
  * @param agentName - Name of the agent for logging (e.g., 'SDK', 'Gemini', 'OpenRouter')
+ * @param projectRoot - Project root path for folder CLAUDE.md updates
+ * @param options - Additional options for parsing behavior
  */
 export async function processAgentResponse(
   text: string,
@@ -54,16 +70,33 @@ export async function processAgentResponse(
   discoveryTokens: number,
   originalTimestamp: number | null,
   agentName: string,
-  projectRoot?: string
+  projectRoot?: string,
+  options?: ProcessAgentResponseOptions
 ): Promise<void> {
   // Add assistant response to shared conversation history for provider interop
   if (text) {
     session.conversationHistory.push({ role: 'assistant', content: text });
   }
 
-  // Parse observations and summary
-  const observations = parseObservations(text, session.contentSessionId);
-  const summary = parseSummary(text, session.sessionDbId);
+  // Parse observations - JSON or XML based on options
+  let observations: ParsedObservation[];
+  if (options?.parseJsonObservation && options?.observationText) {
+    // JSON observations: explicitly provided (CustomAgent)
+    observations = parseObservationsJson(options.observationText, session.contentSessionId);
+  } else {
+    // XML observations: parse from main response text
+    observations = parseObservations(text, session.contentSessionId);
+  }
+
+  // Parse summary - only if explicitly requested or text contains summary markers
+  let summary: ParsedSummary | null = null;
+  if (options?.parseJsonSummary && options?.summaryText) {
+    // JSON summary: explicitly provided
+    summary = parseSummaryJson(options.summaryText, session.sessionDbId);
+  } else if (text.includes('<summary>') || text.includes('<skip_summary')) {
+    // XML summary: only parse if markers present to avoid spurious warnings
+    summary = parseSummary(text, session.sessionDbId);
+  }
 
   // Convert nullable fields to empty strings for storeSummary (if summary exists)
   const summaryForStore = normalizeSummaryForStorage(summary);
