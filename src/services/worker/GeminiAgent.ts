@@ -240,7 +240,7 @@ export class GeminiAgent {
 
         } else if (message.type === 'summarize') {
           // Build summary prompt
-          const summaryPrompt = buildSummaryPrompt({
+          const baseSummaryPrompt = buildSummaryPrompt({
             id: session.sessionDbId,
             memory_session_id: session.memorySessionId,
             project: session.project,
@@ -248,9 +248,45 @@ export class GeminiAgent {
             last_assistant_message: message.last_assistant_message || ''
           }, mode);
 
+          // Add XML format enforcement for Gemini (it tends to output Markdown instead)
+          const summaryPrompt = baseSummaryPrompt + `
+
+CRITICAL: You MUST respond with ONLY the XML structure shown above. Do NOT use Markdown formatting. Do NOT add any text outside the <summary> tags. Your entire response must start with <summary> and end with </summary>.`;
+
           // Add to conversation history and query Gemini with full context
           session.conversationHistory.push({ role: 'user', content: summaryPrompt });
-          const summaryResponse = await this.queryGeminiMultiTurn(session.conversationHistory, apiKey, model, rateLimitingEnabled);
+          let summaryResponse = await this.queryGeminiMultiTurn(session.conversationHistory, apiKey, model, rateLimitingEnabled);
+
+          // Retry logic: if Gemini returns Markdown instead of XML, ask it to fix
+          const maxRetries = 2;
+          let retryCount = 0;
+          while (summaryResponse.content && !summaryResponse.content.includes('<summary>') && retryCount < maxRetries) {
+            retryCount++;
+            logger.warn('SDK', `Gemini returned non-XML response, retrying (${retryCount}/${maxRetries})`, {
+              sessionId: session.sessionDbId,
+              responsePreview: summaryResponse.content.substring(0, 200)
+            });
+
+            // Add the incorrect response to history
+            session.conversationHistory.push({ role: 'assistant', content: summaryResponse.content });
+
+            // Send a correction prompt
+            const correctionPrompt = `Your response was NOT in the required XML format. You MUST output ONLY XML, starting with <summary> and ending with </summary>. No Markdown, no explanations. Just the XML structure:
+
+<summary>
+  <request>[fill in your actual summary of the request]</request>
+  <investigated>[fill in what was investigated]</investigated>
+  <learned>[fill in what was learned]</learned>
+  <completed>[fill in what was completed]</completed>
+  <next_steps>[fill in next steps]</next_steps>
+  <notes>[fill in any notes]</notes>
+</summary>
+
+Output ONLY this XML structure now, with your actual content filled in. Replace the bracketed placeholders with real content.`;
+
+            session.conversationHistory.push({ role: 'user', content: correctionPrompt });
+            summaryResponse = await this.queryGeminiMultiTurn(session.conversationHistory, apiKey, model, rateLimitingEnabled);
+          }
 
           let tokensUsed = 0;
           if (summaryResponse.content) {
@@ -260,6 +296,18 @@ export class GeminiAgent {
             tokensUsed = summaryResponse.tokensUsed || 0;
             session.cumulativeInputTokens += Math.floor(tokensUsed * 0.7);
             session.cumulativeOutputTokens += Math.floor(tokensUsed * 0.3);
+
+            // Log summary response for debugging
+            logger.debug('SDK', 'Gemini summary response received', {
+              sessionId: session.sessionDbId,
+              responseLength: summaryResponse.content.length,
+              hasSummaryTag: summaryResponse.content.includes('<summary>'),
+              responsePreview: summaryResponse.content.substring(0, 300)
+            });
+          } else {
+            logger.warn('SDK', 'Gemini returned empty summary response', {
+              sessionId: session.sessionDbId
+            });
           }
 
           // Process response using shared ResponseProcessor

@@ -120,6 +120,12 @@ export function parseSummary(text: string, sessionId?: number): ParsedSummary | 
   const summaryMatch = summaryRegex.exec(text);
 
   if (!summaryMatch) {
+    // Log for debugging: no <summary> tag found in response
+    logger.warn('PARSER', 'No <summary> tag found in response', {
+      sessionId,
+      responseLength: text.length,
+      responsePreview: text.substring(0, 500)
+    });
     return null;
   }
 
@@ -133,21 +139,17 @@ export function parseSummary(text: string, sessionId?: number): ParsedSummary | 
   const next_steps = extractField(summaryContent, 'next_steps');
   const notes = extractField(summaryContent, 'notes'); // Optional
 
-  // NOTE FROM THEDOTMACK: 100% of the time we must SAVE the summary, even if fields are missing. 10/24/2025 
+  // NOTE FROM THEDOTMACK: 100% of the time we must SAVE the summary, even if fields are missing. 10/24/2025
   // NEVER DO THIS NONSENSE AGAIN.
 
-  // Validate required fields are present (notes is optional)
-  // if (!request || !investigated || !learned || !completed || !next_steps) {
-  //   logger.warn('PARSER', 'Summary missing required fields', {
-  //     sessionId,
-  //     hasRequest: !!request,
-  //     hasInvestigated: !!investigated,
-  //     hasLearned: !!learned,
-  //     hasCompleted: !!completed,
-  //     hasNextSteps: !!next_steps
-  //   });
-  //   return null;
-  // }
+  // Log warning if all required fields are empty (diagnostic for Gemini issue)
+  if (!request && !investigated && !learned && !completed && !next_steps) {
+    logger.warn('PARSER', 'Summary tag found but all fields are empty', {
+      sessionId,
+      summaryContentLength: summaryContent.length,
+      summaryContentPreview: summaryContent.substring(0, 200)
+    });
+  }
 
   return {
     request,
