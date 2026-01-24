@@ -47,6 +47,8 @@ export interface CustomAgentConfig {
   streaming: boolean;
   maxContextMessages: number;  // 0 = disabled
   maxTokens: number;  // 0 = disabled
+  firstTokenTimeoutSeconds: number;  // 0 = disabled
+  totalTimeoutSeconds: number;  // 0 = disabled
 }
 
 /**
@@ -207,6 +209,118 @@ function parseOpenAISseStream(responseText: string): { content: string; tokensUs
   }
 
   return { content, tokensUsed };
+}
+
+/**
+ * Custom timeout error for request timeouts
+ */
+class TimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TimeoutError';
+  }
+}
+
+/**
+ * Fetch with timeout control
+ * - firstTokenTimeoutMs: Timeout for receiving the first byte of response (0 = disabled)
+ * - totalTimeoutMs: Total request timeout (0 = disabled)
+ * Returns the response if successful, throws TimeoutError on timeout
+ */
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit,
+  firstTokenTimeoutMs: number,
+  totalTimeoutMs: number
+): Promise<Response> {
+  const controller = new AbortController();
+  const { signal } = controller;
+
+  // Merge abort signal with existing options
+  const fetchOptions: RequestInit = {
+    ...options,
+    signal,
+  };
+
+  let totalTimer: ReturnType<typeof setTimeout> | undefined;
+  let firstTokenTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const cleanup = () => {
+    if (totalTimer) clearTimeout(totalTimer);
+    if (firstTokenTimer) clearTimeout(firstTokenTimer);
+  };
+
+  try {
+    // Set total timeout if enabled
+    if (totalTimeoutMs > 0) {
+      totalTimer = setTimeout(() => {
+        controller.abort();
+      }, totalTimeoutMs);
+    }
+
+    // Set first token timeout if enabled
+    if (firstTokenTimeoutMs > 0) {
+      firstTokenTimer = setTimeout(() => {
+        controller.abort();
+      }, firstTokenTimeoutMs);
+    }
+
+    const response = await fetch(url, fetchOptions);
+
+    // First byte received, clear first token timeout
+    if (firstTokenTimer) {
+      clearTimeout(firstTokenTimer);
+      firstTokenTimer = undefined;
+    }
+
+    return response;
+  } catch (error) {
+    cleanup();
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new TimeoutError('Request timeout');
+    }
+    throw error;
+  }
+}
+
+/**
+ * Fetch with timeout and automatic retry on timeout
+ * Retries up to maxRetries times on timeout
+ */
+async function fetchWithTimeoutAndRetry(
+  url: string,
+  options: RequestInit,
+  config: CustomAgentConfig,
+  maxRetries: number = 3
+): Promise<Response> {
+  const firstTokenTimeoutMs = config.firstTokenTimeoutSeconds > 0 ? config.firstTokenTimeoutSeconds * 1000 : 0;
+  const totalTimeoutMs = config.totalTimeoutSeconds > 0 ? config.totalTimeoutSeconds * 1000 : 0;
+
+  // If no timeout configured, just do a normal fetch
+  if (firstTokenTimeoutMs === 0 && totalTimeoutMs === 0) {
+    return fetch(url, options);
+  }
+
+  let lastError: Error | undefined;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fetchWithTimeout(url, options, firstTokenTimeoutMs, totalTimeoutMs);
+    } catch (error) {
+      if (error instanceof TimeoutError) {
+        lastError = error;
+        logger.warn('SDK', `Request timeout, retrying (${attempt}/${maxRetries})`, {
+          url,
+          firstTokenTimeoutMs,
+          totalTimeoutMs,
+        });
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw lastError || new TimeoutError('Request timeout after max retries');
 }
 
 /**
@@ -573,7 +687,7 @@ ${validTypesDesc}
       url
     });
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -583,7 +697,7 @@ ${validTypesDesc}
         contents,
         generationConfig: buildGeminiGenerationConfig(config.model),
       }),
-    });
+    }, config);
 
     if (!response.ok) {
       const error = await response.text();
@@ -617,7 +731,7 @@ ${validTypesDesc}
       url
     });
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -627,7 +741,7 @@ ${validTypesDesc}
         contents,
         generationConfig: buildGeminiGenerationConfig(config.model),
       }),
-    });
+    }, config);
 
     if (!response.ok) {
       const error = await response.text();
@@ -662,7 +776,7 @@ ${validTypesDesc}
 
     const url = buildApiUrl(config.apiUrl, config.protocol, config.model);
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${config.apiKey}`,
@@ -674,7 +788,7 @@ ${validTypesDesc}
         temperature: 0.3,
         max_tokens: 4096,
       }),
-    });
+    }, config);
 
     if (!response.ok) {
       const error = await response.text();
@@ -705,7 +819,7 @@ ${validTypesDesc}
 
     const url = buildApiUrl(config.apiUrl, config.protocol, config.model);
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${config.apiKey}`,
@@ -719,7 +833,7 @@ ${validTypesDesc}
         stream: true,
         stream_options: { include_usage: true },
       }),
-    });
+    }, config);
 
     if (!response.ok) {
       const error = await response.text();
@@ -769,7 +883,7 @@ ${validTypesDesc}
       promptLength: prompt.length
     });
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -779,7 +893,7 @@ ${validTypesDesc}
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         generationConfig: buildGeminiGenerationConfig(config.model, true),
       }),
-    });
+    }, config);
 
     if (!response.ok) {
       const error = await response.text();
@@ -820,7 +934,7 @@ ${validTypesDesc}
       url
     });
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -830,7 +944,7 @@ ${validTypesDesc}
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         generationConfig: buildGeminiGenerationConfig(config.model, true),
       }),
-    });
+    }, config);
 
     if (!response.ok) {
       const error = await response.text();
@@ -869,7 +983,7 @@ ${validTypesDesc}
 
     const url = buildApiUrl(config.apiUrl, config.protocol, config.model);
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${config.apiKey}`,
@@ -882,7 +996,7 @@ ${validTypesDesc}
         max_tokens: 4096,
         response_format: { type: 'json_object' },
       }),
-    });
+    }, config);
 
     if (!response.ok) {
       const error = await response.text();
@@ -909,7 +1023,7 @@ ${validTypesDesc}
 
     const url = buildApiUrl(config.apiUrl, config.protocol, config.model);
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${config.apiKey}`,
@@ -924,7 +1038,7 @@ ${validTypesDesc}
         stream: true,
         stream_options: { include_usage: true },
       }),
-    });
+    }, config);
 
     if (!response.ok) {
       const error = await response.text();
@@ -956,6 +1070,8 @@ ${validTypesDesc}
       streaming: settings.CLAUDE_MEM_CUSTOM_STREAMING !== 'false',
       maxContextMessages: parseInt(settings.CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES) || 0,
       maxTokens: parseInt(settings.CLAUDE_MEM_CUSTOM_MAX_TOKENS) || 0,
+      firstTokenTimeoutSeconds: parseInt(settings.CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT) || 0,
+      totalTimeoutSeconds: parseInt(settings.CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT) || 0,
     };
   }
 }

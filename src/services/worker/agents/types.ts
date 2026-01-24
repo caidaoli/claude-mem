@@ -130,4 +130,5 @@ export const FALLBACK_ERROR_PATTERNS = [
   'ECONNREFUSED',  // Connection refused
   'ETIMEDOUT',     // Timeout
   'fetch failed',  // Network failure
+  'Request timeout',  // Custom timeout after retries
 ] as const;

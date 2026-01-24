@@ -37,6 +37,8 @@ export interface SettingsDefaults {
   CLAUDE_MEM_CUSTOM_STREAMING: string;    // 'true' | 'false'
   CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES: string;  // Max messages (0 = disabled)
   CLAUDE_MEM_CUSTOM_MAX_TOKENS: string;   // Max tokens (0 = disabled)
+  CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT: string;  // First token timeout in seconds (0 = disabled)
+  CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT: string;        // Total request timeout in seconds (0 = disabled)
   // System Configuration
   CLAUDE_MEM_DATA_DIR: string;
   CLAUDE_MEM_LOG_LEVEL: string;
@@ -90,6 +92,8 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_CUSTOM_STREAMING: 'true',  // Enable streaming by default
     CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES: '0',  // Disabled by default
     CLAUDE_MEM_CUSTOM_MAX_TOKENS: '0',  // Disabled by default
+    CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT: '0',  // Disabled by default (seconds)
+    CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT: '0',  // Disabled by default (seconds)
     // System Configuration
     CLAUDE_MEM_DATA_DIR: join(homedir(), '.claude-mem'),
     CLAUDE_MEM_LOG_LEVEL: 'INFO',
