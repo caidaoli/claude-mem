@@ -32,6 +32,9 @@ import {
   type FallbackAgent
 } from './agents/index.js';
 
+// Context window management constants
+const CHARS_PER_TOKEN_ESTIMATE = 4;  // Conservative estimate: 1 token = 4 chars
+
 // Protocol types
 export type CustomProtocol = 'openai' | 'gemini';
 
@@ -42,6 +45,8 @@ export interface CustomAgentConfig {
   model: string;
   protocol: CustomProtocol;
   streaming: boolean;
+  maxContextMessages: number;  // 0 = disabled
+  maxTokens: number;  // 0 = disabled
 }
 
 /**
@@ -168,6 +173,40 @@ function parseGeminiSseStream(responseText: string): { parts: Array<{ text?: str
   }
 
   return { parts: allParts, tokensUsed };
+}
+
+/**
+ * Parse SSE stream response from OpenAI API
+ * Extracts content deltas and token usage from data: {...} format lines
+ * Stream format: data: {"choices":[{"delta":{"content":"..."}}]}
+ * Final line: data: [DONE]
+ */
+function parseOpenAISseStream(responseText: string): { content: string; tokensUsed?: number } {
+  const lines = responseText.split('\n').filter(line => line.trim());
+  let content = '';
+  let tokensUsed: number | undefined;
+
+  for (const line of lines) {
+    if (!line.startsWith('data:')) continue;
+
+    const jsonStr = line.slice(5).trim();
+    if (!jsonStr || jsonStr === '[DONE]') continue;
+
+    try {
+      const data = JSON.parse(jsonStr) as OpenAIResponse;
+      const delta = data.choices?.[0]?.delta?.content;
+      if (delta) {
+        content += delta;
+      }
+      if (data.usage?.total_tokens) {
+        tokensUsed = data.usage.total_tokens;
+      }
+    } catch {
+      // Skip invalid JSON lines
+    }
+  }
+
+  return { content, tokensUsed };
 }
 
 /**
@@ -437,19 +476,83 @@ ${validTypesDesc}
   }
 
   /**
+   * Estimate token count from text (conservative estimate)
+   */
+  private estimateTokens(text: string): number {
+    return Math.ceil(text.length / CHARS_PER_TOKEN_ESTIMATE);
+  }
+
+  /**
+   * Truncate conversation history to prevent runaway context costs
+   * Only active when maxContextMessages or maxTokens > 0
+   */
+  private truncateHistory(history: ConversationMessage[], config: CustomAgentConfig): ConversationMessage[] {
+    const { maxContextMessages, maxTokens } = config;
+
+    // Disabled if both limits are 0
+    if (maxContextMessages <= 0 && maxTokens <= 0) {
+      return history;
+    }
+
+    // Check if within limits
+    const withinMessageLimit = maxContextMessages <= 0 || history.length <= maxContextMessages;
+    const totalTokens = history.reduce((sum, m) => sum + this.estimateTokens(m.content), 0);
+    const withinTokenLimit = maxTokens <= 0 || totalTokens <= maxTokens;
+
+    if (withinMessageLimit && withinTokenLimit) {
+      return history;
+    }
+
+    // Sliding window: keep most recent messages within limits
+    const truncated: ConversationMessage[] = [];
+    let tokenCount = 0;
+
+    // Process messages in reverse (most recent first)
+    for (let i = history.length - 1; i >= 0; i--) {
+      const msg = history[i];
+      const msgTokens = this.estimateTokens(msg.content);
+
+      const exceedsMessageLimit = maxContextMessages > 0 && truncated.length >= maxContextMessages;
+      const exceedsTokenLimit = maxTokens > 0 && tokenCount + msgTokens > maxTokens;
+
+      if (exceedsMessageLimit || exceedsTokenLimit) {
+        logger.warn('SDK', 'Context window truncated to prevent runaway costs', {
+          originalMessages: history.length,
+          keptMessages: truncated.length,
+          droppedMessages: i + 1,
+          estimatedTokens: tokenCount,
+          tokenLimit: maxTokens
+        });
+        break;
+      }
+
+      truncated.unshift(msg);  // Add to beginning
+      tokenCount += msgTokens;
+    }
+
+    return truncated;
+  }
+
+  /**
    * Query with full conversation history (multi-turn)
    */
   private async queryMultiTurn(
     history: ConversationMessage[],
     config: CustomAgentConfig
   ): Promise<{ content: string; tokensUsed?: number }> {
+    // Truncate history if limits are configured
+    const truncatedHistory = this.truncateHistory(history, config);
+
     if (config.protocol === 'gemini') {
       if (config.streaming) {
-        return this.queryGeminiMultiTurnStream(history, config);
+        return this.queryGeminiMultiTurnStream(truncatedHistory, config);
       }
-      return this.queryGeminiMultiTurn(history, config);
+      return this.queryGeminiMultiTurn(truncatedHistory, config);
     } else {
-      return this.queryOpenAIMultiTurn(history, config);
+      if (config.streaming) {
+        return this.queryOpenAIMultiTurnStream(truncatedHistory, config);
+      }
+      return this.queryOpenAIMultiTurn(truncatedHistory, config);
     }
   }
 
@@ -586,6 +689,54 @@ ${validTypesDesc}
   }
 
   /**
+   * Query OpenAI API with multi-turn conversation (streaming)
+   */
+  private async queryOpenAIMultiTurnStream(
+    history: ConversationMessage[],
+    config: CustomAgentConfig
+  ): Promise<{ content: string; tokensUsed?: number }> {
+    const messages = this.toOpenAIMessages(history);
+    const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
+
+    logger.debug('SDK', `Querying Custom/OpenAI multi-turn stream (${config.model})`, {
+      turns: history.length,
+      totalChars
+    });
+
+    const url = buildApiUrl(config.apiUrl, config.protocol, config.model);
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${config.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages,
+        temperature: 0.3,
+        max_tokens: 4096,
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Custom/OpenAI API error: ${response.status} - ${error}`);
+    }
+
+    const { content, tokensUsed } = parseOpenAISseStream(await response.text());
+
+    if (!content) {
+      logger.error('SDK', 'Empty stream response from Custom/OpenAI');
+      return { content: '' };
+    }
+
+    return { content, tokensUsed };
+  }
+
+  /**
    * Query with JSON response format enforcement
    */
   private async queryJson(
@@ -598,6 +749,9 @@ ${validTypesDesc}
       }
       return this.queryGeminiJson(prompt, config);
     } else {
+      if (config.streaming) {
+        return this.queryOpenAIJsonStream(prompt, config);
+      }
       return this.queryOpenAIJson(prompt, config);
     }
   }
@@ -743,6 +897,51 @@ ${validTypesDesc}
   }
 
   /**
+   * Query OpenAI with JSON response format (streaming)
+   */
+  private async queryOpenAIJsonStream(
+    prompt: string,
+    config: CustomAgentConfig
+  ): Promise<{ content: string; tokensUsed?: number }> {
+    logger.debug('SDK', `Querying Custom/OpenAI JSON stream (${config.model})`, {
+      promptLength: prompt.length
+    });
+
+    const url = buildApiUrl(config.apiUrl, config.protocol, config.model);
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${config.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.3,
+        max_tokens: 4096,
+        response_format: { type: 'json_object' },
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Custom/OpenAI API error: ${response.status} - ${error}`);
+    }
+
+    const { content, tokensUsed } = parseOpenAISseStream(await response.text());
+
+    if (!content) {
+      logger.error('SDK', 'Empty JSON stream response from Custom/OpenAI');
+      return { content: '' };
+    }
+
+    return { content, tokensUsed };
+  }
+
+  /**
    * Get Custom configuration from settings
    */
   private getCustomConfig(): CustomAgentConfig {
@@ -755,6 +954,8 @@ ${validTypesDesc}
       model: settings.CLAUDE_MEM_CUSTOM_MODEL || 'gpt-4o',
       protocol: (settings.CLAUDE_MEM_CUSTOM_PROTOCOL || 'openai') as CustomProtocol,
       streaming: settings.CLAUDE_MEM_CUSTOM_STREAMING !== 'false',
+      maxContextMessages: parseInt(settings.CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES) || 0,
+      maxTokens: parseInt(settings.CLAUDE_MEM_CUSTOM_MAX_TOKENS) || 0,
     };
   }
 }
