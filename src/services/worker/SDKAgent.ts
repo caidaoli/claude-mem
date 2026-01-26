@@ -20,6 +20,7 @@ import { USER_SETTINGS_PATH } from '../../shared/paths.js';
 import type { ActiveSession, SDKUserMessage } from '../worker-types.js';
 import { ModeManager } from '../domain/ModeManager.js';
 import { processAgentResponse, type WorkerRef } from './agents/index.js';
+import { createPidCapturingSpawn, getProcessBySession, ensureProcessExit } from './ProcessRegistry.js';
 
 // Import Agent SDK (assumes it's installed)
 // @ts-ignore - Agent SDK types may not be available
@@ -99,9 +100,7 @@ export class SDKAgent {
 
     // Run Agent SDK query loop
     // Only resume if we have a captured memory session ID
-    // IMPORTANT: Use separate workingDirectory for memory agent sessions
-    // This prevents memory sessions from appearing in user's `claude --resume` list
-    const memoryAgentWorkDir = path.join(homedir(), '.claude-mem', 'sessions');
+    // Use custom spawn to capture PIDs for zombie process cleanup (Issue #737)
     const queryResult = query({
       prompt: messageGenerator,
       options: {
@@ -113,7 +112,8 @@ export class SDKAgent {
         disallowedTools,
         abortController: session.abortController,
         pathToClaudeCodeExecutable: claudePath,
-        workingDirectory: memoryAgentWorkDir
+        // Custom spawn function captures PIDs to fix zombie process accumulation
+        spawnClaudeCodeProcess: createPidCapturingSpawn(session.sessionDbId)
       }
     });
 
