@@ -426,10 +426,23 @@ export class SessionRoutes extends BaseRouteHandler {
 
     // Load skip tools from settings
     const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
-    const skipTools = new Set(settings.CLAUDE_MEM_SKIP_TOOLS.split(',').map(t => t.trim()).filter(Boolean));
+    const skipToolsConfig = settings.CLAUDE_MEM_SKIP_TOOLS.split(',').map(t => t.trim()).filter(Boolean);
 
-    // Skip low-value or meta tools
-    if (skipTools.has(tool_name)) {
+    // Separate exact matches from prefix patterns (ending with *)
+    const exactMatches = new Set<string>();
+    const prefixPatterns: string[] = [];
+    for (const pattern of skipToolsConfig) {
+      if (pattern.endsWith('*')) {
+        prefixPatterns.push(pattern.slice(0, -1)); // Remove trailing *
+      } else {
+        exactMatches.add(pattern);
+      }
+    }
+
+    // Skip low-value or meta tools (exact match or prefix match)
+    const shouldSkip = exactMatches.has(tool_name) ||
+      prefixPatterns.some(prefix => tool_name.startsWith(prefix));
+    if (shouldSkip) {
       logger.debug('SESSION', 'Skipping observation for tool', { tool_name });
       res.json({ status: 'skipped', reason: 'tool_excluded' });
       return;
