@@ -452,18 +452,12 @@ export class CustomAgent {
           const obsPromptWithJsonFormat = `${obsPrompt}
 
 IMPORTANT: Respond with ONLY a valid JSON object for the observation. No explanations, no markdown.
+OUTPUT FORMAT: Return compact single-line JSON without any line breaks, indentation, or extra whitespace.
 
 CRITICAL - type field MUST be EXACTLY one of these values:
 ${validTypesDesc}
 
-{
-  "type": "${mode.observation_types[0].id}",
-  "title": "...",
-  "narrative": "...",
-  "files_read": [...],
-  "files_modified": [...],
-  "concepts": [...]
-}${languageInstruction}`;
+{"type":"${mode.observation_types[0].id}","title":"...","narrative":"...","files_read":[...],"files_modified":[...],"concepts":[...]}${languageInstruction}`;
 
           session.conversationHistory.push({ role: 'user', content: obsPromptWithJsonFormat });
           const obsResponse = await this.queryJson(obsPromptWithJsonFormat, config);

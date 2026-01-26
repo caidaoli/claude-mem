@@ -226,6 +226,7 @@ export function buildSummaryPromptJson(session: SDKSession, mode: ModeConfig): s
   })();
 
   return `IMPORTANT: You MUST respond with ONLY a valid JSON object. No explanations, no markdown, no thinking process - JUST the raw JSON.
+OUTPUT FORMAT: Return compact single-line JSON without any line breaks, indentation, or extra whitespace.
 
 ${mode.prompts.header_summary_checkpoint}
 ${mode.prompts.summary_instruction}
@@ -233,17 +234,10 @@ ${mode.prompts.summary_instruction}
 ${mode.prompts.summary_context_label}
 ${lastAssistantMessage}
 
-Required JSON format (respond with ONLY this structure, nothing else):
-{
-  "request": "Brief description of what the user requested",
-  "investigated": "What files, code, or resources were examined",
-  "learned": "Key insights or discoveries from this session",
-  "completed": "What was accomplished or built",
-  "next_steps": "Suggested follow-up actions",
-  "notes": null
-}
+Required JSON format (respond with ONLY this structure as compact single-line JSON):
+{"request":"Brief description of what the user requested","investigated":"What files, code, or resources were examined","learned":"Key insights or discoveries from this session","completed":"What was accomplished or built","next_steps":"Suggested follow-up actions","notes":null}
 
-CRITICAL: Your entire response must be a single valid JSON object. Do not include any text before or after the JSON.
+CRITICAL: Your entire response must be a single valid JSON object on one line. Do not include any text before or after the JSON.
 
 ${mode.prompts.summary_footer}`;
 }
