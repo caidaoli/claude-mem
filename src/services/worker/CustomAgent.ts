@@ -106,24 +106,21 @@ interface OpenAIResponse {
 
 /**
  * Extract non-thinking text from Gemini response parts
- * Gemini 2.5+ models may return thinking parts with thought=true flag
+ * Gemini 2.5+ models may return thinking parts with thought=true flag.
+ * Gemini 3 also returns thoughtSignature parts (hash of thinking content).
+ * Thinking parts are internal reasoning - never valid output content.
  */
-function extractResponseText(parts: Array<{ text?: string; thought?: boolean }> | undefined): string {
+function extractResponseText(parts: Array<{ text?: string; thought?: boolean; thoughtSignature?: string }> | undefined): string {
   if (!parts || parts.length === 0) return '';
 
-  // Filter out thinking parts and concatenate text
-  const nonThinkingParts = parts.filter(p => !p.thought && p.text);
-  if (nonThinkingParts.length > 0) {
-    return nonThinkingParts.map(p => p.text).join('');
-  }
-
-  // Fallback: if all parts are thinking, return the last one (likely the final response)
-  const lastPart = parts[parts.length - 1];
-  return lastPart?.text || '';
+  // Filter out thinking parts (thought=true) and thought signatures
+  const nonThinkingParts = parts.filter(p => !p.thought && !p.thoughtSignature && p.text);
+  return nonThinkingParts.map(p => p.text).join('');
 }
 
 /**
- * Build Gemini generation config with optional JSON mode and thinking config
+ * Build Gemini generation config with optional JSON mode
+ * For Gemini 3 models, thinkingLevel: 'minimal' speeds up responses.
  */
 function buildGeminiGenerationConfig(model: string, jsonMode: boolean = false): Record<string, unknown> {
   const config: Record<string, unknown> = {
@@ -135,7 +132,7 @@ function buildGeminiGenerationConfig(model: string, jsonMode: boolean = false): 
     config.responseMimeType = 'application/json';
   }
 
-  // Add thinking config for Gemini 3 models
+  // Minimal thinking speeds up Gemini 3 responses
   if (model.startsWith('gemini-3')) {
     config.thinkingConfig = {
       thinkingLevel: 'minimal',
@@ -149,28 +146,61 @@ function buildGeminiGenerationConfig(model: string, jsonMode: boolean = false): 
  * Parse SSE stream response from Gemini API
  * Extracts parts and token usage from data: {...} format lines
  */
-function parseGeminiSseStream(responseText: string): { parts: Array<{ text?: string; thought?: boolean }>; tokensUsed?: number } {
-  const lines = responseText.split('\n').filter(line => line.trim());
-  let allParts: Array<{ text?: string; thought?: boolean }> = [];
+export function parseGeminiSseStream(responseText: string): { parts: Array<{ text?: string; thought?: boolean; thoughtSignature?: string }>; tokensUsed?: number } {
+  const lines = responseText.split(/\r?\n/);
+  let allParts: Array<{ text?: string; thought?: boolean; thoughtSignature?: string }> = [];
   let tokensUsed: number | undefined;
 
-  for (const line of lines) {
-    if (!line.startsWith('data:')) continue;
+  const currentEventData: string[] = [];
+  const flushEvent = () => {
+    if (currentEventData.length === 0) return;
 
-    const jsonStr = line.slice(5).trim();
-    if (!jsonStr) continue;
+    const payload = currentEventData.join('\n').trim();
+    currentEventData.length = 0;
+    if (!payload) return;
+
+    // Gemini SSE uses JSON payloads; ignore OpenAI-style terminators if a proxy mixes formats.
+    if (payload === '[DONE]') return;
 
     try {
-      const data = JSON.parse(jsonStr) as GeminiResponse;
+      const data = JSON.parse(payload) as GeminiResponse;
       const parts = data.candidates?.[0]?.content?.parts;
-      if (parts) {
-        allParts = allParts.concat(parts);
-      }
-      if (data.usageMetadata?.totalTokenCount) {
-        tokensUsed = data.usageMetadata.totalTokenCount;
-      }
+      if (parts) allParts = allParts.concat(parts);
+      if (data.usageMetadata?.totalTokenCount) tokensUsed = data.usageMetadata.totalTokenCount;
     } catch {
-      // Skip invalid JSON lines
+      // Ignore invalid/partial events (some proxies may stream pretty-printed JSON across multiple data: lines)
+    }
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+
+    // Blank line = end of SSE event
+    if (line === '') {
+      flushEvent();
+      continue;
+    }
+
+    if (!line.startsWith('data:')) continue;
+
+    // Keep data lines verbatim (minus the "data:" prefix) and join per SSE spec.
+    currentEventData.push(line.slice(5).replace(/^\s*/, ''));
+  }
+
+  flushEvent();
+
+  // Fallback: some proxies ignore `alt=sse` and return a single JSON object.
+  if (allParts.length === 0) {
+    const trimmed = responseText.trim();
+    if (trimmed.startsWith('{')) {
+      try {
+        const data = JSON.parse(trimmed) as GeminiResponse;
+        const parts = data.candidates?.[0]?.content?.parts;
+        if (parts) allParts = allParts.concat(parts);
+        if (data.usageMetadata?.totalTokenCount) tokensUsed = data.usageMetadata.totalTokenCount;
+      } catch {
+        // ignore
+      }
     }
   }
 
@@ -380,8 +410,19 @@ export class CustomAgent {
         throw new Error('Custom provider not configured. Set CLAUDE_MEM_CUSTOM_API_URL and CLAUDE_MEM_CUSTOM_API_KEY in settings.');
       }
 
-      // Generate synthetic memorySessionId (Custom is stateless, doesn't return session ID)
-      if (!session.memorySessionId) {
+      // CRITICAL: Always load memorySessionId from database for Custom agent
+      // Custom is stateless and uses synthetic IDs. We must ALWAYS use the DB value
+      // to prevent FK constraint failures (observations table references memory_session_id)
+      // This overrides any value set by SDKAgent fallback or cached session state.
+      const dbSession = this.dbManager.getSessionStore().getSessionById(session.sessionDbId);
+      if (dbSession?.memory_session_id) {
+        // Use existing memory_session_id from database
+        if (session.memorySessionId !== dbSession.memory_session_id) {
+          logger.info('SESSION', `MEMORY_ID_RESTORED | sessionDbId=${session.sessionDbId} | was=${session.memorySessionId || 'null'} | now=${dbSession.memory_session_id} | provider=Custom`);
+        }
+        session.memorySessionId = dbSession.memory_session_id;
+      } else if (!session.memorySessionId) {
+        // Generate new synthetic ID only if none exists anywhere
         const syntheticId = `custom-${session.contentSessionId}-${Date.now()}`;
         session.memorySessionId = syntheticId;
         this.dbManager.getSessionStore().updateMemorySessionId(session.sessionDbId, syntheticId);
@@ -423,7 +464,8 @@ export class CustomAgent {
           }
         );
       } else {
-        logger.error('SDK', 'Empty Custom init response - session may lack context', {
+        // Model chose to skip initial observation - this is expected when prompt doesn't warrant recording
+        logger.debug('SDK', 'Empty Custom init response - model chose to skip', {
           sessionId: session.sessionDbId,
           model: config.model
         });
@@ -913,9 +955,12 @@ ${validTypesDesc}
     const content = extractResponseText(parts);
 
     if (!content) {
-      logger.error('SDK', 'No non-thinking content in Custom/Gemini response', {
+      // Model chose to skip (only thinking content, no actual output) - this is expected behavior
+      logger.debug('SDK', 'No non-thinking content in Custom/Gemini response (intentional skip)', {
         partsCount: parts.length,
-        hasThought: parts.some(p => p.thought)
+        hasThought: parts.some(p => p.thought),
+        hasThoughtSignature: parts.some(p => !!p.thoughtSignature),
+        rawResponse: result.body
       });
     }
 
@@ -955,16 +1000,22 @@ ${validTypesDesc}
     const { parts, tokensUsed } = parseGeminiSseStream(result.body);
 
     if (parts.length === 0) {
-      logger.error('SDK', 'Empty JSON stream response from Custom/Gemini');
+      logger.error('SDK', 'Empty JSON stream response from Custom/Gemini', {
+        rawResponse: result.body
+      });
       return { content: '' };
     }
 
     const content = extractResponseText(parts);
 
     if (!content) {
-      logger.error('SDK', 'No non-thinking content in Custom/Gemini JSON stream response', {
+      // Model chose to skip (only thinking content, no actual output) - this is expected behavior
+      logger.debug('SDK', 'No non-thinking content in Custom/Gemini JSON stream response (intentional skip)', {
         partsCount: parts.length,
-        hasThought: parts.some(p => p.thought)
+        hasThought: parts.some(p => p.thought),
+        hasThoughtSignature: parts.some(p => !!p.thoughtSignature),
+        rawResponse: result.body,
+        parsedParts: JSON.stringify(parts)
       });
     }
 
