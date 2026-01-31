@@ -222,21 +222,30 @@ class TimeoutError extends Error {
 }
 
 /**
+ * Result from fetchWithTimeout - body is fully read before returning
+ * so that timeout covers the entire request lifecycle
+ */
+interface FetchResult {
+  ok: boolean;
+  status: number;
+  body: string;
+}
+
+/**
  * Fetch with timeout control
  * - firstTokenTimeoutMs: Timeout for receiving the first byte of response (0 = disabled)
- * - totalTimeoutMs: Total request timeout (0 = disabled)
- * Returns the response if successful, throws TimeoutError on timeout
+ * - totalTimeoutMs: Total request timeout including body read (0 = disabled)
+ * Returns the full response body if successful, throws TimeoutError on timeout
  */
 async function fetchWithTimeout(
   url: string,
   options: RequestInit,
   firstTokenTimeoutMs: number,
   totalTimeoutMs: number
-): Promise<Response> {
+): Promise<FetchResult> {
   const controller = new AbortController();
   const { signal } = controller;
 
-  // Merge abort signal with existing options
   const fetchOptions: RequestInit = {
     ...options,
     signal,
@@ -251,14 +260,12 @@ async function fetchWithTimeout(
   };
 
   try {
-    // Set total timeout if enabled
     if (totalTimeoutMs > 0) {
       totalTimer = setTimeout(() => {
         controller.abort();
       }, totalTimeoutMs);
     }
 
-    // Set first token timeout if enabled
     if (firstTokenTimeoutMs > 0) {
       firstTokenTimer = setTimeout(() => {
         controller.abort();
@@ -273,7 +280,11 @@ async function fetchWithTimeout(
       firstTokenTimer = undefined;
     }
 
-    return response;
+    // Read body fully before clearing totalTimer
+    const body = await response.text();
+    cleanup();
+
+    return { ok: response.ok, status: response.status, body };
   } catch (error) {
     cleanup();
     if (error instanceof Error && error.name === 'AbortError') {
@@ -292,13 +303,15 @@ async function fetchWithTimeoutAndRetry(
   options: RequestInit,
   config: CustomAgentConfig,
   maxRetries: number = 3
-): Promise<Response> {
+): Promise<FetchResult> {
   const firstTokenTimeoutMs = config.firstTokenTimeoutSeconds > 0 ? config.firstTokenTimeoutSeconds * 1000 : 0;
   const totalTimeoutMs = config.totalTimeoutSeconds > 0 ? config.totalTimeoutSeconds * 1000 : 0;
 
-  // If no timeout configured, just do a normal fetch
+  // If no timeout configured, just do a normal fetch and read body
   if (firstTokenTimeoutMs === 0 && totalTimeoutMs === 0) {
-    return fetch(url, options);
+    const response = await fetch(url, options);
+    const body = await response.text();
+    return { ok: response.ok, status: response.status, body };
   }
 
   let lastError: Error | undefined;
@@ -681,7 +694,7 @@ ${validTypesDesc}
       url
     });
 
-    const response = await fetchWithTimeoutAndRetry(url, {
+    const result = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -693,12 +706,11 @@ ${validTypesDesc}
       }),
     }, config);
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Custom/Gemini API error: ${response.status} - ${error}`);
+    if (!result.ok) {
+      throw new Error(`Custom/Gemini API error: ${result.status} - ${result.body}`);
     }
 
-    const { parts, tokensUsed } = parseGeminiSseStream(await response.text());
+    const { parts, tokensUsed } = parseGeminiSseStream(result.body);
 
     if (parts.length === 0) {
       logger.error('SDK', 'Empty stream response from Custom/Gemini');
@@ -725,7 +737,7 @@ ${validTypesDesc}
       url
     });
 
-    const response = await fetchWithTimeoutAndRetry(url, {
+    const result = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -737,12 +749,11 @@ ${validTypesDesc}
       }),
     }, config);
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Custom/Gemini API error: ${response.status} - ${error}`);
+    if (!result.ok) {
+      throw new Error(`Custom/Gemini API error: ${result.status} - ${result.body}`);
     }
 
-    const data = await response.json() as GeminiResponse;
+    const data = JSON.parse(result.body) as GeminiResponse;
     const parts = data.candidates?.[0]?.content?.parts;
 
     if (!parts || parts.length === 0) {
@@ -770,7 +781,7 @@ ${validTypesDesc}
 
     const url = buildApiUrl(config.apiUrl, config.protocol, config.model);
 
-    const response = await fetchWithTimeoutAndRetry(url, {
+    const result = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${config.apiKey}`,
@@ -784,12 +795,11 @@ ${validTypesDesc}
       }),
     }, config);
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Custom/OpenAI API error: ${response.status} - ${error}`);
+    if (!result.ok) {
+      throw new Error(`Custom/OpenAI API error: ${result.status} - ${result.body}`);
     }
 
-    const data = await response.json() as OpenAIResponse;
+    const data = JSON.parse(result.body) as OpenAIResponse;
     const content = data.choices?.[0]?.message?.content || '';
     const tokensUsed = data.usage?.total_tokens;
 
@@ -813,7 +823,7 @@ ${validTypesDesc}
 
     const url = buildApiUrl(config.apiUrl, config.protocol, config.model);
 
-    const response = await fetchWithTimeoutAndRetry(url, {
+    const result = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${config.apiKey}`,
@@ -829,12 +839,11 @@ ${validTypesDesc}
       }),
     }, config);
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Custom/OpenAI API error: ${response.status} - ${error}`);
+    if (!result.ok) {
+      throw new Error(`Custom/OpenAI API error: ${result.status} - ${result.body}`);
     }
 
-    const { content, tokensUsed } = parseOpenAISseStream(await response.text());
+    const { content, tokensUsed } = parseOpenAISseStream(result.body);
 
     if (!content) {
       logger.error('SDK', 'Empty stream response from Custom/OpenAI');
@@ -877,7 +886,7 @@ ${validTypesDesc}
       promptLength: prompt.length
     });
 
-    const response = await fetchWithTimeoutAndRetry(url, {
+    const result = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -889,12 +898,11 @@ ${validTypesDesc}
       }),
     }, config);
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Custom/Gemini API error: ${response.status} - ${error}`);
+    if (!result.ok) {
+      throw new Error(`Custom/Gemini API error: ${result.status} - ${result.body}`);
     }
 
-    const data = await response.json() as GeminiResponse;
+    const data = JSON.parse(result.body) as GeminiResponse;
     const parts = data.candidates?.[0]?.content?.parts;
 
     if (!parts || parts.length === 0) {
@@ -928,7 +936,7 @@ ${validTypesDesc}
       url
     });
 
-    const response = await fetchWithTimeoutAndRetry(url, {
+    const result = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -940,12 +948,11 @@ ${validTypesDesc}
       }),
     }, config);
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Custom/Gemini API error: ${response.status} - ${error}`);
+    if (!result.ok) {
+      throw new Error(`Custom/Gemini API error: ${result.status} - ${result.body}`);
     }
 
-    const { parts, tokensUsed } = parseGeminiSseStream(await response.text());
+    const { parts, tokensUsed } = parseGeminiSseStream(result.body);
 
     if (parts.length === 0) {
       logger.error('SDK', 'Empty JSON stream response from Custom/Gemini');
@@ -977,7 +984,7 @@ ${validTypesDesc}
 
     const url = buildApiUrl(config.apiUrl, config.protocol, config.model);
 
-    const response = await fetchWithTimeoutAndRetry(url, {
+    const result = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${config.apiKey}`,
@@ -992,12 +999,11 @@ ${validTypesDesc}
       }),
     }, config);
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Custom/OpenAI API error: ${response.status} - ${error}`);
+    if (!result.ok) {
+      throw new Error(`Custom/OpenAI API error: ${result.status} - ${result.body}`);
     }
 
-    const data = await response.json() as OpenAIResponse;
+    const data = JSON.parse(result.body) as OpenAIResponse;
     const content = data.choices?.[0]?.message?.content || '';
     const tokensUsed = data.usage?.total_tokens;
 
@@ -1017,7 +1023,7 @@ ${validTypesDesc}
 
     const url = buildApiUrl(config.apiUrl, config.protocol, config.model);
 
-    const response = await fetchWithTimeoutAndRetry(url, {
+    const result = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${config.apiKey}`,
@@ -1034,12 +1040,11 @@ ${validTypesDesc}
       }),
     }, config);
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Custom/OpenAI API error: ${response.status} - ${error}`);
+    if (!result.ok) {
+      throw new Error(`Custom/OpenAI API error: ${result.status} - ${result.body}`);
     }
 
-    const { content, tokensUsed } = parseOpenAISseStream(await response.text());
+    const { content, tokensUsed } = parseOpenAISseStream(result.body);
 
     if (!content) {
       logger.error('SDK', 'Empty JSON stream response from Custom/OpenAI');
