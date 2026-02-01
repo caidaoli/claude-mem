@@ -54,15 +54,37 @@ export function createSDKSession(
 /**
  * Update the memory session ID for a session
  * Called by SDKAgent when it captures the session ID from the first SDK message
+ *
+ * On worker restart, the in-memory memorySessionId is cleared (Issue #817) to avoid
+ * stale resume. The SDK then returns a NEW session_id. Since child tables (observations,
+ * session_summaries) reference the OLD memory_session_id via FK without ON UPDATE CASCADE,
+ * we must cascade-update children before changing the parent.
  */
 export function updateMemorySessionId(
   db: Database,
   sessionDbId: number,
   memorySessionId: string
 ): void {
-  db.prepare(`
-    UPDATE sdk_sessions
-    SET memory_session_id = ?
-    WHERE id = ?
-  `).run(memorySessionId, sessionDbId);
+  const existing = db.prepare(
+    'SELECT memory_session_id FROM sdk_sessions WHERE id = ?'
+  ).get(sessionDbId) as { memory_session_id: string | null } | undefined;
+
+  if (existing?.memory_session_id && existing.memory_session_id !== memorySessionId) {
+    const oldId = existing.memory_session_id;
+    logger.info('SESSION', `Cascading memory_session_id update: ${oldId} → ${memorySessionId}`, {
+      sessionDbId
+    });
+    // Atomic cascade: update children then parent
+    db.transaction(() => {
+      db.prepare('UPDATE observations SET memory_session_id = ? WHERE memory_session_id = ?')
+        .run(memorySessionId, oldId);
+      db.prepare('UPDATE session_summaries SET memory_session_id = ? WHERE memory_session_id = ?')
+        .run(memorySessionId, oldId);
+      db.prepare('UPDATE sdk_sessions SET memory_session_id = ? WHERE id = ?')
+        .run(memorySessionId, sessionDbId);
+    })();
+  } else {
+    db.prepare('UPDATE sdk_sessions SET memory_session_id = ? WHERE id = ?')
+      .run(memorySessionId, sessionDbId);
+  }
 }
