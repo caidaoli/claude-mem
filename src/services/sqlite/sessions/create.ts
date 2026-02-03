@@ -59,6 +59,12 @@ export function createSDKSession(
  * stale resume. The SDK then returns a NEW session_id. Since child tables (observations,
  * session_summaries) reference the OLD memory_session_id via FK without ON UPDATE CASCADE,
  * we must cascade-update children before changing the parent.
+ *
+ * ORPHAN DATA PROTECTION:
+ * Before any update, check if the new memorySessionId already has orphaned references
+ * in child tables (observations, session_summaries) that would violate FK constraints.
+ * This can happen when historical data exists with memory_session_ids that were never
+ * properly cleaned up. Delete orphaned references before proceeding with the update.
  */
 export function updateMemorySessionId(
   db: Database,
@@ -68,6 +74,35 @@ export function updateMemorySessionId(
   const existing = db.prepare(
     'SELECT memory_session_id FROM sdk_sessions WHERE id = ?'
   ).get(sessionDbId) as { memory_session_id: string | null } | undefined;
+
+  // Check for orphaned child records that reference a memory_session_id not in sdk_sessions
+  // This prevents FK constraint failures when the worker tries to update
+  const orphanedObservations = db.prepare(
+    `SELECT COUNT(*) as count FROM observations
+     WHERE memory_session_id NOT IN (SELECT memory_session_id FROM sdk_sessions WHERE memory_session_id IS NOT NULL)`
+  ).get() as { count: number };
+
+  const orphanedSummaries = db.prepare(
+    `SELECT COUNT(*) as count FROM session_summaries
+     WHERE memory_session_id NOT IN (SELECT memory_session_id FROM sdk_sessions WHERE memory_session_id IS NOT NULL)`
+  ).get() as { count: number };
+
+  if (orphanedObservations.count > 0 || orphanedSummaries.count > 0) {
+    logger.warn('SESSION', `Cleaning orphaned data before update: ${orphanedObservations.count} observations, ${orphanedSummaries.count} summaries`, {
+      sessionDbId
+    });
+    // Clean up orphaned data in a transaction
+    db.transaction(() => {
+      db.prepare(
+        `DELETE FROM observations
+         WHERE memory_session_id NOT IN (SELECT memory_session_id FROM sdk_sessions WHERE memory_session_id IS NOT NULL)`
+      ).run();
+      db.prepare(
+        `DELETE FROM session_summaries
+         WHERE memory_session_id NOT IN (SELECT memory_session_id FROM sdk_sessions WHERE memory_session_id IS NOT NULL)`
+      ).run();
+    })();
+  }
 
   if (existing?.memory_session_id && existing.memory_session_id !== memorySessionId) {
     const oldId = existing.memory_session_id;
