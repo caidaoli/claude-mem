@@ -26,6 +26,7 @@ import type { ActiveSession, ConversationMessage } from '../worker-types.js';
 import { ModeManager } from '../domain/ModeManager.js';
 import {
   processAgentResponse,
+  cleanupProcessedMessages,
   shouldFallbackToClaude,
   isAbortError,
   type WorkerRef,
@@ -61,11 +62,23 @@ function buildApiUrl(baseUrl: string, protocol: CustomProtocol, model: string, s
   const cleanBaseUrl = baseUrl.replace(/\/+$/, '');
 
   if (protocol === 'gemini') {
+    // Normalize model name (avoid "models/models/..." if user included prefix)
+    const cleanModel = model.replace(/^models\//, '');
     const action = streaming ? 'streamGenerateContent' : 'generateContent';
     // Add alt=sse for streaming to ensure SSE format (data: prefix on each message)
     const sseParam = streaming ? '?alt=sse' : '';
-    return `${cleanBaseUrl}/v1beta/models/${model}:${action}${sseParam}`;
+    return `${cleanBaseUrl}/v1beta/models/${cleanModel}:${action}${sseParam}`;
   } else {
+    // Allow apiUrl to be either:
+    // - Base URL (https://host) -> append /v1/chat/completions
+    // - OpenAI compatible base (https://host/v1) -> append /chat/completions
+    // - Full endpoint (https://host/v1/chat/completions) -> use as-is
+    if (cleanBaseUrl.endsWith('/v1/chat/completions')) {
+      return cleanBaseUrl;
+    }
+    if (cleanBaseUrl.endsWith('/v1')) {
+      return `${cleanBaseUrl}/chat/completions`;
+    }
     return `${cleanBaseUrl}/v1/chat/completions`;
   }
 }
@@ -437,19 +450,17 @@ export class CustomAgent {
         ? buildInitPromptJson(session.project, session.contentSessionId, session.userPrompt, mode)
         : buildContinuationPromptJson(session.userPrompt, session.lastPromptNumber, session.contentSessionId, mode);
 
-      // Add to conversation history and query with JSON format
+      // Add to conversation history and query with full context (multi-turn)
       session.conversationHistory.push({ role: 'user', content: initPrompt });
-      const initResponse = await this.queryJson(initPrompt, config);
+      const initResponse = await this.queryJsonMultiTurn(session.conversationHistory, config);
 
       if (initResponse.content) {
-        session.conversationHistory.push({ role: 'assistant', content: initResponse.content });
-
         const tokensUsed = initResponse.tokensUsed || 0;
         session.cumulativeInputTokens += Math.floor(tokensUsed * 0.7);
         session.cumulativeOutputTokens += Math.floor(tokensUsed * 0.3);
 
         await processAgentResponse(
-          '',
+          initResponse.content,
           session,
           this.dbManager,
           this.sessionManager,
@@ -515,19 +526,26 @@ ${validTypesDesc}
 {"type":"${mode.observation_types[0].id}","title":"...","narrative":"...","files_read":[...],"files_modified":[...],"concepts":[...]}${languageInstruction}`;
 
           session.conversationHistory.push({ role: 'user', content: obsPromptWithJsonFormat });
-          const obsResponse = await this.queryJson(obsPromptWithJsonFormat, config);
+          const obsResponse = await this.queryJsonMultiTurn(session.conversationHistory, config);
 
           let tokensUsed = 0;
           if (obsResponse.content) {
-            session.conversationHistory.push({ role: 'assistant', content: obsResponse.content });
-
             tokensUsed = obsResponse.tokensUsed || 0;
             session.cumulativeInputTokens += Math.floor(tokensUsed * 0.7);
             session.cumulativeOutputTokens += Math.floor(tokensUsed * 0.3);
+          } else {
+            // Model chose to skip - avoid noisy JSON parse logs and unnecessary DB transactions
+            logger.debug('SDK', 'Empty Custom observation response - model chose to skip', {
+              sessionId: session.sessionDbId,
+              model: config.model,
+              promptNumber: session.lastPromptNumber
+            });
+            cleanupProcessedMessages(session, worker);
+            continue;
           }
 
           await processAgentResponse(
-            '',
+            obsResponse.content,
             session,
             this.dbManager,
             this.sessionManager,
@@ -538,7 +556,7 @@ ${validTypesDesc}
             lastCwd,
             {
               parseJsonObservation: true,
-              observationText: obsResponse.content || ''
+              observationText: obsResponse.content
             }
           );
 
@@ -552,8 +570,9 @@ ${validTypesDesc}
             last_assistant_message: message.last_assistant_message || ''
           }, mode);
 
-          // Query with JSON response format enforcement
-          const summaryResponse = await this.queryJson(summaryPrompt, config);
+          // Add to conversation history and query with full context (multi-turn)
+          session.conversationHistory.push({ role: 'user', content: summaryPrompt });
+          const summaryResponse = await this.queryJsonMultiTurn(session.conversationHistory, config);
 
           let tokensUsed = 0;
           if (summaryResponse.content) {
@@ -569,11 +588,13 @@ ${validTypesDesc}
             logger.warn('SDK', 'Custom returned empty summary response', {
               sessionId: session.sessionDbId
             });
+            cleanupProcessedMessages(session, worker);
+            continue;
           }
 
           // Process response with JSON parser option
           await processAgentResponse(
-            '',
+            summaryResponse.content,
             session,
             this.dbManager,
             this.sessionManager,
@@ -584,7 +605,7 @@ ${validTypesDesc}
             lastCwd,
             {
               parseJsonSummary: true,
-              summaryText: summaryResponse.content || ''
+              summaryText: summaryResponse.content
             }
           );
         }
@@ -697,9 +718,9 @@ ${validTypesDesc}
   }
 
   /**
-   * Query with full conversation history (multi-turn)
+   * Query with full conversation history (multi-turn) and JSON response enforcement
    */
-  private async queryMultiTurn(
+  private async queryJsonMultiTurn(
     history: ConversationMessage[],
     config: CustomAgentConfig
   ): Promise<{ content: string; tokensUsed?: number }> {
@@ -708,21 +729,21 @@ ${validTypesDesc}
 
     if (config.protocol === 'gemini') {
       if (config.streaming) {
-        return this.queryGeminiMultiTurnStream(truncatedHistory, config);
+        return this.queryGeminiJsonMultiTurnStream(truncatedHistory, config);
       }
-      return this.queryGeminiMultiTurn(truncatedHistory, config);
+      return this.queryGeminiJsonMultiTurn(truncatedHistory, config);
     } else {
       if (config.streaming) {
-        return this.queryOpenAIMultiTurnStream(truncatedHistory, config);
+        return this.queryOpenAIJsonMultiTurnStream(truncatedHistory, config);
       }
-      return this.queryOpenAIMultiTurn(truncatedHistory, config);
+      return this.queryOpenAIJsonMultiTurn(truncatedHistory, config);
     }
   }
 
   /**
-   * Query Gemini API with multi-turn conversation (streaming)
+   * Query Gemini API with multi-turn conversation (streaming, JSON enforced)
    */
-  private async queryGeminiMultiTurnStream(
+  private async queryGeminiJsonMultiTurnStream(
     history: ConversationMessage[],
     config: CustomAgentConfig
   ): Promise<{ content: string; tokensUsed?: number }> {
@@ -730,7 +751,7 @@ ${validTypesDesc}
     const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
     const url = buildApiUrl(config.apiUrl, config.protocol, config.model, true);
 
-    logger.debug('SDK', `Querying Custom/Gemini stream (${config.model})`, {
+    logger.debug('SDK', `Querying Custom/Gemini JSON multi-turn stream (${config.model})`, {
       turns: history.length,
       totalChars,
       url
@@ -744,7 +765,7 @@ ${validTypesDesc}
       },
       body: JSON.stringify({
         contents,
-        generationConfig: buildGeminiGenerationConfig(config.model),
+        generationConfig: buildGeminiGenerationConfig(config.model, true),
       }),
     }, config);
 
@@ -763,9 +784,9 @@ ${validTypesDesc}
   }
 
   /**
-   * Query Gemini API with multi-turn conversation (non-streaming)
+   * Query Gemini API with multi-turn conversation (non-streaming, JSON enforced)
    */
-  private async queryGeminiMultiTurn(
+  private async queryGeminiJsonMultiTurn(
     history: ConversationMessage[],
     config: CustomAgentConfig
   ): Promise<{ content: string; tokensUsed?: number }> {
@@ -773,7 +794,7 @@ ${validTypesDesc}
     const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
     const url = buildApiUrl(config.apiUrl, config.protocol, config.model);
 
-    logger.debug('SDK', `Querying Custom/Gemini multi-turn (${config.model})`, {
+    logger.debug('SDK', `Querying Custom/Gemini JSON multi-turn (${config.model})`, {
       turns: history.length,
       totalChars,
       url
@@ -787,7 +808,7 @@ ${validTypesDesc}
       },
       body: JSON.stringify({
         contents,
-        generationConfig: buildGeminiGenerationConfig(config.model),
+        generationConfig: buildGeminiGenerationConfig(config.model, true),
       }),
     }, config);
 
@@ -807,16 +828,16 @@ ${validTypesDesc}
   }
 
   /**
-   * Query OpenAI API with multi-turn conversation
+   * Query OpenAI API with multi-turn conversation (JSON enforced)
    */
-  private async queryOpenAIMultiTurn(
+  private async queryOpenAIJsonMultiTurn(
     history: ConversationMessage[],
     config: CustomAgentConfig
   ): Promise<{ content: string; tokensUsed?: number }> {
     const messages = this.toOpenAIMessages(history);
     const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
 
-    logger.debug('SDK', `Querying Custom/OpenAI multi-turn (${config.model})`, {
+    logger.debug('SDK', `Querying Custom/OpenAI JSON multi-turn (${config.model})`, {
       turns: history.length,
       totalChars
     });
@@ -834,6 +855,7 @@ ${validTypesDesc}
         messages,
         temperature: 0.3,
         max_tokens: 4096,
+        response_format: { type: 'json_object' },
       }),
     }, config);
 
@@ -849,16 +871,16 @@ ${validTypesDesc}
   }
 
   /**
-   * Query OpenAI API with multi-turn conversation (streaming)
+   * Query OpenAI API with multi-turn conversation (streaming, JSON enforced)
    */
-  private async queryOpenAIMultiTurnStream(
+  private async queryOpenAIJsonMultiTurnStream(
     history: ConversationMessage[],
     config: CustomAgentConfig
   ): Promise<{ content: string; tokensUsed?: number }> {
     const messages = this.toOpenAIMessages(history);
     const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
 
-    logger.debug('SDK', `Querying Custom/OpenAI multi-turn stream (${config.model})`, {
+    logger.debug('SDK', `Querying Custom/OpenAI JSON multi-turn stream (${config.model})`, {
       turns: history.length,
       totalChars
     });
@@ -876,6 +898,7 @@ ${validTypesDesc}
         messages,
         temperature: 0.3,
         max_tokens: 4096,
+        response_format: { type: 'json_object' },
         stream: true,
         stream_options: { include_usage: true },
       }),
@@ -889,216 +912,6 @@ ${validTypesDesc}
 
     if (!content) {
       logger.error('SDK', 'Empty stream response from Custom/OpenAI');
-      return { content: '' };
-    }
-
-    return { content, tokensUsed };
-  }
-
-  /**
-   * Query with JSON response format enforcement
-   */
-  private async queryJson(
-    prompt: string,
-    config: CustomAgentConfig
-  ): Promise<{ content: string; tokensUsed?: number }> {
-    if (config.protocol === 'gemini') {
-      if (config.streaming) {
-        return this.queryGeminiJsonStream(prompt, config);
-      }
-      return this.queryGeminiJson(prompt, config);
-    } else {
-      if (config.streaming) {
-        return this.queryOpenAIJsonStream(prompt, config);
-      }
-      return this.queryOpenAIJson(prompt, config);
-    }
-  }
-
-  /**
-   * Query Gemini with JSON response format
-   */
-  private async queryGeminiJson(
-    prompt: string,
-    config: CustomAgentConfig
-  ): Promise<{ content: string; tokensUsed?: number }> {
-    const url = buildApiUrl(config.apiUrl, config.protocol, config.model);
-
-    logger.debug('SDK', `Querying Custom/Gemini JSON (${config.model})`, {
-      promptLength: prompt.length
-    });
-
-    const result = await fetchWithTimeoutAndRetry(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': config.apiKey,
-      },
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: buildGeminiGenerationConfig(config.model, true),
-      }),
-    }, config);
-
-    if (!result.ok) {
-      throw new Error(`Custom/Gemini API error: ${result.status} - ${result.body}`);
-    }
-
-    const data = JSON.parse(result.body) as GeminiResponse;
-    const parts = data.candidates?.[0]?.content?.parts;
-
-    if (!parts || parts.length === 0) {
-      logger.error('SDK', 'Empty JSON response from Custom/Gemini');
-      return { content: '' };
-    }
-
-    const content = extractResponseText(parts);
-
-    if (!content) {
-      // Model chose to skip (only thinking content, no actual output) - this is expected behavior
-      logger.debug('SDK', 'No non-thinking content in Custom/Gemini response (intentional skip)', {
-        partsCount: parts.length,
-        hasThought: parts.some(p => p.thought),
-        hasThoughtSignature: parts.some(p => !!p.thoughtSignature),
-        rawResponse: result.body
-      });
-    }
-
-    return { content, tokensUsed: data.usageMetadata?.totalTokenCount };
-  }
-
-  /**
-   * Query Gemini with JSON response format (streaming)
-   */
-  private async queryGeminiJsonStream(
-    prompt: string,
-    config: CustomAgentConfig
-  ): Promise<{ content: string; tokensUsed?: number }> {
-    const url = buildApiUrl(config.apiUrl, config.protocol, config.model, true);
-
-    logger.debug('SDK', `Querying Custom/Gemini JSON stream (${config.model})`, {
-      promptLength: prompt.length,
-      url
-    });
-
-    const result = await fetchWithTimeoutAndRetry(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': config.apiKey,
-      },
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: buildGeminiGenerationConfig(config.model, true),
-      }),
-    }, config);
-
-    if (!result.ok) {
-      throw new Error(`Custom/Gemini API error: ${result.status} - ${result.body}`);
-    }
-
-    const { parts, tokensUsed } = parseGeminiSseStream(result.body);
-
-    if (parts.length === 0) {
-      logger.error('SDK', 'Empty JSON stream response from Custom/Gemini', {
-        rawResponse: result.body
-      });
-      return { content: '' };
-    }
-
-    const content = extractResponseText(parts);
-
-    if (!content) {
-      // Model chose to skip (only thinking content, no actual output) - this is expected behavior
-      logger.debug('SDK', 'No non-thinking content in Custom/Gemini JSON stream response (intentional skip)', {
-        partsCount: parts.length,
-        hasThought: parts.some(p => p.thought),
-        hasThoughtSignature: parts.some(p => !!p.thoughtSignature),
-        rawResponse: result.body,
-        parsedParts: JSON.stringify(parts)
-      });
-    }
-
-    return { content, tokensUsed };
-  }
-
-  /**
-   * Query OpenAI with JSON response format
-   */
-  private async queryOpenAIJson(
-    prompt: string,
-    config: CustomAgentConfig
-  ): Promise<{ content: string; tokensUsed?: number }> {
-    logger.debug('SDK', `Querying Custom/OpenAI JSON (${config.model})`, {
-      promptLength: prompt.length
-    });
-
-    const url = buildApiUrl(config.apiUrl, config.protocol, config.model);
-
-    const result = await fetchWithTimeoutAndRetry(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: config.model,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.3,
-        max_tokens: 4096,
-        response_format: { type: 'json_object' },
-      }),
-    }, config);
-
-    if (!result.ok) {
-      throw new Error(`Custom/OpenAI API error: ${result.status} - ${result.body}`);
-    }
-
-    const data = JSON.parse(result.body) as OpenAIResponse;
-    const content = data.choices?.[0]?.message?.content || '';
-    const tokensUsed = data.usage?.total_tokens;
-
-    return { content, tokensUsed };
-  }
-
-  /**
-   * Query OpenAI with JSON response format (streaming)
-   */
-  private async queryOpenAIJsonStream(
-    prompt: string,
-    config: CustomAgentConfig
-  ): Promise<{ content: string; tokensUsed?: number }> {
-    logger.debug('SDK', `Querying Custom/OpenAI JSON stream (${config.model})`, {
-      promptLength: prompt.length
-    });
-
-    const url = buildApiUrl(config.apiUrl, config.protocol, config.model);
-
-    const result = await fetchWithTimeoutAndRetry(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: config.model,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.3,
-        max_tokens: 4096,
-        response_format: { type: 'json_object' },
-        stream: true,
-        stream_options: { include_usage: true },
-      }),
-    }, config);
-
-    if (!result.ok) {
-      throw new Error(`Custom/OpenAI API error: ${result.status} - ${result.body}`);
-    }
-
-    const { content, tokensUsed } = parseOpenAISseStream(result.body);
-
-    if (!content) {
-      logger.error('SDK', 'Empty JSON stream response from Custom/OpenAI');
       return { content: '' };
     }
 
