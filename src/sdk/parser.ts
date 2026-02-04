@@ -357,11 +357,21 @@ export function parseSummaryJson(text: string, sessionId?: number): ParsedSummar
 
     return summary;
   } catch (error) {
+    const trimmedPreprocessed = jsonText.trim();
+    const trimmedRaw = text.trim();
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    const data: Record<string, unknown> = {
+      error: errorMsg,
+      rawText: text
+    };
+    if (trimmedPreprocessed && trimmedPreprocessed !== trimmedRaw) {
+      data.preprocessedText = trimmedPreprocessed;
+    }
+
     logger.error('PARSER', 'Failed to parse JSON summary', {
       sessionId,
-      textLength: text.length,
-      textPreview: text.substring(0, 200)
-    }, error as Error);
+      textLength: text.length
+    }, data);
     return null;
   }
 }
@@ -393,9 +403,31 @@ export function parseSummaryJson(text: string, sessionId?: number): ParsedSummar
  */
 export function parseObservationsJson(text: string, correlationId?: string): ParsedObservation[] {
   const jsonText = preprocessJsonResponse(text, true);
+  const trimmed = jsonText.trim();
+
+  // JSON observation mode is allowed to "skip" by returning no JSON at all.
+  // Many models/proxies will still emit a short plain-text explanation despite prompt instructions.
+  // Treat responses with no JSON payload as a skip (parity with XML parsing: no <observation> tags => no observations).
+  if (!trimmed.includes('{') && !trimmed.includes('[')) {
+    logger.debug('PARSER', 'Non-JSON response in JSON observation mode - treated as skip', {
+      correlationId,
+      textLength: text.length,
+      textPreview: text.substring(0, 200)
+    });
+    return [];
+  }
 
   try {
-    const data = JSON.parse(jsonText);
+    const data = JSON.parse(trimmed);
+
+    // Explicit skip sentinel (optional contract for JSON-mode providers)
+    if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
+      const obj = data as Record<string, unknown>;
+      if (obj.skip === true) {
+        logger.debug('PARSER', 'JSON observation skipped via sentinel', { correlationId });
+        return [];
+      }
+    }
 
     // Handle array of observations or single observation
     let rawObservations: unknown[];
@@ -465,11 +497,20 @@ export function parseObservationsJson(text: string, correlationId?: string): Par
 
     return observations;
   } catch (error) {
+    const trimmedRaw = text.trim();
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    const data: Record<string, unknown> = {
+      error: errorMsg,
+      rawText: text
+    };
+    if (trimmed && trimmed !== trimmedRaw) {
+      data.preprocessedText = trimmed;
+    }
+
     logger.error('PARSER', 'Failed to parse JSON observations', {
       correlationId,
-      textLength: text.length,
-      textPreview: text.substring(0, 200)
-    }, error as Error);
+      textLength: text.length
+    }, data);
     return [];
   }
 }
