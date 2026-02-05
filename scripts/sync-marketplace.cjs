@@ -106,9 +106,10 @@ try {
   try {
     // First ensure the cache directory exists
     execSync(`mkdir -p "${CACHE_VERSION_PATH}"`, { stdio: 'pipe' });
-    // Use cp instead of rsync to avoid permission issues with macOS
+    // Use cp with plugin/. to copy all contents including hidden files
+    // Note: plugin/* would miss .claude-plugin and .mcp.json due to shell globbing
     execSync(
-      `cp -R plugin/* "${CACHE_VERSION_PATH}/"`,
+      `cp -R plugin/. "${CACHE_VERSION_PATH}/"`,
       { stdio: 'inherit' }
     );
   } catch (cpError) {
