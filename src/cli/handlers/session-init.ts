@@ -19,11 +19,11 @@ export const sessionInitHandler: EventHandler = {
       return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
     }
 
-    const { sessionId, cwd, prompt } = input;
+    const { sessionId, cwd, prompt: rawPrompt } = input;
 
-    if (!prompt) {
-      throw new Error('sessionInitHandler requires prompt');
-    }
+    // Handle image-only prompts (where text prompt is empty/undefined)
+    // Use placeholder so sessions still get created and tracked for memory
+    const prompt = (!rawPrompt || !rawPrompt.trim()) ? '[media prompt]' : rawPrompt;
 
     const project = getProjectName(cwd);
     const port = getWorkerPort();

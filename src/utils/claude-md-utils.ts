@@ -17,6 +17,21 @@ import { getWorkerHost } from '../shared/worker-utils.js';
 const SETTINGS_PATH = path.join(os.homedir(), '.claude-mem', 'settings.json');
 
 /**
+ * Check for consecutive duplicate path segments like frontend/frontend/ or src/src/.
+ * This catches paths created when cwd already includes the directory name (Issue #814).
+ *
+ * @param resolvedPath - The resolved absolute path to check
+ * @returns true if consecutive duplicate segments are found
+ */
+function hasConsecutiveDuplicateSegments(resolvedPath: string): boolean {
+  const segments = resolvedPath.split(path.sep).filter(s => s && s !== '.' && s !== '..');
+  for (let i = 1; i < segments.length; i++) {
+    if (segments[i] === segments[i - 1]) return true;
+  }
+  return false;
+}
+
+/**
  * Validate that a file path is safe for CLAUDE.md generation.
  * Rejects tilde paths, URLs, command-like strings, and paths with invalid chars.
  *
@@ -46,6 +61,12 @@ function isValidPathForClaudeMd(filePath: string, projectRoot?: string): boolean
     const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(projectRoot, filePath);
     const normalizedRoot = path.resolve(projectRoot);
     if (!resolved.startsWith(normalizedRoot + path.sep) && resolved !== normalizedRoot) {
+      return false;
+    }
+
+    // Reject paths with consecutive duplicate segments (Issue #814)
+    // e.g., frontend/frontend/, backend/backend/, src/src/
+    if (hasConsecutiveDuplicateSegments(resolved)) {
       return false;
     }
   }
@@ -237,6 +258,27 @@ export function formatTimelineForClaudeMd(timelineText: string): string {
 }
 
 /**
+ * Built-in directory names where CLAUDE.md generation is unsafe or undesirable.
+ * e.g. Android res/ is compiler-strict (non-XML breaks build); .git, build, node_modules are tooling-owned.
+ */
+const EXCLUDED_UNSAFE_DIRECTORIES = new Set([
+  'res',
+  '.git',
+  'build',
+  'node_modules',
+  '__pycache__'
+]);
+
+/**
+ * Returns true if folder path contains any excluded segment (e.g. .../res/..., .../node_modules/...).
+ */
+function isExcludedUnsafeDirectory(folderPath: string): boolean {
+  const normalized = path.normalize(folderPath);
+  const segments = normalized.split(path.sep);
+  return segments.some(segment => EXCLUDED_UNSAFE_DIRECTORIES.has(segment));
+}
+
+/**
  * Check if a folder is a project root (contains .git directory).
  * Project root CLAUDE.md files should remain user-managed, not auto-updated.
  */
@@ -266,6 +308,26 @@ export async function updateFolderClaudeMdFiles(
   const settings = SettingsDefaultsManager.loadFromFile(SETTINGS_PATH);
   const limit = parseInt(settings.CLAUDE_MEM_CONTEXT_OBSERVATIONS, 10) || 50;
 
+  // Track folders containing CLAUDE.md files that were read/modified in this observation.
+  // We must NOT update these - it would cause "file modified since read" errors in Claude Code.
+  // See: https://github.com/thedotmack/claude-mem/issues/859
+  const foldersWithActiveClaudeMd = new Set<string>();
+
+  // First pass: identify folders with actively-used CLAUDE.md files
+  for (const filePath of filePaths) {
+    if (!filePath) continue;
+    const basename = path.basename(filePath);
+    if (basename === 'CLAUDE.md') {
+      let absoluteFilePath = filePath;
+      if (projectRoot && !path.isAbsolute(filePath)) {
+        absoluteFilePath = path.join(projectRoot, filePath);
+      }
+      const folderPath = path.dirname(absoluteFilePath);
+      foldersWithActiveClaudeMd.add(folderPath);
+      logger.debug('FOLDER_INDEX', 'Detected active CLAUDE.md, will skip folder', { folderPath });
+    }
+  }
+
   // Extract unique folder paths from file paths
   const folderPaths = new Set<string>();
   for (const filePath of filePaths) {
@@ -288,6 +350,16 @@ export async function updateFolderClaudeMdFiles(
       // Skip project root - root CLAUDE.md should remain user-managed
       if (isProjectRoot(folderPath)) {
         logger.debug('FOLDER_INDEX', 'Skipping project root CLAUDE.md', { folderPath });
+        continue;
+      }
+      // Skip known-unsafe directories (e.g. Android res/, .git, build, node_modules)
+      if (isExcludedUnsafeDirectory(folderPath)) {
+        logger.debug('FOLDER_INDEX', 'Skipping unsafe directory for CLAUDE.md', { folderPath });
+        continue;
+      }
+      // Skip folders where CLAUDE.md was read/modified in this observation (issue #859)
+      if (foldersWithActiveClaudeMd.has(folderPath)) {
+        logger.debug('FOLDER_INDEX', 'Skipping folder with active CLAUDE.md to avoid race condition', { folderPath });
         continue;
       }
       folderPaths.add(folderPath);

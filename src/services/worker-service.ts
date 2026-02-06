@@ -95,6 +95,8 @@ import { SDKAgent } from './worker/SDKAgent.js';
 import { GeminiAgent } from './worker/GeminiAgent.js';
 import { OpenRouterAgent } from './worker/OpenRouterAgent.js';
 import { CustomAgent } from './worker/CustomAgent.js';
+import { isGeminiSelected, isGeminiAvailable } from './worker/GeminiAgent.js';
+import { isOpenRouterSelected, isOpenRouterAvailable } from './worker/OpenRouterAgent.js';
 import { PaginationHelper } from './worker/PaginationHelper.js';
 import { SettingsManager } from './worker/SettingsManager.js';
 import { SearchManager } from './worker/SearchManager.js';
@@ -253,6 +255,27 @@ export class WorkerService {
 
       next(); // Delegate to SearchRoutes handler
     });
+
+    // Early handler for /api/sessions/init to wait for database initialization
+    // Fixes race condition where session-init hook is called before DB is ready
+    // See: https://github.com/thedotmack/claude-mem/issues/XXX
+    this.server.app.post('/api/sessions/init', async (req, res, next) => {
+      const timeoutMs = 30000; // 30 second timeout for session init
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Database initialization timeout')), timeoutMs)
+      );
+
+      try {
+        await Promise.race([this.initializationComplete, timeoutPromise]);
+        next(); // Delegate to SessionRoutes handler
+      } catch (error) {
+        logger.error('HTTP', 'Session init failed waiting for initialization', {}, error as Error);
+        res.status(503).json({
+          error: 'Service initializing',
+          message: 'Database is still initializing, please retry'
+        });
+      }
+    });
   }
 
   /**
@@ -375,7 +398,23 @@ export class WorkerService {
   }
 
   /**
+   * Get the appropriate agent based on provider settings.
+   * Same logic as SessionRoutes.getActiveAgent() for consistency.
+   */
+  private getActiveAgent(): SDKAgent | GeminiAgent | OpenRouterAgent {
+    if (isOpenRouterSelected() && isOpenRouterAvailable()) {
+      return this.openRouterAgent;
+    }
+    if (isGeminiSelected() && isGeminiAvailable()) {
+      return this.geminiAgent;
+    }
+    return this.sdkAgent;
+  }
+
+  /**
    * Start a session processor
+   * On SDK resume failure (terminated session), falls back to Gemini/OpenRouter if available,
+   * otherwise marks messages abandoned and removes session so queue does not grow unbounded.
    */
   private startSessionProcessor(
     session: ReturnType<typeof this.sessionManager.getSession>,
@@ -384,19 +423,104 @@ export class WorkerService {
     if (!session) return;
 
     const sid = session.sessionDbId;
-    logger.info('SYSTEM', `Starting generator (${source})`, { sessionId: sid });
+    const agent = this.getActiveAgent();
+    const providerName = agent.constructor.name;
 
-    session.generatorPromise = this.sdkAgent.startSession(session, this)
-      .catch(error => {
+    logger.info('SYSTEM', `Starting generator (${source}) using ${providerName}`, { sessionId: sid });
+
+    session.generatorPromise = agent.startSession(session, this)
+      .catch(async (error: unknown) => {
+        if (this.isSessionTerminatedError(error)) {
+          logger.warn('SDK', 'SDK resume failed, falling back to standalone processing', {
+            sessionId: session.sessionDbId,
+            project: session.project,
+            reason: error instanceof Error ? error.message : String(error)
+          });
+          return this.runFallbackForTerminatedSession(session, error);
+        }
         logger.error('SDK', 'Session generator failed', {
           sessionId: session.sessionDbId,
-          project: session.project
+          project: session.project,
+          provider: providerName
         }, error as Error);
+        throw error;
       })
       .finally(() => {
         session.generatorPromise = null;
         this.broadcastProcessingStatus();
       });
+  }
+
+  /**
+   * Match errors that indicate the Claude Code process/session is gone (resume impossible).
+   * Used to trigger graceful fallback instead of leaving pending messages stuck forever.
+   */
+  private isSessionTerminatedError(error: unknown): boolean {
+    const msg = error instanceof Error ? error.message : String(error);
+    const normalized = msg.toLowerCase();
+    return (
+      normalized.includes('process aborted by user') ||
+      normalized.includes('processtransport') ||
+      normalized.includes('not ready for writing') ||
+      normalized.includes('session generator failed') ||
+      normalized.includes('claude code process')
+    );
+  }
+
+  /**
+   * When SDK resume fails due to terminated session: try Gemini then OpenRouter to drain
+   * pending messages; if no fallback available, mark messages abandoned and remove session.
+   */
+  private async runFallbackForTerminatedSession(
+    session: ReturnType<typeof this.sessionManager.getSession>,
+    _originalError: unknown
+  ): Promise<void> {
+    if (!session) return;
+
+    const sessionDbId = session.sessionDbId;
+
+    // Fallback agents need memorySessionId for storeObservations
+    if (!session.memorySessionId) {
+      const syntheticId = `fallback-${sessionDbId}-${Date.now()}`;
+      session.memorySessionId = syntheticId;
+      this.dbManager.getSessionStore().updateMemorySessionId(sessionDbId, syntheticId);
+    }
+
+    if (isGeminiAvailable()) {
+      try {
+        await this.geminiAgent.startSession(session, this);
+        return;
+      } catch (e) {
+        logger.warn('SDK', 'Fallback Gemini failed, trying OpenRouter', {
+          sessionId: sessionDbId,
+          error: e instanceof Error ? e.message : String(e)
+        });
+      }
+    }
+
+    if (isOpenRouterAvailable()) {
+      try {
+        await this.openRouterAgent.startSession(session, this);
+        return;
+      } catch (e) {
+        logger.warn('SDK', 'Fallback OpenRouter failed', {
+          sessionId: sessionDbId,
+          error: e instanceof Error ? e.message : String(e)
+        });
+      }
+    }
+
+    // No fallback or both failed: mark messages abandoned and remove session so queue doesn't grow
+    const pendingStore = this.sessionManager.getPendingMessageStore();
+    const abandoned = pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
+    if (abandoned > 0) {
+      logger.warn('SDK', 'No fallback available; marked pending messages abandoned', {
+        sessionId: sessionDbId,
+        abandoned
+      });
+    }
+    this.sessionManager.removeSessionImmediate(sessionDbId);
+    this.sessionEventBroadcaster.broadcastSessionCompleted(sessionDbId);
   }
 
   /**
@@ -410,6 +534,46 @@ export class WorkerService {
   }> {
     const { PendingMessageStore } = await import('./sqlite/PendingMessageStore.js');
     const pendingStore = new PendingMessageStore(this.dbManager.getSessionStore().db, 3);
+    const sessionStore = this.dbManager.getSessionStore();
+
+    // Clean up stale 'active' sessions before processing
+    // Sessions older than 6 hours without activity are likely orphaned
+    const STALE_SESSION_THRESHOLD_MS = 6 * 60 * 60 * 1000;
+    const staleThreshold = Date.now() - STALE_SESSION_THRESHOLD_MS;
+
+    try {
+      const staleSessionIds = sessionStore.db.prepare(`
+        SELECT id FROM sdk_sessions
+        WHERE status = 'active' AND started_at_epoch < ?
+      `).all(staleThreshold) as { id: number }[];
+
+      if (staleSessionIds.length > 0) {
+        const ids = staleSessionIds.map(r => r.id);
+        const placeholders = ids.map(() => '?').join(',');
+
+        sessionStore.db.prepare(`
+          UPDATE sdk_sessions
+          SET status = 'failed', completed_at_epoch = ?
+          WHERE id IN (${placeholders})
+        `).run(Date.now(), ...ids);
+
+        logger.info('SYSTEM', `Marked ${ids.length} stale sessions as failed`);
+
+        const msgResult = sessionStore.db.prepare(`
+          UPDATE pending_messages
+          SET status = 'failed', failed_at_epoch = ?
+          WHERE status = 'pending'
+          AND session_db_id IN (${placeholders})
+        `).run(Date.now(), ...ids);
+
+        if (msgResult.changes > 0) {
+          logger.info('SYSTEM', `Marked ${msgResult.changes} pending messages from stale sessions as failed`);
+        }
+      }
+    } catch (error) {
+      logger.error('SYSTEM', 'Failed to clean up stale sessions', {}, error as Error);
+    }
+
     const orphanedSessionIds = pendingStore.getSessionsWithPendingMessages();
 
     const result = {
