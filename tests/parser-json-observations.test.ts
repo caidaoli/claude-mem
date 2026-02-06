@@ -63,4 +63,25 @@ describe('parseObservationsJson', () => {
     expect(dataArg).toBeTruthy();
     expect(dataArg.rawText).toBe(input);
   });
+
+  it('parses valid JSON object when trailing garbage exists', () => {
+    const input = '{"type":"discovery","title":"ok","facts":[],"files_read":[],"files_modified":[],"concepts":[]}\n"]}\n"]}"';
+
+    const result = parseObservationsJson(input, 'test-correlation-id');
+
+    expect(result).toHaveLength(1);
+    expect(result[0].type).toBe('discovery');
+    expect(result[0].title).toBe('ok');
+  });
+
+  it('skips malformed leading blob and parses later valid JSON object', () => {
+    const badPrefix = '{"type":"discovery","title":"bad","files_read":["src/components/{"type":"oops"],"files_modified":[],"concepts":[]}';
+    const goodObject = '{"type":"discovery","title":"good","facts":[],"files_read":[],"files_modified":[],"concepts":[]}';
+    const input = `${badPrefix}\n${goodObject}\n[]}`;
+
+    const result = parseObservationsJson(input, 'test-correlation-id');
+
+    expect(result).toHaveLength(1);
+    expect(result[0].title).toBe('good');
+  });
 });

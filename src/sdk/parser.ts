@@ -251,18 +251,18 @@ function extractArrayElements(content: string, arrayName: string, elementName: s
 }
 
 /**
- * Extract a balanced JSON object from text by tracking brace depth
- * Handles cases where JSON is embedded in other text or truncated
+ * Extract balanced JSON segment from a specific index.
+ * Supports nested objects/arrays and quoted strings with escapes.
  */
-function extractBalancedJson(text: string): string | null {
-  const startIdx = text.indexOf('{');
-  if (startIdx === -1) return null;
+function extractBalancedJsonFromIndex(text: string, startIdx: number): string | null {
+  const startChar = text[startIdx];
+  if (startChar !== '{' && startChar !== '[') return null;
 
-  let depth = 0;
+  const stack: string[] = [startChar];
   let inString = false;
   let escape = false;
 
-  for (let i = startIdx; i < text.length; i++) {
+  for (let i = startIdx + 1; i < text.length; i++) {
     const char = text[i];
 
     if (escape) {
@@ -275,24 +275,70 @@ function extractBalancedJson(text: string): string | null {
       continue;
     }
 
-    if (char === '"' && !escape) {
+    if (char === '"') {
       inString = !inString;
       continue;
     }
 
-    if (!inString) {
-      if (char === '{') {
-        depth++;
-      } else if (char === '}') {
-        depth--;
-        if (depth === 0) {
-          return text.substring(startIdx, i + 1);
-        }
+    if (inString) {
+      continue;
+    }
+
+    if (char === '{' || char === '[') {
+      stack.push(char);
+      continue;
+    }
+
+    if (char === '}' || char === ']') {
+      const open = stack.pop();
+      if (!open) return null;
+
+      const expectedClose = open === '{' ? '}' : ']';
+      if (char !== expectedClose) {
+        return null;
+      }
+
+      if (stack.length === 0) {
+        return text.substring(startIdx, i + 1);
       }
     }
   }
 
-  // If we couldn't find balanced braces, return null
+  return null;
+}
+
+/**
+ * Find the first parsable balanced JSON segment in text.
+ * Useful for recovering from proxy noise, duplicated stream fragments,
+ * and trailing garbage after a valid JSON payload.
+ */
+function extractBalancedJson(text: string, allowArray: boolean = false): string | null {
+  const scanFor = (startChar: '{' | '['): string | null => {
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] !== startChar) continue;
+
+      const candidate = extractBalancedJsonFromIndex(text, i);
+      if (!candidate) continue;
+
+      try {
+        JSON.parse(candidate);
+        return candidate;
+      } catch {
+        // Continue searching for a later valid JSON segment
+      }
+    }
+    return null;
+  };
+
+  // Prefer object roots first to avoid accidentally extracting small arrays
+  // nested inside malformed object text (e.g., "files_modified":[]).
+  const objectCandidate = scanFor('{');
+  if (objectCandidate) return objectCandidate;
+
+  if (allowArray) {
+    return scanFor('[');
+  }
+
   return null;
 }
 
@@ -313,14 +359,9 @@ function preprocessJsonResponse(text: string, allowArray: boolean = false): stri
     jsonText = codeBlockMatch[1].trim();
   }
 
-  // Check if already valid JSON
-  const startsWithJson = jsonText.startsWith('{') || (allowArray && jsonText.startsWith('['));
-  if (startsWithJson) {
-    return jsonText;
-  }
-
-  // Try to extract balanced JSON object from text
-  const extracted = extractBalancedJson(jsonText);
+  // Try to extract first parsable balanced JSON segment.
+  // This handles valid JSON with trailing noise and malformed prefix snapshots.
+  const extracted = extractBalancedJson(jsonText, allowArray);
   return extracted || jsonText;
 }
 
