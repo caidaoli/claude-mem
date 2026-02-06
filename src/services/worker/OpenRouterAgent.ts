@@ -92,11 +92,11 @@ export class OpenRouterAgent {
         throw new Error('OpenRouter API key not configured. Set CLAUDE_MEM_OPENROUTER_API_KEY in settings or OPENROUTER_API_KEY environment variable.');
       }
 
-      // Generate synthetic memorySessionId (OpenRouter is stateless, doesn't return session ID)
+      // Generate synthetic memorySessionId (OpenRouter is stateless, doesn't return session IDs)
       if (!session.memorySessionId) {
-        const syntheticId = `openrouter-${session.contentSessionId}-${Date.now()}`;
-        session.memorySessionId = syntheticId;
-        this.dbManager.getSessionStore().updateMemorySessionId(session.sessionDbId, syntheticId);
+        const syntheticMemorySessionId = `openrouter-${session.contentSessionId}-${Date.now()}`;
+        session.memorySessionId = syntheticMemorySessionId;
+        this.dbManager.getSessionStore().updateMemorySessionId(session.sessionDbId, syntheticMemorySessionId);
         logger.info('SESSION', `MEMORY_ID_GENERATED | sessionDbId=${session.sessionDbId} | provider=OpenRouter`);
       }
 
@@ -145,6 +145,10 @@ export class OpenRouterAgent {
 
       // Process pending messages
       for await (const message of this.sessionManager.getMessageIterator(session.sessionDbId)) {
+        // CLAIM-CONFIRM: Track message ID for confirmProcessed() after successful storage
+        // The message is now in 'processing' status in DB until ResponseProcessor calls confirmProcessed()
+        session.processingMessageIds.push(message._persistentId);
+
         // Capture cwd from messages for proper worktree support
         if (message.cwd) {
           lastCwd = message.cwd;

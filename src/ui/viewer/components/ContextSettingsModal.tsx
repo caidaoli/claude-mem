@@ -468,7 +468,6 @@ export function ContextSettingsModal({
                       <option value="gemini-2.5-pro">gemini-2.5-pro (5 RPM free)</option>
                       <option value="gemini-2.0-flash">gemini-2.0-flash (15 RPM free)</option>
                       <option value="gemini-2.0-flash-lite">gemini-2.0-flash-lite (30 RPM free)</option>
-                      <option value="gemini-3-flash">gemini-3-flash (5 RPM free)</option>
                       <option value="gemini-3-flash-preview">gemini-3-flash-preview (5 RPM free)</option>
                     </select>
                   </FormField>

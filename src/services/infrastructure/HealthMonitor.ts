@@ -12,6 +12,7 @@
 import path from 'path';
 import { readFileSync, existsSync } from 'fs';
 import { logger } from '../../utils/logger.js';
+import { MARKETPLACE_ROOT } from '../../shared/paths.js';
 
 /**
  * Get the runtime script directory.
@@ -124,6 +125,15 @@ export async function httpShutdown(port: number): Promise<boolean> {
  * - Standard installations (~/.claude/)
  */
 export function getInstalledPluginVersion(): string {
+  // Prefer configured install location when available
+  try {
+    const packageJsonPath = path.join(MARKETPLACE_ROOT, 'package.json');
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
+    return packageJson.version;
+  } catch {
+    // Fallback to runtime discovery for non-standard installations
+  }
+
   // Walk up from current script location to find package.json
   // This works regardless of where the plugin is installed
   let dir = getRuntimeScriptDir();

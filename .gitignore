@@ -32,3 +32,6 @@ src/ui/viewer.html
 http*/
 https*/
 plugin
+
+# Ignore WebStorm project files (for dinosaur IDE users)
+.idea/
