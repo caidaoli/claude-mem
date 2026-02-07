@@ -10,7 +10,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { join, dirname } from 'path';
+import { join } from 'path';
 import { homedir } from 'os';
 import { logger } from '../utils/logger.js';
 
@@ -52,6 +52,7 @@ export const MANAGED_CREDENTIAL_KEYS = [
   'ANTHROPIC_API_KEY',
   'GEMINI_API_KEY',
   'OPENROUTER_API_KEY',
+  'CUSTOM_API_KEY',
 ];
 
 export interface ClaudeMemEnv {
@@ -59,6 +60,7 @@ export interface ClaudeMemEnv {
   ANTHROPIC_API_KEY?: string;
   GEMINI_API_KEY?: string;
   OPENROUTER_API_KEY?: string;
+  CUSTOM_API_KEY?: string;
 }
 
 /**
@@ -134,6 +136,7 @@ export function loadClaudeMemEnv(): ClaudeMemEnv {
     if (parsed.ANTHROPIC_API_KEY) result.ANTHROPIC_API_KEY = parsed.ANTHROPIC_API_KEY;
     if (parsed.GEMINI_API_KEY) result.GEMINI_API_KEY = parsed.GEMINI_API_KEY;
     if (parsed.OPENROUTER_API_KEY) result.OPENROUTER_API_KEY = parsed.OPENROUTER_API_KEY;
+    if (parsed.CUSTOM_API_KEY) result.CUSTOM_API_KEY = parsed.CUSTOM_API_KEY;
 
     return result;
   } catch (error) {
@@ -182,6 +185,13 @@ export function saveClaudeMemEnv(env: ClaudeMemEnv): void {
         delete updated.OPENROUTER_API_KEY;
       }
     }
+    if (env.CUSTOM_API_KEY !== undefined) {
+      if (env.CUSTOM_API_KEY) {
+        updated.CUSTOM_API_KEY = env.CUSTOM_API_KEY;
+      } else {
+        delete updated.CUSTOM_API_KEY;
+      }
+    }
 
     writeFileSync(ENV_FILE_PATH, serializeEnvFile(updated), 'utf-8');
   } catch (error) {
@@ -223,12 +233,15 @@ export function buildIsolatedEnv(includeCredentials: boolean = true): Record<str
     if (credentials.ANTHROPIC_API_KEY) {
       isolatedEnv.ANTHROPIC_API_KEY = credentials.ANTHROPIC_API_KEY;
     }
-    // Note: GEMINI_API_KEY and OPENROUTER_API_KEY are handled by their respective agents
+    // Note: GEMINI_API_KEY, OPENROUTER_API_KEY, and CUSTOM_API_KEY are handled by provider agents
     if (credentials.GEMINI_API_KEY) {
       isolatedEnv.GEMINI_API_KEY = credentials.GEMINI_API_KEY;
     }
     if (credentials.OPENROUTER_API_KEY) {
       isolatedEnv.OPENROUTER_API_KEY = credentials.OPENROUTER_API_KEY;
+    }
+    if (credentials.CUSTOM_API_KEY) {
+      isolatedEnv.CUSTOM_API_KEY = credentials.CUSTOM_API_KEY;
     }
   }
 

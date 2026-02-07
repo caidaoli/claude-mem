@@ -15,18 +15,17 @@
  * - Sync to database and Chroma
  */
 
-import path from 'path';
-import { homedir } from 'os';
 import { DatabaseManager } from './DatabaseManager.js';
 import { SessionManager } from './SessionManager.js';
 import { logger } from '../../utils/logger.js';
 import { buildInitPromptJson, buildObservationPrompt, buildSummaryPromptJson, buildContinuationPromptJson } from '../../sdk/prompts.js';
 import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
+import { USER_SETTINGS_PATH } from '../../shared/paths.js';
+import { getCredential } from '../../shared/EnvManager.js';
 import type { ActiveSession, ConversationMessage } from '../worker-types.js';
 import { ModeManager } from '../domain/ModeManager.js';
 import {
   processAgentResponse,
-  cleanupProcessedMessages,
   shouldFallbackToClaude,
   isAbortError,
   type WorkerRef,
@@ -57,23 +56,29 @@ export interface CustomAgentConfig {
  * - OpenAI: {baseUrl}/v1/chat/completions
  * - Gemini: {baseUrl}/v1beta/models/{model}:generateContent or :streamGenerateContent?alt=sse
  */
-function buildApiUrl(baseUrl: string, protocol: CustomProtocol, model: string, streaming: boolean = false): string {
+export function buildApiUrl(baseUrl: string, protocol: CustomProtocol, model: string, streaming: boolean = false): string {
   // Remove trailing slash if present
   const cleanBaseUrl = baseUrl.replace(/\/+$/, '');
 
   if (protocol === 'gemini') {
+    // Accept both base URLs (https://host) and partially qualified Gemini paths
+    // (https://host/v1beta, https://host/v1beta/models) without duplicating segments.
+    const normalizedBase = cleanBaseUrl
+      .replace(/\/v1beta\/models$/i, '')
+      .replace(/\/v1beta$/i, '');
+
     // Normalize model name (avoid "models/models/..." if user included prefix)
     const cleanModel = model.replace(/^models\//, '');
     const action = streaming ? 'streamGenerateContent' : 'generateContent';
     // Add alt=sse for streaming to ensure SSE format (data: prefix on each message)
     const sseParam = streaming ? '?alt=sse' : '';
-    return `${cleanBaseUrl}/v1beta/models/${cleanModel}:${action}${sseParam}`;
+    return `${normalizedBase}/v1beta/models/${cleanModel}:${action}${sseParam}`;
   } else {
     // Allow apiUrl to be either:
     // - Base URL (https://host) -> append /v1/chat/completions
     // - OpenAI compatible base (https://host/v1) -> append /chat/completions
     // - Full endpoint (https://host/v1/chat/completions) -> use as-is
-    if (cleanBaseUrl.endsWith('/v1/chat/completions')) {
+    if (cleanBaseUrl.endsWith('/chat/completions')) {
       return cleanBaseUrl;
     }
     if (cleanBaseUrl.endsWith('/v1')) {
@@ -231,18 +236,20 @@ export function parseGeminiSseStream(responseText: string): { parts: Array<{ tex
  * Final line: data: [DONE]
  */
 function parseOpenAISseStream(responseText: string): { content: string; tokensUsed?: number } {
-  const lines = responseText.split('\n').filter(line => line.trim());
+  const lines = responseText.split(/\r?\n/);
   let content = '';
   let tokensUsed: number | undefined;
 
-  for (const line of lines) {
-    if (!line.startsWith('data:')) continue;
+  const currentEventData: string[] = [];
+  const flushEvent = () => {
+    if (currentEventData.length === 0) return;
 
-    const jsonStr = line.slice(5).trim();
-    if (!jsonStr || jsonStr === '[DONE]') continue;
+    const payload = currentEventData.join('\n').trim();
+    currentEventData.length = 0;
+    if (!payload || payload === '[DONE]') return;
 
     try {
-      const data = JSON.parse(jsonStr) as OpenAIResponse;
+      const data = JSON.parse(payload) as OpenAIResponse;
       const delta = data.choices?.[0]?.delta?.content;
       if (delta) {
         content += delta;
@@ -251,7 +258,37 @@ function parseOpenAISseStream(responseText: string): { content: string; tokensUs
         tokensUsed = data.usage.total_tokens;
       }
     } catch {
-      // Skip invalid JSON lines
+      // Skip invalid JSON events
+    }
+  };
+
+  for (const line of lines) {
+    const trimmedLine = line.trimEnd();
+    if (trimmedLine === '') {
+      flushEvent();
+      continue;
+    }
+
+    if (!trimmedLine.startsWith('data:')) continue;
+
+    currentEventData.push(trimmedLine.slice(5).replace(/^\s*/, ''));
+  }
+
+  flushEvent();
+
+  // Fallback: some providers ignore stream mode and return a single JSON object.
+  if (!content) {
+    const trimmed = responseText.trim();
+    if (trimmed.startsWith('{')) {
+      try {
+        const data = JSON.parse(trimmed) as OpenAIResponse;
+        content = data.choices?.[0]?.message?.content || '';
+        if (data.usage?.total_tokens) {
+          tokensUsed = data.usage.total_tokens;
+        }
+      } catch {
+        // ignore fallback parse errors
+      }
     }
   }
 
@@ -288,10 +325,12 @@ async function fetchWithTimeout(
   url: string,
   options: RequestInit,
   firstTokenTimeoutMs: number,
-  totalTimeoutMs: number
+  totalTimeoutMs: number,
+  externalSignal?: AbortSignal
 ): Promise<FetchResult> {
   const controller = new AbortController();
   const { signal } = controller;
+  let abortReason: 'timeout' | 'external' | null = null;
 
   const fetchOptions: RequestInit = {
     ...options,
@@ -301,22 +340,39 @@ async function fetchWithTimeout(
   let totalTimer: ReturnType<typeof setTimeout> | undefined;
   let firstTokenTimer: ReturnType<typeof setTimeout> | undefined;
 
+  const abortForTimeout = () => {
+    abortReason = 'timeout';
+    controller.abort();
+  };
+
+  const onExternalAbort = () => {
+    abortReason = 'external';
+    controller.abort();
+  };
+
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      onExternalAbort();
+    } else {
+      externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+    }
+  }
+
   const cleanup = () => {
     if (totalTimer) clearTimeout(totalTimer);
     if (firstTokenTimer) clearTimeout(firstTokenTimer);
+    if (externalSignal) {
+      externalSignal.removeEventListener('abort', onExternalAbort);
+    }
   };
 
   try {
     if (totalTimeoutMs > 0) {
-      totalTimer = setTimeout(() => {
-        controller.abort();
-      }, totalTimeoutMs);
+      totalTimer = setTimeout(abortForTimeout, totalTimeoutMs);
     }
 
     if (firstTokenTimeoutMs > 0) {
-      firstTokenTimer = setTimeout(() => {
-        controller.abort();
-      }, firstTokenTimeoutMs);
+      firstTokenTimer = setTimeout(abortForTimeout, firstTokenTimeoutMs);
     }
 
     const response = await fetch(url, fetchOptions);
@@ -335,7 +391,13 @@ async function fetchWithTimeout(
   } catch (error) {
     cleanup();
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new TimeoutError('Request timeout');
+      if (abortReason === 'timeout') {
+        throw new TimeoutError('Request timeout');
+      }
+
+      const abortError = new Error('Request aborted');
+      abortError.name = 'AbortError';
+      throw abortError;
     }
     throw error;
   }
@@ -349,14 +411,18 @@ async function fetchWithTimeoutAndRetry(
   url: string,
   options: RequestInit,
   config: CustomAgentConfig,
-  maxRetries: number = 3
+  maxRetries: number = 3,
+  abortSignal?: AbortSignal
 ): Promise<FetchResult> {
   const firstTokenTimeoutMs = config.firstTokenTimeoutSeconds > 0 ? config.firstTokenTimeoutSeconds * 1000 : 0;
   const totalTimeoutMs = config.totalTimeoutSeconds > 0 ? config.totalTimeoutSeconds * 1000 : 0;
 
   // If no timeout configured, just do a normal fetch and read body
   if (firstTokenTimeoutMs === 0 && totalTimeoutMs === 0) {
-    const response = await fetch(url, options);
+    const fetchOptions: RequestInit = abortSignal
+      ? { ...options, signal: abortSignal }
+      : options;
+    const response = await fetch(url, fetchOptions);
     const body = await response.text();
     return { ok: response.ok, status: response.status, body };
   }
@@ -365,7 +431,7 @@ async function fetchWithTimeoutAndRetry(
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      return await fetchWithTimeout(url, options, firstTokenTimeoutMs, totalTimeoutMs);
+      return await fetchWithTimeout(url, options, firstTokenTimeoutMs, totalTimeoutMs, abortSignal);
     } catch (error) {
       if (error instanceof TimeoutError) {
         lastError = error;
@@ -399,6 +465,29 @@ interface OpenAIMessage {
   content: string;
 }
 
+const CUSTOM_PROTOCOLS: ReadonlyArray<CustomProtocol> = ['openai', 'gemini'];
+
+function parseCustomProtocol(rawProtocol: unknown): CustomProtocol {
+  if (typeof rawProtocol === 'string') {
+    const normalized = rawProtocol.trim().toLowerCase();
+    if ((CUSTOM_PROTOCOLS as ReadonlyArray<string>).includes(normalized)) {
+      return normalized as CustomProtocol;
+    }
+  }
+
+  logger.warn('SDK', 'Invalid custom protocol configured, falling back to openai', {
+    configured: rawProtocol,
+    validProtocols: CUSTOM_PROTOCOLS
+  });
+
+  return 'openai';
+}
+
+function parseOptionalPositiveInt(value: unknown): number {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
 export class CustomAgent {
   private dbManager: DatabaseManager;
   private sessionManager: SessionManager;
@@ -416,6 +505,21 @@ export class CustomAgent {
     this.fallbackAgent = agent;
   }
 
+  private resetProcessingMessagesToPending(session: ActiveSession): void {
+    if (session.processingMessageIds.length === 0) {
+      return;
+    }
+
+    logger.info('QUEUE', `RESET_PROCESSING_ON_FALLBACK | sessionDbId=${session.sessionDbId} | count=${session.processingMessageIds.length} | ids=[${session.processingMessageIds.join(',')}]`);
+
+    const pendingStore = this.sessionManager.getPendingMessageStore();
+    for (const messageId of session.processingMessageIds) {
+      pendingStore.resetToPending(messageId);
+    }
+
+    session.processingMessageIds = [];
+  }
+
   /**
    * Start Custom agent for a session
    */
@@ -424,7 +528,7 @@ export class CustomAgent {
       const config = this.getCustomConfig();
 
       if (!config.apiUrl || !config.apiKey) {
-        throw new Error('Custom provider not configured. Set CLAUDE_MEM_CUSTOM_API_URL and CLAUDE_MEM_CUSTOM_API_KEY in settings.');
+        throw new Error('Custom provider not configured. Set CLAUDE_MEM_CUSTOM_API_URL in settings and configure CLAUDE_MEM_CUSTOM_API_KEY or CUSTOM_API_KEY.');
       }
 
       // CRITICAL: Always load memorySessionId from database for Custom agent
@@ -456,7 +560,7 @@ export class CustomAgent {
 
       // Add to conversation history and query with full context (multi-turn)
       session.conversationHistory.push({ role: 'user', content: initPrompt });
-      const initResponse = await this.queryJsonMultiTurn(session.conversationHistory, config);
+      const initResponse = await this.queryJsonMultiTurn(session.conversationHistory, config, session.abortController.signal);
 
       if (initResponse.content) {
         const tokensUsed = initResponse.tokensUsed || 0;
@@ -479,8 +583,8 @@ export class CustomAgent {
           }
         );
       } else {
-        // Model chose to skip initial observation - this is expected when prompt doesn't warrant recording
-        logger.debug('SDK', 'Empty Custom init response - model chose to skip', {
+        // Empty response is a valid scenario - model may choose to skip initial observation
+        logger.warn('SDK', 'Empty Custom init response - model chose to skip or session may lack context', {
           sessionId: session.sessionDbId,
           model: config.model
         });
@@ -540,29 +644,18 @@ ${validTypesDesc}
 {"type":"${mode.observation_types[0].id}","title":"...","narrative":"...","files_read":[...],"files_modified":[...],"concepts":[...]}${languageInstruction}`;
 
           session.conversationHistory.push({ role: 'user', content: obsPromptWithJsonFormat });
-          const obsResponse = await this.queryJsonMultiTurn(session.conversationHistory, config);
+          const obsResponse = await this.queryJsonMultiTurn(session.conversationHistory, config, session.abortController.signal);
 
           let tokensUsed = 0;
           if (obsResponse.content) {
-            // Add response to conversation history for context continuity
-            session.conversationHistory.push({ role: 'assistant', content: obsResponse.content });
-
             tokensUsed = obsResponse.tokensUsed || 0;
             session.cumulativeInputTokens += Math.floor(tokensUsed * 0.7);
             session.cumulativeOutputTokens += Math.floor(tokensUsed * 0.3);
-          } else {
-            // Model chose to skip - avoid noisy JSON parse logs and unnecessary DB transactions
-            logger.debug('SDK', 'Empty Custom observation response - model chose to skip', {
-              sessionId: session.sessionDbId,
-              model: config.model,
-              promptNumber: session.lastPromptNumber
-            });
-            cleanupProcessedMessages(session, worker);
-            continue;
           }
 
+          // Process response using shared ResponseProcessor
           await processAgentResponse(
-            obsResponse.content,
+            obsResponse.content || '',
             session,
             this.dbManager,
             this.sessionManager,
@@ -573,7 +666,7 @@ ${validTypesDesc}
             lastCwd,
             {
               parseJsonObservation: true,
-              observationText: obsResponse.content
+              observationText: obsResponse.content || ''
             }
           );
 
@@ -594,32 +687,18 @@ ${validTypesDesc}
 
           // Add to conversation history and query with full context (multi-turn)
           session.conversationHistory.push({ role: 'user', content: summaryPrompt });
-          const summaryResponse = await this.queryJsonMultiTurn(session.conversationHistory, config);
+          const summaryResponse = await this.queryJsonMultiTurn(session.conversationHistory, config, session.abortController.signal);
 
           let tokensUsed = 0;
           if (summaryResponse.content) {
-            // Add response to conversation history for context continuity
-            session.conversationHistory.push({ role: 'assistant', content: summaryResponse.content });
-
             tokensUsed = summaryResponse.tokensUsed || 0;
             session.cumulativeInputTokens += Math.floor(tokensUsed * 0.7);
             session.cumulativeOutputTokens += Math.floor(tokensUsed * 0.3);
-
-            logger.debug('SDK', 'Custom JSON summary response received', {
-              sessionId: session.sessionDbId,
-              responseLength: summaryResponse.content.length
-            });
-          } else {
-            logger.warn('SDK', 'Custom returned empty summary response', {
-              sessionId: session.sessionDbId
-            });
-            cleanupProcessedMessages(session, worker);
-            continue;
           }
 
-          // Process response with JSON parser option
+          // Process response using shared ResponseProcessor
           await processAgentResponse(
-            summaryResponse.content,
+            summaryResponse.content || '',
             session,
             this.dbManager,
             this.sessionManager,
@@ -630,7 +709,7 @@ ${validTypesDesc}
             lastCwd,
             {
               parseJsonSummary: true,
-              summaryText: summaryResponse.content
+              summaryText: summaryResponse.content || ''
             }
           );
         }
@@ -650,6 +729,8 @@ ${validTypesDesc}
       }
 
       if (shouldFallbackToClaude(error) && this.fallbackAgent) {
+        this.resetProcessingMessagesToPending(session);
+
         logger.warn('SDK', 'Custom API failed, falling back to Claude SDK', {
           sessionDbId: session.sessionDbId,
           error: error instanceof Error ? error.message : String(error),
@@ -692,8 +773,9 @@ ${validTypesDesc}
   }
 
   /**
-   * Truncate conversation history to prevent runaway context costs
-   * Only active when maxContextMessages or maxTokens > 0
+   * Truncate conversation history to prevent runaway context costs.
+   * Uses a simple sliding window: keep the most recent messages within limits.
+   * Only active when maxContextMessages or maxTokens > 0.
    */
   private truncateHistory(history: ConversationMessage[], config: CustomAgentConfig): ConversationMessage[] {
     const { maxContextMessages, maxTokens } = config;
@@ -712,7 +794,7 @@ ${validTypesDesc}
       return history;
     }
 
-    // Sliding window: keep most recent messages within limits
+    // Simple sliding window: keep most recent messages within limits
     const truncated: ConversationMessage[] = [];
     let tokenCount = 0;
 
@@ -725,18 +807,49 @@ ${validTypesDesc}
       const exceedsTokenLimit = maxTokens > 0 && tokenCount + msgTokens > maxTokens;
 
       if (exceedsMessageLimit || exceedsTokenLimit) {
-        logger.warn('SDK', 'Context window truncated to prevent runaway costs', {
-          originalMessages: history.length,
-          keptMessages: truncated.length,
-          droppedMessages: i + 1,
-          estimatedTokens: tokenCount,
-          tokenLimit: maxTokens
-        });
         break;
       }
 
-      truncated.unshift(msg);  // Add to beginning
+      truncated.unshift(msg);
       tokenCount += msgTokens;
+    }
+
+    // Ensure we never send assistant-first history to provider APIs
+    if (truncated.length > 0 && truncated[0].role !== 'user') {
+      const firstUserIdx = truncated.findIndex(msg => msg.role === 'user');
+      if (firstUserIdx > 0) {
+        truncated.splice(0, firstUserIdx);
+      } else if (firstUserIdx === -1) {
+        // No user messages - find latest from original history
+        const latestUserMessage = [...history].reverse().find(msg => msg.role === 'user');
+        logger.warn('SDK', 'Context truncation removed all user messages, falling back to latest user input only', {
+          originalMessages: history.length,
+          tokenLimit: maxTokens,
+          messageLimit: maxContextMessages
+        });
+        return [{ role: 'user', content: latestUserMessage?.content || '' }];
+      }
+    }
+
+    if (truncated.length === 0) {
+      const latestUserMessage = [...history].reverse().find(msg => msg.role === 'user');
+      logger.warn('SDK', 'Context truncation produced empty history, falling back to latest user input only', {
+        originalMessages: history.length,
+        tokenLimit: maxTokens,
+        messageLimit: maxContextMessages
+      });
+      return [{ role: 'user', content: latestUserMessage?.content || '' }];
+    }
+
+    const droppedMessages = history.length - truncated.length;
+    if (droppedMessages > 0) {
+      logger.debug('SDK', 'Context window truncated', {
+        originalMessages: history.length,
+        keptMessages: truncated.length,
+        droppedMessages,
+        estimatedTokens: tokenCount,
+        tokenLimit: maxTokens
+      });
     }
 
     return truncated;
@@ -747,21 +860,22 @@ ${validTypesDesc}
    */
   private async queryJsonMultiTurn(
     history: ConversationMessage[],
-    config: CustomAgentConfig
+    config: CustomAgentConfig,
+    abortSignal?: AbortSignal
   ): Promise<{ content: string; tokensUsed?: number }> {
     // Truncate history if limits are configured
     const truncatedHistory = this.truncateHistory(history, config);
 
     if (config.protocol === 'gemini') {
       if (config.streaming) {
-        return this.queryGeminiJsonMultiTurnStream(truncatedHistory, config);
+        return this.queryGeminiJsonMultiTurnStream(truncatedHistory, config, abortSignal);
       }
-      return this.queryGeminiJsonMultiTurn(truncatedHistory, config);
+      return this.queryGeminiJsonMultiTurn(truncatedHistory, config, abortSignal);
     } else {
       if (config.streaming) {
-        return this.queryOpenAIJsonMultiTurnStream(truncatedHistory, config);
+        return this.queryOpenAIJsonMultiTurnStream(truncatedHistory, config, abortSignal);
       }
-      return this.queryOpenAIJsonMultiTurn(truncatedHistory, config);
+      return this.queryOpenAIJsonMultiTurn(truncatedHistory, config, abortSignal);
     }
   }
 
@@ -770,7 +884,8 @@ ${validTypesDesc}
    */
   private async queryGeminiJsonMultiTurnStream(
     history: ConversationMessage[],
-    config: CustomAgentConfig
+    config: CustomAgentConfig,
+    abortSignal?: AbortSignal
   ): Promise<{ content: string; tokensUsed?: number }> {
     const contents = this.toGeminiContents(history);
     const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
@@ -792,7 +907,7 @@ ${validTypesDesc}
         contents,
         generationConfig: buildGeminiGenerationConfig(config.model, true),
       }),
-    }, config);
+    }, config, 3, abortSignal);
 
     if (!result.ok) {
       throw new Error(`Custom/Gemini API error: ${result.status} - ${result.body}`);
@@ -813,7 +928,8 @@ ${validTypesDesc}
    */
   private async queryGeminiJsonMultiTurn(
     history: ConversationMessage[],
-    config: CustomAgentConfig
+    config: CustomAgentConfig,
+    abortSignal?: AbortSignal
   ): Promise<{ content: string; tokensUsed?: number }> {
     const contents = this.toGeminiContents(history);
     const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
@@ -835,7 +951,7 @@ ${validTypesDesc}
         contents,
         generationConfig: buildGeminiGenerationConfig(config.model, true),
       }),
-    }, config);
+    }, config, 3, abortSignal);
 
     if (!result.ok) {
       throw new Error(`Custom/Gemini API error: ${result.status} - ${result.body}`);
@@ -857,7 +973,8 @@ ${validTypesDesc}
    */
   private async queryOpenAIJsonMultiTurn(
     history: ConversationMessage[],
-    config: CustomAgentConfig
+    config: CustomAgentConfig,
+    abortSignal?: AbortSignal
   ): Promise<{ content: string; tokensUsed?: number }> {
     const messages = this.toOpenAIMessages(history);
     const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
@@ -882,7 +999,7 @@ ${validTypesDesc}
         max_tokens: 4096,
         response_format: { type: 'json_object' },
       }),
-    }, config);
+    }, config, 3, abortSignal);
 
     if (!result.ok) {
       throw new Error(`Custom/OpenAI API error: ${result.status} - ${result.body}`);
@@ -900,7 +1017,8 @@ ${validTypesDesc}
    */
   private async queryOpenAIJsonMultiTurnStream(
     history: ConversationMessage[],
-    config: CustomAgentConfig
+    config: CustomAgentConfig,
+    abortSignal?: AbortSignal
   ): Promise<{ content: string; tokensUsed?: number }> {
     const messages = this.toOpenAIMessages(history);
     const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
@@ -927,7 +1045,7 @@ ${validTypesDesc}
         stream: true,
         stream_options: { include_usage: true },
       }),
-    }, config);
+    }, config, 3, abortSignal);
 
     if (!result.ok) {
       throw new Error(`Custom/OpenAI API error: ${result.status} - ${result.body}`);
@@ -947,19 +1065,20 @@ ${validTypesDesc}
    * Get Custom configuration from settings
    */
   private getCustomConfig(): CustomAgentConfig {
-    const settingsPath = path.join(homedir(), '.claude-mem', 'settings.json');
-    const settings = SettingsDefaultsManager.loadFromFile(settingsPath);
+    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+
+    const protocol = parseCustomProtocol(settings.CLAUDE_MEM_CUSTOM_PROTOCOL);
 
     return {
       apiUrl: settings.CLAUDE_MEM_CUSTOM_API_URL || '',
-      apiKey: settings.CLAUDE_MEM_CUSTOM_API_KEY || '',
+      apiKey: settings.CLAUDE_MEM_CUSTOM_API_KEY || getCredential('CUSTOM_API_KEY') || '',
       model: settings.CLAUDE_MEM_CUSTOM_MODEL || 'gpt-4o',
-      protocol: (settings.CLAUDE_MEM_CUSTOM_PROTOCOL || 'openai') as CustomProtocol,
+      protocol,
       streaming: settings.CLAUDE_MEM_CUSTOM_STREAMING !== 'false',
-      maxContextMessages: parseInt(settings.CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES) || 0,
-      maxTokens: parseInt(settings.CLAUDE_MEM_CUSTOM_MAX_TOKENS) || 0,
-      firstTokenTimeoutSeconds: parseInt(settings.CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT) || 0,
-      totalTimeoutSeconds: parseInt(settings.CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT) || 0,
+      maxContextMessages: parseOptionalPositiveInt(settings.CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES),
+      maxTokens: parseOptionalPositiveInt(settings.CLAUDE_MEM_CUSTOM_MAX_TOKENS),
+      firstTokenTimeoutSeconds: parseOptionalPositiveInt(settings.CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT),
+      totalTimeoutSeconds: parseOptionalPositiveInt(settings.CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT),
     };
   }
 }
@@ -968,16 +1087,20 @@ ${validTypesDesc}
  * Check if Custom provider is available (has URL and API key configured)
  */
 export function isCustomAvailable(): boolean {
-  const settingsPath = path.join(homedir(), '.claude-mem', 'settings.json');
-  const settings = SettingsDefaultsManager.loadFromFile(settingsPath);
-  return !!(settings.CLAUDE_MEM_CUSTOM_API_URL && settings.CLAUDE_MEM_CUSTOM_API_KEY);
+  const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+  return !!(settings.CLAUDE_MEM_CUSTOM_API_URL && (settings.CLAUDE_MEM_CUSTOM_API_KEY || getCredential('CUSTOM_API_KEY')));
 }
 
 /**
  * Check if Custom is the selected provider
  */
 export function isCustomSelected(): boolean {
-  const settingsPath = path.join(homedir(), '.claude-mem', 'settings.json');
-  const settings = SettingsDefaultsManager.loadFromFile(settingsPath);
+  const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
   return settings.CLAUDE_MEM_PROVIDER === 'custom';
 }
+
+export const __testOnly = {
+  parseOpenAISseStream,
+  parseCustomProtocol,
+  parseOptionalPositiveInt,
+};

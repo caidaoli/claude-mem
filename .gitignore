@@ -35,3 +35,4 @@ plugin
 
 # Ignore WebStorm project files (for dinosaur IDE users)
 .idea/
+.serena/
