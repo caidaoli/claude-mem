@@ -283,6 +283,16 @@ export class SessionManager {
 
     const sessionDuration = Date.now() - session.startTime;
 
+    // CLAIM-CONFIRM: Reset any processing messages back to pending before abort
+    // This ensures messages that were claimed but not confirmed can be reprocessed
+    if (session.processingMessageIds.length > 0) {
+      logger.info('QUEUE', `RESET_PROCESSING_ON_DELETE | sessionDbId=${sessionDbId} | count=${session.processingMessageIds.length} | ids=[${session.processingMessageIds.join(',')}]`);
+      for (const messageId of session.processingMessageIds) {
+        this.pendingMessageStore.resetToPending(messageId);
+      }
+      session.processingMessageIds = [];
+    }
+
     // 1. Abort the SDK agent
     session.abortController.abort();
 

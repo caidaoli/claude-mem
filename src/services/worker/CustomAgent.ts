@@ -486,6 +486,10 @@ export class CustomAgent {
       let lastCwd: string | undefined;
 
       for await (const message of this.sessionManager.getMessageIterator(session.sessionDbId)) {
+        // CLAIM-CONFIRM: Track message ID for confirmProcessed() after successful storage
+        // The message is now in 'processing' status in DB until ResponseProcessor calls confirmProcessed()
+        session.processingMessageIds.push(message._persistentId);
+
         if (message.cwd) {
           lastCwd = message.cwd;
         }
@@ -494,6 +498,12 @@ export class CustomAgent {
         if (message.type === 'observation') {
           if (message.prompt_number !== undefined) {
             session.lastPromptNumber = message.prompt_number;
+          }
+
+          // CRITICAL: Check memorySessionId BEFORE making expensive LLM call
+          // This prevents wasting tokens when we won't be able to store the result anyway
+          if (!session.memorySessionId) {
+            throw new Error('Cannot process observations: memorySessionId not yet captured. This session may need to be reinitialized.');
           }
 
           // Build observation prompt (still XML format for input data)
@@ -530,6 +540,9 @@ ${validTypesDesc}
 
           let tokensUsed = 0;
           if (obsResponse.content) {
+            // Add response to conversation history for context continuity
+            session.conversationHistory.push({ role: 'assistant', content: obsResponse.content });
+
             tokensUsed = obsResponse.tokensUsed || 0;
             session.cumulativeInputTokens += Math.floor(tokensUsed * 0.7);
             session.cumulativeOutputTokens += Math.floor(tokensUsed * 0.3);
@@ -561,6 +574,11 @@ ${validTypesDesc}
           );
 
         } else if (message.type === 'summarize') {
+          // CRITICAL: Check memorySessionId BEFORE making expensive LLM call
+          if (!session.memorySessionId) {
+            throw new Error('Cannot process summary: memorySessionId not yet captured. This session may need to be reinitialized.');
+          }
+
           // Build JSON-format summary prompt
           const summaryPrompt = buildSummaryPromptJson({
             id: session.sessionDbId,
@@ -576,6 +594,9 @@ ${validTypesDesc}
 
           let tokensUsed = 0;
           if (summaryResponse.content) {
+            // Add response to conversation history for context continuity
+            session.conversationHistory.push({ role: 'assistant', content: summaryResponse.content });
+
             tokensUsed = summaryResponse.tokensUsed || 0;
             session.cumulativeInputTokens += Math.floor(tokensUsed * 0.7);
             session.cumulativeOutputTokens += Math.floor(tokensUsed * 0.3);

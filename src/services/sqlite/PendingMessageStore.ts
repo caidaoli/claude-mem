@@ -148,6 +148,23 @@ export class PendingMessageStore {
   }
 
   /**
+   * Reset a specific message back to pending status
+   * Used when generator is aborted before confirming the message
+   */
+  resetToPending(messageId: number): boolean {
+    const stmt = this.db.prepare(`
+      UPDATE pending_messages
+      SET status = 'pending', started_processing_at_epoch = NULL
+      WHERE id = ? AND status = 'processing'
+    `);
+    const result = stmt.run(messageId);
+    if (result.changes > 0) {
+      logger.debug('QUEUE', `RESET_TO_PENDING | messageId=${messageId}`);
+    }
+    return result.changes > 0;
+  }
+
+  /**
    * Get all pending messages for session (ordered by creation time)
    */
   getAllPending(sessionDbId: number): PersistentPendingMessage[] {
