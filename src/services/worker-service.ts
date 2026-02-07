@@ -94,7 +94,7 @@ import { SSEBroadcaster } from './worker/SSEBroadcaster.js';
 import { SDKAgent } from './worker/SDKAgent.js';
 import { GeminiAgent } from './worker/GeminiAgent.js';
 import { OpenRouterAgent } from './worker/OpenRouterAgent.js';
-import { CustomAgent } from './worker/CustomAgent.js';
+import { CustomAgent, isCustomSelected, isCustomAvailable } from './worker/CustomAgent.js';
 import { isGeminiSelected, isGeminiAvailable } from './worker/GeminiAgent.js';
 import { isOpenRouterSelected, isOpenRouterAvailable } from './worker/OpenRouterAgent.js';
 import { PaginationHelper } from './worker/PaginationHelper.js';
@@ -410,7 +410,10 @@ export class WorkerService {
    * Get the appropriate agent based on provider settings.
    * Same logic as SessionRoutes.getActiveAgent() for consistency.
    */
-  private getActiveAgent(): SDKAgent | GeminiAgent | OpenRouterAgent {
+  private getActiveAgent(): SDKAgent | GeminiAgent | OpenRouterAgent | CustomAgent {
+    if (isCustomSelected() && isCustomAvailable()) {
+      return this.customAgent;
+    }
     if (isOpenRouterSelected() && isOpenRouterAvailable()) {
       return this.openRouterAgent;
     }
