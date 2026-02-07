@@ -94,7 +94,6 @@ import { SSEBroadcaster } from './worker/SSEBroadcaster.js';
 import { SDKAgent } from './worker/SDKAgent.js';
 import { GeminiAgent } from './worker/GeminiAgent.js';
 import { OpenRouterAgent } from './worker/OpenRouterAgent.js';
-import { CustomAgent } from './worker/CustomAgent.js';
 import { isGeminiSelected, isGeminiAvailable } from './worker/GeminiAgent.js';
 import { isOpenRouterSelected, isOpenRouterAvailable } from './worker/OpenRouterAgent.js';
 import { PaginationHelper } from './worker/PaginationHelper.js';
@@ -157,7 +156,6 @@ export class WorkerService {
   private sdkAgent: SDKAgent;
   private geminiAgent: GeminiAgent;
   private openRouterAgent: OpenRouterAgent;
-  private customAgent: CustomAgent;
   private paginationHelper: PaginationHelper;
   private settingsManager: SettingsManager;
   private sessionEventBroadcaster: SessionEventBroadcaster;
@@ -185,7 +183,6 @@ export class WorkerService {
     this.sdkAgent = new SDKAgent(this.dbManager, this.sessionManager);
     this.geminiAgent = new GeminiAgent(this.dbManager, this.sessionManager);
     this.openRouterAgent = new OpenRouterAgent(this.dbManager, this.sessionManager);
-    this.customAgent = new CustomAgent(this.dbManager, this.sessionManager);
 
     this.paginationHelper = new PaginationHelper(this.dbManager);
     this.settingsManager = new SettingsManager(this.dbManager);
@@ -240,13 +237,7 @@ export class WorkerService {
    * Register all route handlers with the server
    */
   private registerRoutes(): void {
-    // Standard routes
-    this.server.registerRoutes(new ViewerRoutes(this.sseBroadcaster, this.dbManager, this.sessionManager));
-    this.server.registerRoutes(new SessionRoutes(this.sessionManager, this.dbManager, this.sdkAgent, this.geminiAgent, this.openRouterAgent, this.customAgent, this.sessionEventBroadcaster, this));
-    this.server.registerRoutes(new DataRoutes(this.paginationHelper, this.dbManager, this.sessionManager, this.sseBroadcaster, this, this.startTime));
-    this.server.registerRoutes(new SettingsRoutes(this.settingsManager));
-    this.server.registerRoutes(new LogsRoutes());
-    this.server.registerRoutes(new MemoryRoutes(this.dbManager, 'claude-mem'));
+    // IMPORTANT: Middleware must be registered BEFORE routes (Express processes in order)
 
     // Early handler for /api/context/inject — fail open if not yet initialized
     this.server.app.get('/api/context/inject', async (req, res, next) => {
@@ -259,26 +250,39 @@ export class WorkerService {
       next(); // Delegate to SearchRoutes handler
     });
 
-    // Early handler for /api/sessions/init to wait for database initialization
-    // Fixes race condition where session-init hook is called before DB is ready
-    // See: https://github.com/thedotmack/claude-mem/issues/XXX
-    this.server.app.post('/api/sessions/init', async (req, res, next) => {
-      const timeoutMs = 30000; // 30 second timeout for session init
-      const timeoutPromise = new Promise((_, reject) =>
+    // Guard ALL /api/* routes during initialization — wait for DB with timeout
+    // Exceptions: /api/health, /api/readiness, /api/version (handled by Server.ts core routes)
+    // and /api/context/inject (handled above with fail-open)
+    this.server.app.use('/api', async (req, res, next) => {
+      if (this.initializationCompleteFlag) {
+        next();
+        return;
+      }
+
+      const timeoutMs = 30000;
+      const timeoutPromise = new Promise<void>((_, reject) =>
         setTimeout(() => reject(new Error('Database initialization timeout')), timeoutMs)
       );
 
       try {
         await Promise.race([this.initializationComplete, timeoutPromise]);
-        next(); // Delegate to SessionRoutes handler
+        next();
       } catch (error) {
-        logger.error('HTTP', 'Session init failed waiting for initialization', {}, error as Error);
+        logger.error('HTTP', `Request to ${req.method} ${req.path} rejected — DB not initialized`, {}, error as Error);
         res.status(503).json({
           error: 'Service initializing',
           message: 'Database is still initializing, please retry'
         });
       }
     });
+
+    // Standard routes (registered AFTER guard middleware)
+    this.server.registerRoutes(new ViewerRoutes(this.sseBroadcaster, this.dbManager, this.sessionManager));
+    this.server.registerRoutes(new SessionRoutes(this.sessionManager, this.dbManager, this.sdkAgent, this.geminiAgent, this.openRouterAgent, this.sessionEventBroadcaster, this));
+    this.server.registerRoutes(new DataRoutes(this.paginationHelper, this.dbManager, this.sessionManager, this.sseBroadcaster, this, this.startTime));
+    this.server.registerRoutes(new SettingsRoutes(this.settingsManager));
+    this.server.registerRoutes(new LogsRoutes());
+    this.server.registerRoutes(new MemoryRoutes(this.dbManager, 'claude-mem'));
   }
 
   /**
