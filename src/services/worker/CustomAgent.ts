@@ -146,9 +146,13 @@ function buildGeminiGenerationConfig(model: string, jsonMode: boolean = false): 
   }
 
   // Minimal thinking speeds up Gemini 3 responses
-  if (model.startsWith('gemini-3')) {
+  if (model.startsWith('gemini-3-flash')) {
     config.thinkingConfig = {
       thinkingLevel: 'minimal',
+    };
+  } else if (model.startsWith('gemini-2.5-flash')) {
+    config.thinkingConfig = {
+      thinkingBudget: 0,
     };
   }
 
