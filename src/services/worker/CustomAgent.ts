@@ -47,7 +47,7 @@ export interface CustomAgentConfig {
   streaming: boolean;
   maxContextMessages: number;  // 0 = disabled
   maxTokens: number;  // 0 = disabled
-  firstTokenTimeoutSeconds: number;  // 0 = disabled
+  firstTokenTimeoutSeconds: number;  // 0 = disabled (time to first body chunk, not HTTP headers)
   totalTimeoutSeconds: number;  // 0 = disabled
 }
 
@@ -120,6 +120,65 @@ interface OpenAIResponse {
     completion_tokens?: number;
     total_tokens?: number;
   };
+  error?: {
+    code?: string | number;
+    message?: string;
+    type?: string;
+  };
+}
+
+function getResponsePreview(body: string, maxLength: number = 200): string {
+  const preview = body.replace(/\s+/g, ' ').trim();
+  if (!preview) {
+    return '<empty>';
+  }
+
+  return preview.length > maxLength
+    ? `${preview.slice(0, maxLength)}...`
+    : preview;
+}
+
+function parseJsonWithContext<T>(body: string, provider: 'Gemini' | 'OpenAI', status: number): T {
+  try {
+    return JSON.parse(body) as T;
+  } catch (error) {
+    const parseMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Custom/${provider} API returned invalid JSON (status ${status}): ${parseMessage}. Body preview: ${getResponsePreview(body)}`
+    );
+  }
+}
+
+function formatOpenAIError(errorPayload: unknown): string | null {
+  if (!errorPayload) {
+    return null;
+  }
+
+  if (typeof errorPayload === 'string') {
+    return errorPayload;
+  }
+
+  if (typeof errorPayload !== 'object') {
+    return String(errorPayload);
+  }
+
+  const errorObject = errorPayload as {
+    code?: unknown;
+    message?: unknown;
+    type?: unknown;
+  };
+
+  const code = typeof errorObject.code === 'string' || typeof errorObject.code === 'number'
+    ? String(errorObject.code)
+    : 'unknown';
+  const type = typeof errorObject.type === 'string' && errorObject.type
+    ? ` (${errorObject.type})`
+    : '';
+  const message = typeof errorObject.message === 'string' && errorObject.message
+    ? errorObject.message
+    : 'Unknown OpenAI API error';
+
+  return `${code}${type} - ${message}`;
 }
 
 /**
@@ -235,10 +294,11 @@ export function parseGeminiSseStream(responseText: string): { parts: Array<{ tex
  * Stream format: data: {"choices":[{"delta":{"content":"..."}}]}
  * Final line: data: [DONE]
  */
-function parseOpenAISseStream(responseText: string): { content: string; tokensUsed?: number } {
+function parseOpenAISseStream(responseText: string): { content: string; tokensUsed?: number; error?: string } {
   const lines = responseText.split(/\r?\n/);
   let content = '';
   let tokensUsed: number | undefined;
+  let apiError: string | undefined;
 
   const currentEventData: string[] = [];
   const flushEvent = () => {
@@ -250,6 +310,12 @@ function parseOpenAISseStream(responseText: string): { content: string; tokensUs
 
     try {
       const data = JSON.parse(payload) as OpenAIResponse;
+      const errorMessage = formatOpenAIError(data.error);
+      if (errorMessage) {
+        apiError = errorMessage;
+        return;
+      }
+
       const delta = data.choices?.[0]?.delta?.content;
       if (delta) {
         content += delta;
@@ -282,6 +348,11 @@ function parseOpenAISseStream(responseText: string): { content: string; tokensUs
     if (trimmed.startsWith('{')) {
       try {
         const data = JSON.parse(trimmed) as OpenAIResponse;
+        const errorMessage = formatOpenAIError(data.error);
+        if (errorMessage) {
+          apiError = errorMessage;
+        }
+
         content = data.choices?.[0]?.message?.content || '';
         if (data.usage?.total_tokens) {
           tokensUsed = data.usage.total_tokens;
@@ -292,7 +363,222 @@ function parseOpenAISseStream(responseText: string): { content: string; tokensUs
     }
   }
 
-  return { content, tokensUsed };
+  return { content, tokensUsed, error: apiError };
+}
+
+async function readResponseBodyText(response: Response, onFirstChunk: () => void): Promise<string> {
+  if (!response.body) {
+    const text = await response.text();
+    // Response fully received (even if empty) — clear firstTokenTimer
+    onFirstChunk();
+    return text;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let sawChunk = false;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    if (!value || value.length === 0) continue;
+
+    if (!sawChunk) {
+      sawChunk = true;
+      onFirstChunk();
+    }
+
+    chunks.push(decoder.decode(value, { stream: true }));
+  }
+
+  const flushed = decoder.decode();
+  if (flushed) {
+    chunks.push(flushed);
+  }
+
+  return chunks.join('');
+}
+
+async function* iterateResponseLines(response: Response, onFirstChunk: () => void): AsyncGenerator<string> {
+  if (!response.body) {
+    const text = await response.text();
+    // Response fully received (even if empty) — clear firstTokenTimer
+    onFirstChunk();
+    for (const line of text.split(/\r?\n/)) {
+      yield line;
+    }
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let sawChunk = false;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    if (!value || value.length === 0) continue;
+
+    if (!sawChunk) {
+      sawChunk = true;
+      onFirstChunk();
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+
+    while (true) {
+      const newlineIdx = buffer.indexOf('\n');
+      if (newlineIdx === -1) break;
+
+      let line = buffer.slice(0, newlineIdx);
+      if (line.endsWith('\r')) {
+        line = line.slice(0, -1);
+      }
+      buffer = buffer.slice(newlineIdx + 1);
+      yield line;
+    }
+  }
+
+  buffer += decoder.decode();
+  if (buffer) {
+    yield buffer;
+  }
+}
+
+/**
+ * SSE event handlers for protocol-specific parsing
+ */
+interface SseParseHandlers {
+  onSsePayload(payload: string): void;
+  shouldTryFallback(): boolean;
+  onFallbackJson(raw: string): void;
+}
+
+/**
+ * Generic SSE stream parser with non-SSE JSON fallback.
+ * Shared framing logic for both Gemini and OpenAI response parsers.
+ */
+async function parseSseStreamFromResponse<T>(
+  response: Response,
+  onFirstChunk: () => void,
+  state: T,
+  handlers: SseParseHandlers
+): Promise<T> {
+  const currentEventData: string[] = [];
+  let sawSseLine = false;
+  let captureRaw = true;
+  const rawLines: string[] = [];
+
+  const flushEvent = () => {
+    if (currentEventData.length === 0) return;
+    const payload = currentEventData.join('\n').trim();
+    currentEventData.length = 0;
+    if (!payload || payload === '[DONE]') return;
+    handlers.onSsePayload(payload);
+  };
+
+  for await (const line of iterateResponseLines(response, onFirstChunk)) {
+    if (captureRaw) {
+      rawLines.push(`${line}\n`);
+    }
+
+    if (line === '') {
+      flushEvent();
+      continue;
+    }
+
+    if (!line.startsWith('data:')) continue;
+
+    sawSseLine = true;
+    if (captureRaw) {
+      captureRaw = false;
+      rawLines.length = 0;
+    }
+
+    currentEventData.push(line.slice(5).replace(/^\s*/, ''));
+  }
+
+  flushEvent();
+
+  // Fallback: some proxies/providers ignore SSE mode and return a single JSON object.
+  if (handlers.shouldTryFallback() && !sawSseLine) {
+    const trimmed = rawLines.join('').trim();
+    if (trimmed.startsWith('{')) {
+      handlers.onFallbackJson(trimmed);
+    }
+  }
+
+  return state;
+}
+
+async function parseGeminiSseStreamFromResponse(
+  response: Response,
+  onFirstChunk: () => void
+): Promise<{ parts: Array<{ text?: string; thought?: boolean; thoughtSignature?: string }>; tokensUsed?: number }> {
+  const state = {
+    parts: [] as Array<{ text?: string; thought?: boolean; thoughtSignature?: string }>,
+    tokensUsed: undefined as number | undefined,
+  };
+
+  const parsePayload = (payload: string) => {
+    try {
+      const data = JSON.parse(payload) as GeminiResponse;
+      const parts = data.candidates?.[0]?.content?.parts;
+      if (parts) state.parts = state.parts.concat(parts);
+      if (data.usageMetadata?.totalTokenCount) state.tokensUsed = data.usageMetadata.totalTokenCount;
+    } catch {
+      // Ignore invalid/partial events
+    }
+  };
+
+  return parseSseStreamFromResponse(response, onFirstChunk, state, {
+    onSsePayload: parsePayload,
+    shouldTryFallback: () => state.parts.length === 0,
+    onFallbackJson: parsePayload,
+  });
+}
+
+async function parseOpenAISseStreamFromResponse(
+  response: Response,
+  onFirstChunk: () => void
+): Promise<{ content: string; tokensUsed?: number; error?: string }> {
+  const state = {
+    content: '',
+    tokensUsed: undefined as number | undefined,
+    error: undefined as string | undefined,
+  };
+
+  return parseSseStreamFromResponse(response, onFirstChunk, state, {
+    onSsePayload(payload) {
+      try {
+        const data = JSON.parse(payload) as OpenAIResponse;
+        const errorMessage = formatOpenAIError(data.error);
+        if (errorMessage) {
+          state.error = errorMessage;
+          return;
+        }
+        const delta = data.choices?.[0]?.delta?.content;
+        if (delta) state.content += delta;
+        if (data.usage?.total_tokens) state.tokensUsed = data.usage.total_tokens;
+      } catch {
+        // Skip invalid JSON events
+      }
+    },
+    shouldTryFallback: () => !state.content,
+    onFallbackJson(raw) {
+      try {
+        const data = JSON.parse(raw) as OpenAIResponse;
+        const errorMessage = formatOpenAIError(data.error);
+        if (errorMessage) state.error = errorMessage;
+        state.content = data.choices?.[0]?.message?.content || '';
+        if (data.usage?.total_tokens) state.tokensUsed = data.usage.total_tokens;
+      } catch {
+        // ignore fallback parse errors
+      }
+    },
+  });
 }
 
 /**
@@ -306,28 +592,37 @@ class TimeoutError extends Error {
 }
 
 /**
- * Result from fetchWithTimeout - body is fully read before returning
- * so that timeout covers the entire request lifecycle
+ * Result from fetchWithTimeout/fetchWithTimeoutAndRetry
  */
-interface FetchResult {
-  ok: boolean;
+interface FetchOkResult<T> {
+  ok: true;
+  status: number;
+  data: T;
+}
+
+interface FetchErrorResult {
+  ok: false;
   status: number;
   body: string;
 }
 
+type FetchResult<T> = FetchOkResult<T> | FetchErrorResult;
+
 /**
  * Fetch with timeout control
- * - firstTokenTimeoutMs: Timeout for receiving the first byte of response (0 = disabled)
+ * - firstTokenTimeoutMs: Timeout for receiving the first body chunk after headers (0 = disabled).
+ *   Timer starts at request initiation, cleared when first body data arrives.
  * - totalTimeoutMs: Total request timeout including body read (0 = disabled)
- * Returns the full response body if successful, throws TimeoutError on timeout
+ * Returns parsed response data if successful, throws TimeoutError on timeout
  */
-async function fetchWithTimeout(
+async function fetchWithTimeout<T>(
   url: string,
   options: RequestInit,
   firstTokenTimeoutMs: number,
   totalTimeoutMs: number,
-  externalSignal?: AbortSignal
-): Promise<FetchResult> {
+  externalSignal: AbortSignal | undefined,
+  okHandler: (response: Response, onFirstChunk: () => void) => Promise<T>
+): Promise<FetchResult<T>> {
   const controller = new AbortController();
   const { signal } = controller;
   let abortReason: 'timeout' | 'external' | null = null;
@@ -377,17 +672,26 @@ async function fetchWithTimeout(
 
     const response = await fetch(url, fetchOptions);
 
-    // First byte received, clear first token timeout
-    if (firstTokenTimer) {
-      clearTimeout(firstTokenTimer);
-      firstTokenTimer = undefined;
+    let sawChunk = false;
+    const onFirstChunk = () => {
+      if (sawChunk) return;
+      sawChunk = true;
+      if (firstTokenTimer) {
+        clearTimeout(firstTokenTimer);
+        firstTokenTimer = undefined;
+      }
+    };
+
+    if (!response.ok) {
+      const body = await readResponseBodyText(response, onFirstChunk);
+      cleanup();
+      return { ok: false, status: response.status, body };
     }
 
-    // Read body fully before clearing totalTimer
-    const body = await response.text();
+    const data = await okHandler(response, onFirstChunk);
     cleanup();
 
-    return { ok: response.ok, status: response.status, body };
+    return { ok: true, status: response.status, data };
   } catch (error) {
     cleanup();
     if (error instanceof Error && error.name === 'AbortError') {
@@ -407,31 +711,37 @@ async function fetchWithTimeout(
  * Fetch with timeout and automatic retry on timeout
  * Retries up to maxRetries times on timeout
  */
-async function fetchWithTimeoutAndRetry(
+async function fetchWithTimeoutAndRetry<T>(
   url: string,
   options: RequestInit,
   config: CustomAgentConfig,
   maxRetries: number = 3,
-  abortSignal?: AbortSignal
-): Promise<FetchResult> {
+  abortSignal: AbortSignal | undefined,
+  okHandler: (response: Response, onFirstChunk: () => void) => Promise<T>
+): Promise<FetchResult<T>> {
   const firstTokenTimeoutMs = config.firstTokenTimeoutSeconds > 0 ? config.firstTokenTimeoutSeconds * 1000 : 0;
   const totalTimeoutMs = config.totalTimeoutSeconds > 0 ? config.totalTimeoutSeconds * 1000 : 0;
 
-  // If no timeout configured, just do a normal fetch and read body
+  // If no timeout configured, do a normal fetch and rely on the session abort signal.
   if (firstTokenTimeoutMs === 0 && totalTimeoutMs === 0) {
     const fetchOptions: RequestInit = abortSignal
       ? { ...options, signal: abortSignal }
       : options;
     const response = await fetch(url, fetchOptions);
-    const body = await response.text();
-    return { ok: response.ok, status: response.status, body };
+    if (!response.ok) {
+      const body = await response.text();
+      return { ok: false, status: response.status, body };
+    }
+
+    const data = await okHandler(response, () => {});
+    return { ok: true, status: response.status, data };
   }
 
   let lastError: Error | undefined;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      return await fetchWithTimeout(url, options, firstTokenTimeoutMs, totalTimeoutMs, abortSignal);
+      return await fetchWithTimeout(url, options, firstTokenTimeoutMs, totalTimeoutMs, abortSignal, okHandler);
     } catch (error) {
       if (error instanceof TimeoutError) {
         lastError = error;
@@ -625,12 +935,9 @@ export class CustomAgent {
           });
 
           // Get valid types from mode config
-          const mode = ModeManager.getInstance().getActiveMode();
           const validTypesDesc = mode.observation_types.map(t => `  - "${t.id}": ${t.description}`).join('\n');
-
-          // Extract language instruction from footer if present (e.g., "LANGUAGE REQUIREMENTS: Please write...in 中文")
-          const langMatch = mode.prompts.footer?.match(/LANGUAGE REQUIREMENTS:[^\n]+/);
-          const languageInstruction = langMatch ? `\n${langMatch[0]}` : '';
+          const languageInstruction = mode.prompts.language_instruction?.trim();
+          const languageInstructionSection = languageInstruction ? `\n\n${languageInstruction}` : '';
 
           // Append JSON output format reminder with type constraints
           const obsPromptWithJsonFormat = `${obsPrompt}
@@ -641,7 +948,7 @@ OUTPUT FORMAT: Return compact single-line JSON without any line breaks, indentat
 CRITICAL - type field MUST be EXACTLY one of these values:
 ${validTypesDesc}
 
-{"type":"${mode.observation_types[0].id}","title":"...","narrative":"...","files_read":[...],"files_modified":[...],"concepts":[...]}${languageInstruction}`;
+{"type":"${mode.observation_types[0].id}","title":"...","narrative":"...","files_read":[...],"files_modified":[...],"concepts":[...]}${languageInstructionSection}`;
 
           session.conversationHistory.push({ role: 'user', content: obsPromptWithJsonFormat });
           const obsResponse = await this.queryJsonMultiTurn(session.conversationHistory, config, session.abortController.signal);
@@ -907,16 +1214,16 @@ ${validTypesDesc}
         contents,
         generationConfig: buildGeminiGenerationConfig(config.model, true),
       }),
-    }, config, 3, abortSignal);
+    }, config, 3, abortSignal, parseGeminiSseStreamFromResponse);
 
     if (!result.ok) {
       throw new Error(`Custom/Gemini API error: ${result.status} - ${result.body}`);
     }
 
-    const { parts, tokensUsed } = parseGeminiSseStream(result.body);
+    const { parts, tokensUsed } = result.data;
 
     if (parts.length === 0) {
-      logger.error('SDK', 'Empty stream response from Custom/Gemini');
+      logger.warn('SDK', 'Empty stream response from Custom/Gemini');
       return { content: '' };
     }
 
@@ -951,17 +1258,17 @@ ${validTypesDesc}
         contents,
         generationConfig: buildGeminiGenerationConfig(config.model, true),
       }),
-    }, config, 3, abortSignal);
+    }, config, 3, abortSignal, readResponseBodyText);
 
     if (!result.ok) {
       throw new Error(`Custom/Gemini API error: ${result.status} - ${result.body}`);
     }
 
-    const data = JSON.parse(result.body) as GeminiResponse;
+    const data = parseJsonWithContext<GeminiResponse>(result.data, 'Gemini', result.status);
     const parts = data.candidates?.[0]?.content?.parts;
 
     if (!parts || parts.length === 0) {
-      logger.error('SDK', 'Empty response from Custom/Gemini');
+      logger.warn('SDK', 'Empty response from Custom/Gemini');
       return { content: '' };
     }
 
@@ -999,13 +1306,18 @@ ${validTypesDesc}
         max_tokens: 4096,
         response_format: { type: 'json_object' },
       }),
-    }, config, 3, abortSignal);
+    }, config, 3, abortSignal, readResponseBodyText);
 
     if (!result.ok) {
       throw new Error(`Custom/OpenAI API error: ${result.status} - ${result.body}`);
     }
 
-    const data = JSON.parse(result.body) as OpenAIResponse;
+    const data = parseJsonWithContext<OpenAIResponse>(result.data, 'OpenAI', result.status);
+    const openAIError = formatOpenAIError(data.error);
+    if (openAIError) {
+      throw new Error(`Custom/OpenAI API error: ${openAIError}`);
+    }
+
     const content = data.choices?.[0]?.message?.content || '';
     const tokensUsed = data.usage?.total_tokens;
 
@@ -1045,16 +1357,19 @@ ${validTypesDesc}
         stream: true,
         stream_options: { include_usage: true },
       }),
-    }, config, 3, abortSignal);
+    }, config, 3, abortSignal, parseOpenAISseStreamFromResponse);
 
     if (!result.ok) {
       throw new Error(`Custom/OpenAI API error: ${result.status} - ${result.body}`);
     }
 
-    const { content, tokensUsed } = parseOpenAISseStream(result.body);
+    const { content, tokensUsed, error } = result.data;
+    if (error) {
+      throw new Error(`Custom/OpenAI API error: ${error}`);
+    }
 
     if (!content) {
-      logger.error('SDK', 'Empty stream response from Custom/OpenAI');
+      logger.warn('SDK', 'Empty stream response from Custom/OpenAI');
       return { content: '' };
     }
 

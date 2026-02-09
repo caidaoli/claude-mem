@@ -666,6 +666,49 @@ describe('ResponseProcessor', () => {
       expect(session.conversationHistory[0].role).toBe('assistant');
       expect(session.conversationHistory[0].content).toBe(responseText);
     });
+
+    it('should not duplicate assistant response when already appended', async () => {
+      const responseText = `
+        <observation>
+          <type>discovery</type>
+          <title>Test</title>
+          <facts></facts>
+          <concepts></concepts>
+          <files_read></files_read>
+          <files_modified></files_modified>
+        </observation>
+      `;
+
+      const session = createMockSession({
+        conversationHistory: [{ role: 'assistant', content: responseText }],
+      });
+
+      mockStoreObservations = mock(() => ({
+        observationIds: [1],
+        summaryId: null,
+        createdAtEpoch: 1700000000000,
+      }));
+      (mockDbManager.getSessionStore as any) = () => ({
+        storeObservations: mockStoreObservations,
+        ensureMemorySessionIdRegistered: mock(() => {}),
+        getSessionById: mock(() => ({ memory_session_id: 'memory-session-456' })),
+      });
+
+      await processAgentResponse(
+        responseText,
+        session,
+        mockDbManager,
+        mockSessionManager,
+        mockWorker,
+        100,
+        null,
+        'TestAgent'
+      );
+
+      expect(session.conversationHistory).toHaveLength(1);
+      expect(session.conversationHistory[0].role).toBe('assistant');
+      expect(session.conversationHistory[0].content).toBe(responseText);
+    });
   });
 
   describe('error handling', () => {
@@ -712,6 +755,7 @@ describe('ResponseProcessor', () => {
       }));
       (mockDbManager.getSessionStore as any) = () => ({
         storeObservations: mockStoreObservations,
+        ensureMemorySessionIdRegistered: mock(() => {}),
       });
 
       // Feature disabled by default (mockSettingsEnabled = false in beforeEach)
@@ -751,6 +795,7 @@ describe('ResponseProcessor', () => {
       }));
       (mockDbManager.getSessionStore as any) = () => ({
         storeObservations: mockStoreObservations,
+        ensureMemorySessionIdRegistered: mock(() => {}),
       });
 
       // Enable the feature
@@ -793,6 +838,7 @@ describe('ResponseProcessor', () => {
       }));
       (mockDbManager.getSessionStore as any) = () => ({
         storeObservations: mockStoreObservations,
+        ensureMemorySessionIdRegistered: mock(() => {}),
       });
 
       // Enable the feature

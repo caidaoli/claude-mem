@@ -73,9 +73,16 @@ export async function processAgentResponse(
   projectRoot?: string,
   options?: ProcessAgentResponseOptions
 ): Promise<void> {
-  // Add assistant response to shared conversation history for provider interop
+  // Add assistant response to shared conversation history for provider interop.
+  // Dedup guard: upstream agents (GeminiAgent/OpenRouterAgent) may pre-append the
+  // assistant response before calling processAgentResponse. Since those are upstream
+  // implementations we don't control, guard against duplicates here.
   if (text) {
-    session.conversationHistory.push({ role: 'assistant', content: text });
+    const lastMessage = session.conversationHistory[session.conversationHistory.length - 1];
+    const alreadyAppended = lastMessage?.role === 'assistant' && lastMessage.content === text;
+    if (!alreadyAppended) {
+      session.conversationHistory.push({ role: 'assistant', content: text });
+    }
   }
 
   // Parse observations - JSON or XML based on options

@@ -55,6 +55,20 @@ describe('CustomAgent helper utilities', () => {
       expect(content).toBe('{"type":"discovery"}');
       expect(tokensUsed).toBe(7);
     });
+
+    it('extracts API errors from stream payloads', () => {
+      const sse = [
+        'data: {"error":{"code":"rate_limit","message":"Too many requests"}}',
+        '',
+        'data: [DONE]',
+        ''
+      ].join('\n');
+
+      const { content, error } = __testOnly.parseOpenAISseStream(sse);
+
+      expect(content).toBe('');
+      expect(error).toBe('rate_limit - Too many requests');
+    });
   });
 
   describe('config parsers', () => {
