@@ -77,7 +77,11 @@ export function removePidFile(): void {
 }
 
 /**
- * Get platform-adjusted timeout (Windows socket cleanup is slower)
+ * Get platform-adjusted timeout for worker-side socket operations (2.0x on Windows).
+ *
+ * Note: Two platform multiplier functions exist intentionally:
+ * - getTimeout() in hook-constants.ts uses 1.5x for hook-side operations (fast path)
+ * - getPlatformTimeout() here uses 2.0x for worker-side socket operations (slower path)
  */
 export function getPlatformTimeout(baseMs: number): number {
   const WINDOWS_MULTIPLIER = 2.0;
@@ -336,6 +340,77 @@ export async function cleanupOrphanedProcesses(): Promise<void> {
 }
 
 /**
+ * Clean up excess chroma-mcp processes by count (not age).
+ *
+ * Unlike cleanupOrphanedProcesses() which uses ORPHAN_MAX_AGE_MINUTES = 30,
+ * this function kills by count — essential for catching spawn storms where
+ * all processes are young. Keeps the newest processes (by elapsed time)
+ * and kills the rest.
+ *
+ * Returns the number of processes killed.
+ */
+export async function cleanupExcessChromaProcesses(maxAllowed: number = 2): Promise<number> {
+  // Windows: Chroma is disabled entirely, no cleanup needed
+  if (process.platform === 'win32') return 0;
+
+  try {
+    const { stdout } = await execAsync(
+      'ps -eo pid,etime,command | grep -E "chroma-mcp" | grep -v grep || true'
+    );
+
+    if (!stdout.trim()) return 0;
+
+    const processes: Array<{ pid: number; ageMinutes: number }> = [];
+
+    for (const line of stdout.trim().split('\n')) {
+      if (!line.trim()) continue;
+      const match = line.trim().match(/^(\d+)\s+(\S+)\s+(.*)$/);
+      if (!match) continue;
+
+      const pid = parseInt(match[1], 10);
+      const etime = match[2];
+
+      if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) continue;
+
+      const ageMinutes = parseElapsedTime(etime);
+      // Skip entries with unparseable etime (-1) to avoid sort corruption
+      if (ageMinutes < 0) continue;
+      processes.push({ pid, ageMinutes });
+    }
+
+    if (processes.length <= maxAllowed) return 0;
+
+    // Sort: newest first (lowest age), keep maxAllowed, kill rest
+    processes.sort((a, b) => a.ageMinutes - b.ageMinutes);
+    const toKill = processes.slice(maxAllowed);
+
+    let killed = 0;
+    for (const { pid } of toKill) {
+      try {
+        process.kill(pid, 'SIGTERM');
+        killed++;
+        logger.info('SYSTEM', 'Killed excess chroma-mcp process', { pid });
+      } catch {
+        // Process may already be dead
+      }
+    }
+
+    if (killed > 0) {
+      logger.warn('SYSTEM', 'Cleaned up excess chroma-mcp processes by count', {
+        found: processes.length,
+        killed,
+        maxAllowed
+      });
+    }
+
+    return killed;
+  } catch (error) {
+    logger.debug('SYSTEM', 'Failed to enumerate chroma-mcp processes', {}, error as Error);
+    return 0;
+  }
+}
+
+/**
  * Spawn a detached daemon process
  * Returns the child PID or undefined if spawn failed
  *
@@ -380,7 +455,27 @@ export function spawnDaemon(
     }
   }
 
-  // Unix: standard detached spawn
+  // Unix: Use setsid to create a new session, fully detaching from the
+  // controlling terminal. This prevents SIGHUP from reaching the daemon
+  // even if the in-process SIGHUP handler somehow fails (belt-and-suspenders).
+  // Fall back to standard detached spawn if setsid is not available.
+  const setsidPath = '/usr/bin/setsid';
+  if (existsSync(setsidPath)) {
+    const child = spawn(setsidPath, [process.execPath, scriptPath, '--daemon'], {
+      detached: true,
+      stdio: 'ignore',
+      env
+    });
+
+    if (child.pid === undefined) {
+      return undefined;
+    }
+
+    child.unref();
+    return child.pid;
+  }
+
+  // Fallback: standard detached spawn (macOS, systems without setsid)
   const child = spawn(process.execPath, [scriptPath, '--daemon'], {
     detached: true,
     stdio: 'ignore',
@@ -394,6 +489,56 @@ export function spawnDaemon(
   child.unref();
 
   return child.pid;
+}
+
+/**
+ * Check if a process with the given PID is alive.
+ *
+ * Uses the process.kill(pid, 0) idiom: signal 0 doesn't send a signal,
+ * it just checks if the process exists and is reachable.
+ *
+ * EPERM is treated as "alive" because it means the process exists but
+ * belongs to a different user/session (common in multi-user setups).
+ * PID 0 (Windows WMIC sentinel for unknown PID) is treated as alive.
+ */
+export function isProcessAlive(pid: number): boolean {
+  // PID 0 is the Windows WMIC sentinel value — process was spawned but PID unknown
+  if (pid === 0) return true;
+
+  // Invalid PIDs are not alive
+  if (!Number.isInteger(pid) || pid < 0) return false;
+
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error: unknown) {
+    const code = (error as NodeJS.ErrnoException).code;
+    // EPERM = process exists but different user/session — treat as alive
+    if (code === 'EPERM') return true;
+    // ESRCH = no such process — it's dead
+    return false;
+  }
+}
+
+/**
+ * Read the PID file and remove it if the recorded process is dead (stale).
+ *
+ * This is a cheap operation: one filesystem read + one signal-0 check.
+ * Called at the top of ensureWorkerStarted() to clean up after WSL2
+ * hibernate, OOM kills, or other ungraceful worker deaths.
+ */
+export function cleanStalePidFile(): void {
+  const pidInfo = readPidFile();
+  if (!pidInfo) return;
+
+  if (!isProcessAlive(pidInfo.pid)) {
+    logger.info('SYSTEM', 'Removing stale PID file (worker process is dead)', {
+      pid: pidInfo.pid,
+      port: pidInfo.port,
+      startedAt: pidInfo.startedAt
+    });
+    removePidFile();
+  }
 }
 
 /**
