@@ -67,7 +67,6 @@ import {
   removePidFile,
   getPlatformTimeout,
   cleanupOrphanedProcesses,
-  cleanupExcessChromaProcesses,
   cleanStalePidFile,
   spawnDaemon,
   createSignalHandler
@@ -340,7 +339,6 @@ export class WorkerService {
   private async initializeBackground(): Promise<void> {
     try {
       await cleanupOrphanedProcesses();
-      await cleanupExcessChromaProcesses();
 
       // Load mode configuration
       const { ModeManager } = await import('./domain/ModeManager.js');
