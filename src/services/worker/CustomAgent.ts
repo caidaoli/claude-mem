@@ -820,7 +820,7 @@ export class CustomAgent {
       return;
     }
 
-    logger.info('QUEUE', `RESET_PROCESSING_ON_FALLBACK | sessionDbId=${session.sessionDbId} | count=${session.processingMessageIds.length} | ids=[${session.processingMessageIds.join(',')}]`);
+    logger.info('SESSION', `RESET_PROCESSING_ON_FALLBACK | sessionDbId=${session.sessionDbId} | count=${session.processingMessageIds.length} | ids=[${session.processingMessageIds.join(',')}]`);
 
     const pendingStore = this.sessionManager.getPendingMessageStore();
     for (const messageId of session.processingMessageIds) {
