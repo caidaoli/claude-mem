@@ -3,14 +3,14 @@
  *
  * A flexible provider that supports:
  * - Custom API endpoints (proxies, self-hosted models)
- * - Multiple protocols (OpenAI, Gemini)
+ * - Multiple protocols (OpenAI, Gemini, Codex)
  * - Streaming responses
  * - Gemini 2.5+ thinking part extraction
  * - JSON response format for reliable summary parsing
  *
  * Responsibility:
  * - Call configurable REST APIs for observation extraction
- * - Support both OpenAI and Gemini message formats
+ * - Support OpenAI/Gemini/Codex message formats
  * - Parse responses (XML for observations, JSON for summaries)
  * - Sync to database and Chroma
  */
@@ -36,7 +36,7 @@ import {
 const CHARS_PER_TOKEN_ESTIMATE = 4;  // Conservative estimate: 1 token = 4 chars
 
 // Protocol types
-export type CustomProtocol = 'openai' | 'gemini';
+export type CustomProtocol = 'openai' | 'gemini' | 'codex';
 
 // Configuration interface
 export interface CustomAgentConfig {
@@ -55,6 +55,7 @@ export interface CustomAgentConfig {
  * Build full API URL from base URL based on protocol
  * - OpenAI: {baseUrl}/v1/chat/completions
  * - Gemini: {baseUrl}/v1beta/models/{model}:generateContent or :streamGenerateContent?alt=sse
+ * - Codex: {baseUrl}/v1/responses
  */
 export function buildApiUrl(baseUrl: string, protocol: CustomProtocol, model: string, streaming: boolean = false): string {
   // Remove trailing slash if present
@@ -73,6 +74,18 @@ export function buildApiUrl(baseUrl: string, protocol: CustomProtocol, model: st
     // Add alt=sse for streaming to ensure SSE format (data: prefix on each message)
     const sseParam = streaming ? '?alt=sse' : '';
     return `${normalizedBase}/v1beta/models/${cleanModel}:${action}${sseParam}`;
+  } else if (protocol === 'codex') {
+    // Allow apiUrl to be either:
+    // - Base URL (https://host) -> append /v1/responses
+    // - Codex-compatible base (https://host/v1) -> append /responses
+    // - Full endpoint (https://host/v1/responses) -> use as-is
+    if (cleanBaseUrl.endsWith('/responses')) {
+      return cleanBaseUrl;
+    }
+    if (cleanBaseUrl.endsWith('/v1')) {
+      return `${cleanBaseUrl}/responses`;
+    }
+    return `${cleanBaseUrl}/v1/responses`;
   } else {
     // Allow apiUrl to be either:
     // - Base URL (https://host) -> append /v1/chat/completions
@@ -127,6 +140,27 @@ interface OpenAIResponse {
   };
 }
 
+// Codex responses API types
+interface CodexResponse {
+  output?: Array<{
+    content?: Array<{
+      type?: string;
+      text?: string;
+    }>;
+  }>;
+  output_text?: string;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    total_tokens?: number;
+  };
+  error?: {
+    code?: string | number;
+    message?: string;
+    type?: string;
+  };
+}
+
 function getResponsePreview(body: string, maxLength: number = 200): string {
   const preview = body.replace(/\s+/g, ' ').trim();
   if (!preview) {
@@ -138,7 +172,7 @@ function getResponsePreview(body: string, maxLength: number = 200): string {
     : preview;
 }
 
-function parseJsonWithContext<T>(body: string, provider: 'Gemini' | 'OpenAI', status: number): T {
+function parseJsonWithContext<T>(body: string, provider: 'Gemini' | 'OpenAI' | 'Codex', status: number): T {
   try {
     return JSON.parse(body) as T;
   } catch (error) {
@@ -179,6 +213,23 @@ function formatOpenAIError(errorPayload: unknown): string | null {
     : 'Unknown OpenAI API error';
 
   return `${code}${type} - ${message}`;
+}
+
+function extractCodexResponseText(data: CodexResponse): string {
+  if (typeof data.output_text === 'string' && data.output_text) {
+    return data.output_text;
+  }
+
+  const parts: string[] = [];
+  for (const item of data.output || []) {
+    for (const content of item.content || []) {
+      if (typeof content?.text === 'string' && content.text) {
+        parts.push(content.text);
+      }
+    }
+  }
+
+  return parts.join('');
 }
 
 /**
@@ -581,6 +632,83 @@ async function parseOpenAISseStreamFromResponse(
   });
 }
 
+async function parseCodexSseStreamFromResponse(
+  response: Response,
+  onFirstChunk: () => void
+): Promise<{ content: string; tokensUsed?: number; error?: string }> {
+  const state = {
+    content: '',
+    completedText: '',
+    tokensUsed: undefined as number | undefined,
+    error: undefined as string | undefined,
+  };
+
+  const tryApplyResponse = (responsePayload: CodexResponse | undefined) => {
+    if (!responsePayload) return;
+
+    const errorMessage = formatOpenAIError(responsePayload.error);
+    if (errorMessage) {
+      state.error = errorMessage;
+      return;
+    }
+
+    if (responsePayload.usage?.total_tokens) {
+      state.tokensUsed = responsePayload.usage.total_tokens;
+    }
+
+    const responseText = extractCodexResponseText(responsePayload);
+    if (responseText) {
+      state.completedText = responseText;
+    }
+  };
+
+  return parseSseStreamFromResponse(response, onFirstChunk, state, {
+    onSsePayload(payload) {
+      try {
+        const event = JSON.parse(payload) as {
+          type?: string;
+          delta?: string;
+          text?: string;
+          response?: CodexResponse;
+          error?: unknown;
+        };
+
+        const eventError = formatOpenAIError(event.error);
+        if (eventError) {
+          state.error = eventError;
+          return;
+        }
+
+        if (event.type === 'response.output_text.delta' && typeof event.delta === 'string') {
+          state.content += event.delta;
+        } else if (event.type === 'response.output_text.done' && typeof event.text === 'string') {
+          state.completedText = event.text;
+        } else if (event.type === 'response.completed' || event.type === 'response.failed') {
+          tryApplyResponse(event.response);
+        } else {
+          // Some providers stream response-shaped payloads directly
+          tryApplyResponse(event as unknown as CodexResponse);
+        }
+      } catch {
+        // Skip invalid JSON events
+      }
+    },
+    shouldTryFallback: () => !state.content && !state.completedText,
+    onFallbackJson(raw) {
+      try {
+        const data = JSON.parse(raw) as CodexResponse;
+        tryApplyResponse(data);
+      } catch {
+        // ignore fallback parse errors
+      }
+    },
+  }).then(parsed => ({
+    content: parsed.content || parsed.completedText || '',
+    tokensUsed: parsed.tokensUsed,
+    error: parsed.error
+  }));
+}
+
 /**
  * Custom timeout error for request timeouts
  */
@@ -800,7 +928,50 @@ function buildOpenAIJsonRequestBody(
   return body;
 }
 
-const CUSTOM_PROTOCOLS: ReadonlyArray<CustomProtocol> = ['openai', 'gemini'];
+function buildBearerJsonHeaders(apiKey: string, sessionId?: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Authorization': `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+  };
+
+  if (sessionId && sessionId.trim()) {
+    headers.Session_id = sessionId.trim();
+  }
+
+  return headers;
+}
+
+function buildCodexJsonRequestBody(
+  model: string,
+  messages: OpenAIMessage[],
+  streaming: boolean
+): Record<string, unknown> {
+  const input = messages.map(message => ({
+    role: message.role,
+    content: message.content
+  }));
+
+  const body: Record<string, unknown> = {
+    model,
+    input,
+    max_output_tokens: 4096,
+    text: {
+      format: { type: 'json_object' }
+    }
+  };
+
+  if (model.startsWith('gpt-')) {
+    body.reasoning = { effort: 'low' };
+  }
+
+  if (streaming) {
+    body.stream = true;
+  }
+
+  return body;
+}
+
+const CUSTOM_PROTOCOLS: ReadonlyArray<CustomProtocol> = ['openai', 'gemini', 'codex'];
 
 function parseCustomProtocol(rawProtocol: unknown): CustomProtocol {
   if (typeof rawProtocol === 'string') {
@@ -887,6 +1058,7 @@ export class CustomAgent {
 
       // Load active mode
       const mode = ModeManager.getInstance().getActiveMode();
+      const requestSessionId = session.contentSessionId || session.memorySessionId || '';
 
       // Build initial prompt (JSON format for Custom)
       const initPrompt = session.lastPromptNumber === 1
@@ -895,7 +1067,12 @@ export class CustomAgent {
 
       // Add to conversation history and query with full context (multi-turn)
       session.conversationHistory.push({ role: 'user', content: initPrompt });
-      const initResponse = await this.queryJsonMultiTurn(session.conversationHistory, config, session.abortController.signal);
+      const initResponse = await this.queryJsonMultiTurn(
+        session.conversationHistory,
+        config,
+        session.abortController.signal,
+        requestSessionId
+      );
 
       if (initResponse.content) {
         const tokensUsed = initResponse.tokensUsed || 0;
@@ -976,7 +1153,12 @@ ${validTypesDesc}
 {"type":"${mode.observation_types[0].id}","title":"...","narrative":"...","files_read":[...],"files_modified":[...],"concepts":[...]}${languageInstructionSection}`;
 
           session.conversationHistory.push({ role: 'user', content: obsPromptWithJsonFormat });
-          const obsResponse = await this.queryJsonMultiTurn(session.conversationHistory, config, session.abortController.signal);
+          const obsResponse = await this.queryJsonMultiTurn(
+            session.conversationHistory,
+            config,
+            session.abortController.signal,
+            requestSessionId
+          );
 
           let tokensUsed = 0;
           if (obsResponse.content) {
@@ -1019,7 +1201,12 @@ ${validTypesDesc}
 
           // Add to conversation history and query with full context (multi-turn)
           session.conversationHistory.push({ role: 'user', content: summaryPrompt });
-          const summaryResponse = await this.queryJsonMultiTurn(session.conversationHistory, config, session.abortController.signal);
+          const summaryResponse = await this.queryJsonMultiTurn(
+            session.conversationHistory,
+            config,
+            session.abortController.signal,
+            requestSessionId
+          );
 
           let tokensUsed = 0;
           if (summaryResponse.content) {
@@ -1193,7 +1380,8 @@ ${validTypesDesc}
   private async queryJsonMultiTurn(
     history: ConversationMessage[],
     config: CustomAgentConfig,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    sessionIdHeader?: string
   ): Promise<{ content: string; tokensUsed?: number }> {
     // Truncate history if limits are configured
     const truncatedHistory = this.truncateHistory(history, config);
@@ -1203,11 +1391,16 @@ ${validTypesDesc}
         return this.queryGeminiJsonMultiTurnStream(truncatedHistory, config, abortSignal);
       }
       return this.queryGeminiJsonMultiTurn(truncatedHistory, config, abortSignal);
+    } else if (config.protocol === 'codex') {
+      if (config.streaming) {
+        return this.queryCodexJsonMultiTurnStream(truncatedHistory, config, abortSignal, sessionIdHeader);
+      }
+      return this.queryCodexJsonMultiTurn(truncatedHistory, config, abortSignal, sessionIdHeader);
     } else {
       if (config.streaming) {
-        return this.queryOpenAIJsonMultiTurnStream(truncatedHistory, config, abortSignal);
+        return this.queryOpenAIJsonMultiTurnStream(truncatedHistory, config, abortSignal, sessionIdHeader);
       }
-      return this.queryOpenAIJsonMultiTurn(truncatedHistory, config, abortSignal);
+      return this.queryOpenAIJsonMultiTurn(truncatedHistory, config, abortSignal, sessionIdHeader);
     }
   }
 
@@ -1306,7 +1499,8 @@ ${validTypesDesc}
   private async queryOpenAIJsonMultiTurn(
     history: ConversationMessage[],
     config: CustomAgentConfig,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    sessionIdHeader?: string
   ): Promise<{ content: string; tokensUsed?: number }> {
     const messages = this.toOpenAIMessages(history);
     const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
@@ -1320,10 +1514,7 @@ ${validTypesDesc}
 
     const result = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json',
-      },
+      headers: buildBearerJsonHeaders(config.apiKey, sessionIdHeader),
       body: JSON.stringify(buildOpenAIJsonRequestBody(config.model, messages, false)),
     }, config, 3, abortSignal, readResponseBodyText);
 
@@ -1349,7 +1540,8 @@ ${validTypesDesc}
   private async queryOpenAIJsonMultiTurnStream(
     history: ConversationMessage[],
     config: CustomAgentConfig,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    sessionIdHeader?: string
   ): Promise<{ content: string; tokensUsed?: number }> {
     const messages = this.toOpenAIMessages(history);
     const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
@@ -1363,10 +1555,7 @@ ${validTypesDesc}
 
     const result = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json',
-      },
+      headers: buildBearerJsonHeaders(config.apiKey, sessionIdHeader),
       body: JSON.stringify(buildOpenAIJsonRequestBody(config.model, messages, true)),
     }, config, 3, abortSignal, parseOpenAISseStreamFromResponse);
 
@@ -1381,6 +1570,89 @@ ${validTypesDesc}
 
     if (!content) {
       logger.warn('SDK', 'Empty stream response from Custom/OpenAI');
+      return { content: '' };
+    }
+
+    return { content, tokensUsed };
+  }
+
+  /**
+   * Query Codex Responses API with multi-turn conversation (JSON enforced)
+   */
+  private async queryCodexJsonMultiTurn(
+    history: ConversationMessage[],
+    config: CustomAgentConfig,
+    abortSignal?: AbortSignal,
+    sessionIdHeader?: string
+  ): Promise<{ content: string; tokensUsed?: number }> {
+    const messages = this.toOpenAIMessages(history);
+    const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
+
+    logger.debug('SDK', `Querying Custom/Codex JSON multi-turn (${config.model})`, {
+      turns: history.length,
+      totalChars
+    });
+
+    const url = buildApiUrl(config.apiUrl, config.protocol, config.model);
+
+    const result = await fetchWithTimeoutAndRetry(url, {
+      method: 'POST',
+      headers: buildBearerJsonHeaders(config.apiKey, sessionIdHeader),
+      body: JSON.stringify(buildCodexJsonRequestBody(config.model, messages, false)),
+    }, config, 3, abortSignal, readResponseBodyText);
+
+    if (!result.ok) {
+      throw new Error(`Custom/Codex API error: ${result.status} - ${result.body}`);
+    }
+
+    const data = parseJsonWithContext<CodexResponse>(result.data, 'Codex', result.status);
+    const codexError = formatOpenAIError(data.error);
+    if (codexError) {
+      throw new Error(`Custom/Codex API error: ${codexError}`);
+    }
+
+    return {
+      content: extractCodexResponseText(data),
+      tokensUsed: data.usage?.total_tokens
+    };
+  }
+
+  /**
+   * Query Codex Responses API with multi-turn conversation (streaming, JSON enforced)
+   */
+  private async queryCodexJsonMultiTurnStream(
+    history: ConversationMessage[],
+    config: CustomAgentConfig,
+    abortSignal?: AbortSignal,
+    sessionIdHeader?: string
+  ): Promise<{ content: string; tokensUsed?: number }> {
+    const messages = this.toOpenAIMessages(history);
+    const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
+
+    logger.debug('SDK', `Querying Custom/Codex JSON multi-turn stream (${config.model})`, {
+      turns: history.length,
+      totalChars
+    });
+
+    const url = buildApiUrl(config.apiUrl, config.protocol, config.model);
+
+    const result = await fetchWithTimeoutAndRetry(url, {
+      method: 'POST',
+      headers: buildBearerJsonHeaders(config.apiKey, sessionIdHeader),
+      body: JSON.stringify(buildCodexJsonRequestBody(config.model, messages, true)),
+    }, config, 3, abortSignal, parseCodexSseStreamFromResponse);
+
+    if (!result.ok) {
+      throw new Error(`Custom/Codex API error: ${result.status} - ${result.body}`);
+    }
+
+    const { content, tokensUsed, error } = result.data;
+    if (error) {
+      throw new Error(`Custom/Codex API error: ${error}`);
+    }
+
+    if (!content) {
+      logger.warn('SDK', 'Empty stream response from Custom/Codex');
       return { content: '' };
     }
 

@@ -34,7 +34,7 @@ export interface SettingsDefaults {
   CLAUDE_MEM_CUSTOM_API_URL: string;      // Custom API base URL (e.g., https://your-proxy.example.com)
   CLAUDE_MEM_CUSTOM_API_KEY: string;      // API Key for custom provider
   CLAUDE_MEM_CUSTOM_MODEL: string;        // Model name
-  CLAUDE_MEM_CUSTOM_PROTOCOL: string;     // 'openai' | 'gemini'
+  CLAUDE_MEM_CUSTOM_PROTOCOL: string;     // 'openai' | 'gemini' | 'codex'
   CLAUDE_MEM_CUSTOM_STREAMING: string;    // 'true' | 'false'
   CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES: string;  // Max messages (0 = disabled)
   CLAUDE_MEM_CUSTOM_MAX_TOKENS: string;   // Max tokens (0 = disabled)

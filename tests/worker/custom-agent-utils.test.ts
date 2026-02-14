@@ -22,6 +22,18 @@ describe('CustomAgent helper utilities', () => {
       const fullEndpoint = 'https://openai-compatible.example.com/v1/chat/completions';
       expect(buildApiUrl(fullEndpoint, 'openai', 'gpt-4o', false)).toBe(fullEndpoint);
     });
+
+    it('normalizes Codex base URL variants to responses endpoint', () => {
+      const model = 'codex-mini-latest';
+
+      const fromRoot = buildApiUrl('https://api.openai.com', 'codex', model, false);
+      const fromV1 = buildApiUrl('https://api.openai.com/v1', 'codex', model, false);
+      const fullEndpoint = buildApiUrl('https://api.openai.com/v1/responses', 'codex', model, true);
+
+      expect(fromRoot).toBe('https://api.openai.com/v1/responses');
+      expect(fromV1).toBe('https://api.openai.com/v1/responses');
+      expect(fullEndpoint).toBe('https://api.openai.com/v1/responses');
+    });
   });
 
   describe('parseOpenAISseStream', () => {
@@ -75,6 +87,7 @@ describe('CustomAgent helper utilities', () => {
     it('falls back to openai for invalid protocol', () => {
       expect(__testOnly.parseCustomProtocol('invalid')).toBe('openai');
       expect(__testOnly.parseCustomProtocol(' GEMINI ')).toBe('gemini');
+      expect(__testOnly.parseCustomProtocol(' codex ')).toBe('codex');
     });
 
     it('normalizes optional positive integers', () => {

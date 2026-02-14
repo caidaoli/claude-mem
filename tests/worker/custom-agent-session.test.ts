@@ -203,6 +203,7 @@ describe('CustomAgent session behavior', () => {
 
     const call = (global.fetch as any).mock.calls[0];
     expect(call[1].headers.Authorization).toBe('Bearer fallback-custom-key');
+    expect(call[1].headers.Session_id).toBe('content-1');
   });
 
   it('sets lowest reasoning effort for gpt-* models in OpenAI requests', async () => {
@@ -290,6 +291,135 @@ describe('CustomAgent session behavior', () => {
 
     const requestBody = JSON.parse((global.fetch as any).mock.calls[0][1].body as string);
     expect(requestBody.reasoning_effort).toBeUndefined();
+  });
+
+  it('supports Codex protocol with responses endpoint (non-streaming)', async () => {
+    loadFromFileSpy.mockImplementation(() => ({
+      ...SettingsDefaultsManager.getAllDefaults(),
+      CLAUDE_MEM_CUSTOM_API_URL: 'https://custom.example.com',
+      CLAUDE_MEM_CUSTOM_API_KEY: 'test-key',
+      CLAUDE_MEM_CUSTOM_MODEL: 'codex-mini-latest',
+      CLAUDE_MEM_CUSTOM_PROTOCOL: 'codex',
+      CLAUDE_MEM_CUSTOM_STREAMING: 'false',
+      CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES: '0',
+      CLAUDE_MEM_CUSTOM_MAX_TOKENS: '0',
+      CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT: '0',
+      CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT: '0'
+    }));
+
+    const mockStoreObservations = mock(() => ({
+      observationIds: [1],
+      summaryId: null,
+      createdAtEpoch: Date.now()
+    }));
+
+    const dbManager = {
+      getSessionStore: () => ({
+        getSessionById: () => ({ memory_session_id: 'mem-custom-1' }),
+        updateMemorySessionId: () => {},
+        ensureMemorySessionIdRegistered: () => {},
+        storeObservations: mockStoreObservations
+      }),
+      getChromaSync: () => ({
+        syncObservation: () => Promise.resolve(),
+        syncSummary: () => Promise.resolve()
+      })
+    } as unknown as DatabaseManager;
+
+    const sessionManager = {
+      getMessageIterator: async function* () { yield* []; },
+      getPendingMessageStore: () => ({
+        confirmProcessed: () => {}
+      })
+    } as unknown as SessionManager;
+
+    global.fetch = mock(() => Promise.resolve(new Response(JSON.stringify({
+      output: [{
+        content: [{
+          type: 'output_text',
+          text: '{"type":"discovery","title":"ok","narrative":"n","files_read":[],"files_modified":[],"concepts":[]}'
+        }]
+      }],
+      usage: { total_tokens: 12 }
+    }))));
+
+    const agent = new CustomAgent(dbManager, sessionManager);
+    await agent.startSession(createSession());
+
+    expect(mockStoreObservations).toHaveBeenCalledTimes(1);
+    const call = (global.fetch as any).mock.calls[0];
+    expect(call[0]).toBe('https://custom.example.com/v1/responses');
+    expect(call[1].headers.Session_id).toBe('content-1');
+    const requestBody = JSON.parse(call[1].body as string);
+    expect(Array.isArray(requestBody.input)).toBe(true);
+    expect(requestBody.text?.format?.type).toBe('json_object');
+    expect(requestBody.messages).toBeUndefined();
+  });
+
+  it('supports Codex protocol with SSE stream responses', async () => {
+    loadFromFileSpy.mockImplementation(() => ({
+      ...SettingsDefaultsManager.getAllDefaults(),
+      CLAUDE_MEM_CUSTOM_API_URL: 'https://custom.example.com',
+      CLAUDE_MEM_CUSTOM_API_KEY: 'test-key',
+      CLAUDE_MEM_CUSTOM_MODEL: 'codex-mini-latest',
+      CLAUDE_MEM_CUSTOM_PROTOCOL: 'codex',
+      CLAUDE_MEM_CUSTOM_STREAMING: 'true',
+      CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES: '0',
+      CLAUDE_MEM_CUSTOM_MAX_TOKENS: '0',
+      CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT: '0',
+      CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT: '0',
+    }));
+
+    const mockStoreObservations = mock(() => ({
+      observationIds: [1],
+      summaryId: null,
+      createdAtEpoch: Date.now(),
+    }));
+
+    const dbManager = {
+      getSessionStore: () => ({
+        getSessionById: () => ({ memory_session_id: 'mem-custom-1' }),
+        updateMemorySessionId: () => {},
+        ensureMemorySessionIdRegistered: () => {},
+        storeObservations: mockStoreObservations,
+      }),
+      getChromaSync: () => ({
+        syncObservation: () => Promise.resolve(),
+        syncSummary: () => Promise.resolve(),
+      }),
+    } as unknown as DatabaseManager;
+
+    const sessionManager = {
+      getMessageIterator: async function* () { yield* []; },
+      getPendingMessageStore: () => ({
+        confirmProcessed: () => {},
+      }),
+    } as unknown as SessionManager;
+
+    const sse = [
+      'data: {"type":"response.output_text.delta","delta":"{\\"type\\":\\"disco"}',
+      '',
+      'data: {"type":"response.output_text.delta","delta":"very\\",\\"title\\":\\"ok\\",\\"narrative\\":\\"n\\",\\"files_read\\":[],\\"files_modified\\":[],\\"concepts\\":[]}"}',
+      '',
+      'data: {"type":"response.completed","response":{"usage":{"total_tokens":12}}}',
+      '',
+      'data: [DONE]',
+      ''
+    ].join('\n');
+
+    global.fetch = mock(() => Promise.resolve(new Response(sse, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' }
+    })));
+
+    const agent = new CustomAgent(dbManager, sessionManager);
+    await agent.startSession(createSession());
+
+    expect(mockStoreObservations).toHaveBeenCalledTimes(1);
+    const firstCall = (global.fetch as any).mock.calls[0];
+    expect(firstCall[1].headers.Session_id).toBe('content-1');
+    const requestBody = JSON.parse(firstCall[1].body as string);
+    expect(requestBody.stream).toBe(true);
   });
 
   it('passes session abort signal to Custom provider requests', async () => {
@@ -549,8 +679,13 @@ describe('CustomAgent session behavior', () => {
       typeof message.content === 'string' && message.content.includes('OUTPUT FORMAT: Return compact single-line JSON')
     )?.content as string;
 
+    const firstRequestHeaders = (global.fetch as any).mock.calls[0][1].headers;
+    const secondRequestHeaders = (global.fetch as any).mock.calls[1][1].headers;
+
     expect(observationPrompt).toBeTruthy();
     expect(observationPrompt).toContain('LANGUAGE REQUIREMENTS: Please write the observation data in Bahasa Indonesia');
+    expect(firstRequestHeaders.Session_id).toBe('content-1');
+    expect(secondRequestHeaders.Session_id).toBe('content-1');
   });
 
   it('uses session-start mode for all observation prompts', async () => {
