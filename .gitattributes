@@ -1,0 +1,6 @@
+# Fork-specific files: always keep ours during upstream merges
+src/services/worker/CustomAgent.ts merge=ours
+tests/worker/custom-agent-session.test.ts merge=ours
+tests/worker/custom-agent-utils.test.ts merge=ours
+tests/worker/custom-agent-history-truncation.test.ts merge=ours
+tests/worker/gemini-sse-parser.test.ts merge=ours

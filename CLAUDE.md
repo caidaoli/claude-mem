@@ -85,6 +85,59 @@ Claude-mem is designed with a clean separation between open-source core function
 
 This architecture preserves the open-source nature of the project while enabling sustainable development through optional paid features.
 
+## Fork Feature: CustomAgent (PRESERVE DURING UPSTREAM MERGES)
+
+This fork maintains `CustomAgent` — a multi-protocol AI provider supporting OpenAI/Gemini APIs. Upstream removed it in v10.0.6. **All files and modification points below MUST be preserved when merging upstream.**
+
+`.gitattributes` protects CustomAgent-only files via `merge=ours`. Shared files require manual attention.
+
+### CustomAgent-only files
+
+| File | Purpose |
+|------|---------|
+| `src/services/worker/CustomAgent.ts` | Core: class, `isCustomSelected()`, `isCustomAvailable()`, SSE parsers |
+| `tests/worker/custom-agent-session.test.ts` | Session flow tests |
+| `tests/worker/custom-agent-utils.test.ts` | Utility function tests |
+| `tests/worker/custom-agent-history-truncation.test.ts` | Context truncation tests |
+| `tests/worker/gemini-sse-parser.test.ts` | Gemini SSE stream parser tests |
+
+### Shared file modification points
+
+After upstream merges, verify these CustomAgent additions survive:
+
+**`src/services/worker-service.ts`**
+- Import: `import { CustomAgent, isCustomSelected, isCustomAvailable } from './worker/CustomAgent.js'`
+- Property: `private customAgent: CustomAgent`
+- Constructor: `this.customAgent = new CustomAgent(this.dbManager, this.sessionManager)`
+- `getAiStatus()`: `if (isCustomSelected() && isCustomAvailable()) provider = 'custom'`
+- Route registration: `customAgent` passed to `SessionRoutes`
+- `getActiveAgent()`: `CustomAgent` in return type union and provider check
+
+**`src/services/worker/http/routes/SessionRoutes.ts`**
+- Import: `CustomAgent, isCustomSelected, isCustomAvailable`
+- Constructor: `customAgent` parameter and property
+- `getActiveAgent()`: CustomAgent provider check
+- Agent registry: `'custom'` entry in `startGeneratorWithProvider`
+
+**`src/services/worker-types.ts`**
+- `currentProvider` union type includes `'custom'`
+
+**`src/shared/SettingsDefaultsManager.ts`**
+- Settings: `CLAUDE_MEM_CUSTOM_API_URL`, `CLAUDE_MEM_CUSTOM_API_KEY`, `CLAUDE_MEM_CUSTOM_MODEL`, `CLAUDE_MEM_CUSTOM_PROTOCOL`, `CLAUDE_MEM_CUSTOM_STREAMING`, `CLAUDE_MEM_CUSTOM_TIMEOUT_*`
+
+**`src/shared/EnvManager.ts`**
+- `CUSTOM_API_KEY` in `MANAGED_CREDENTIAL_KEYS` and `ClaudeMemEnv`
+
+**`src/services/worker/agents/ResponseProcessor.ts`**
+- `ProcessAgentResponseOptions` interface (`parseJsonObservation`, `parseJsonSummary`)
+- JSON observation/summary parsing branches
+
+**`src/sdk/parser.ts`**
+- `parseObservationsJson()`, `parseSummaryJson()` functions
+
+**`src/sdk/prompts.ts`**
+- JSON format variants: `buildInitPromptJson`, `buildContinuationPromptJson`, `buildSummaryPromptJson`, `buildObservationPrompt` (JSON output section)
+
 ## Important
 
 No need to edit the changelog ever, it's generated automatically.
