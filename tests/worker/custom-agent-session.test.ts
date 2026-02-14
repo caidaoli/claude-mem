@@ -205,6 +205,93 @@ describe('CustomAgent session behavior', () => {
     expect(call[1].headers.Authorization).toBe('Bearer fallback-custom-key');
   });
 
+  it('sets lowest reasoning effort for gpt-* models in OpenAI requests', async () => {
+    const dbManager = {
+      getSessionStore: () => ({
+        getSessionById: () => ({ memory_session_id: 'mem-custom-1' }),
+        updateMemorySessionId: () => {},
+        ensureMemorySessionIdRegistered: () => {},
+        storeObservations: mock(() => ({
+          observationIds: [1],
+          summaryId: null,
+          createdAtEpoch: Date.now()
+        }))
+      }),
+      getChromaSync: () => ({
+        syncObservation: () => Promise.resolve(),
+        syncSummary: () => Promise.resolve()
+      })
+    } as unknown as DatabaseManager;
+
+    const sessionManager = {
+      getMessageIterator: async function* () { yield* []; },
+      getPendingMessageStore: () => ({
+        confirmProcessed: () => {}
+      })
+    } as unknown as SessionManager;
+
+    global.fetch = mock(() => Promise.resolve(new Response(JSON.stringify({
+      choices: [{ message: { content: '{"type":"discovery","title":"ok","narrative":"n","files_read":[],"files_modified":[],"concepts":[]}' } }],
+      usage: { total_tokens: 12 }
+    }))));
+
+    const agent = new CustomAgent(dbManager, sessionManager);
+    await agent.startSession(createSession());
+
+    const requestBody = JSON.parse((global.fetch as any).mock.calls[0][1].body as string);
+    expect(requestBody.reasoning_effort).toBe('low');
+  });
+
+  it('does not set reasoning effort for non-gpt models', async () => {
+    loadFromFileSpy.mockImplementation(() => ({
+      ...SettingsDefaultsManager.getAllDefaults(),
+      CLAUDE_MEM_CUSTOM_API_URL: 'https://custom.example.com',
+      CLAUDE_MEM_CUSTOM_API_KEY: 'test-key',
+      CLAUDE_MEM_CUSTOM_MODEL: 'claude-3-5-sonnet',
+      CLAUDE_MEM_CUSTOM_PROTOCOL: 'openai',
+      CLAUDE_MEM_CUSTOM_STREAMING: 'false',
+      CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES: '0',
+      CLAUDE_MEM_CUSTOM_MAX_TOKENS: '0',
+      CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT: '0',
+      CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT: '0'
+    }));
+
+    const dbManager = {
+      getSessionStore: () => ({
+        getSessionById: () => ({ memory_session_id: 'mem-custom-1' }),
+        updateMemorySessionId: () => {},
+        ensureMemorySessionIdRegistered: () => {},
+        storeObservations: mock(() => ({
+          observationIds: [1],
+          summaryId: null,
+          createdAtEpoch: Date.now()
+        }))
+      }),
+      getChromaSync: () => ({
+        syncObservation: () => Promise.resolve(),
+        syncSummary: () => Promise.resolve()
+      })
+    } as unknown as DatabaseManager;
+
+    const sessionManager = {
+      getMessageIterator: async function* () { yield* []; },
+      getPendingMessageStore: () => ({
+        confirmProcessed: () => {}
+      })
+    } as unknown as SessionManager;
+
+    global.fetch = mock(() => Promise.resolve(new Response(JSON.stringify({
+      choices: [{ message: { content: '{"type":"discovery","title":"ok","narrative":"n","files_read":[],"files_modified":[],"concepts":[]}' } }],
+      usage: { total_tokens: 12 }
+    }))));
+
+    const agent = new CustomAgent(dbManager, sessionManager);
+    await agent.startSession(createSession());
+
+    const requestBody = JSON.parse((global.fetch as any).mock.calls[0][1].body as string);
+    expect(requestBody.reasoning_effort).toBeUndefined();
+  });
+
   it('passes session abort signal to Custom provider requests', async () => {
     const dbManager = {
       getSessionStore: () => ({
@@ -694,6 +781,8 @@ describe('CustomAgent session behavior', () => {
     await agent.startSession(createSession());
 
     expect(mockStoreObservations).toHaveBeenCalledTimes(1);
+    const requestBody = JSON.parse((global.fetch as any).mock.calls[0][1].body as string);
+    expect(requestBody.reasoning_effort).toBe('low');
   });
 
   it('logs warn instead of error for empty OpenAI stream responses', async () => {

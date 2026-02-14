@@ -775,6 +775,31 @@ interface OpenAIMessage {
   content: string;
 }
 
+function buildOpenAIJsonRequestBody(
+  model: string,
+  messages: OpenAIMessage[],
+  streaming: boolean
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model,
+    messages,
+    temperature: 0.3,
+    max_tokens: 4096,
+    response_format: { type: 'json_object' },
+  };
+
+  if (model.startsWith('gpt-')) {
+    body.reasoning_effort = 'low';
+  }
+
+  if (streaming) {
+    body.stream = true;
+    body.stream_options = { include_usage: true };
+  }
+
+  return body;
+}
+
 const CUSTOM_PROTOCOLS: ReadonlyArray<CustomProtocol> = ['openai', 'gemini'];
 
 function parseCustomProtocol(rawProtocol: unknown): CustomProtocol {
@@ -1299,13 +1324,7 @@ ${validTypesDesc}
         'Authorization': `Bearer ${config.apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model: config.model,
-        messages,
-        temperature: 0.3,
-        max_tokens: 4096,
-        response_format: { type: 'json_object' },
-      }),
+      body: JSON.stringify(buildOpenAIJsonRequestBody(config.model, messages, false)),
     }, config, 3, abortSignal, readResponseBodyText);
 
     if (!result.ok) {
@@ -1348,15 +1367,7 @@ ${validTypesDesc}
         'Authorization': `Bearer ${config.apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model: config.model,
-        messages,
-        temperature: 0.3,
-        max_tokens: 4096,
-        response_format: { type: 'json_object' },
-        stream: true,
-        stream_options: { include_usage: true },
-      }),
+      body: JSON.stringify(buildOpenAIJsonRequestBody(config.model, messages, true)),
     }, config, 3, abortSignal, parseOpenAISseStreamFromResponse);
 
     if (!result.ok) {
