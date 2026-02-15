@@ -127,6 +127,12 @@ try {
     console.log('\\x1b[33m%s\\x1b[0m', 'ℹ Cache sync had some warnings (non-fatal)');
   }
 
+  // Install native deps in cache folder — worker runs from here, not marketplace
+  if (existsSync(path.join(CACHE_VERSION_PATH, 'package.json'))) {
+    console.log('Running npm install in cache folder...');
+    execSync(`cd "${CACHE_VERSION_PATH}" && npm install --include=optional`, { stdio: 'inherit' });
+  }
+
   console.log('\x1b[32m%s\x1b[0m', 'Sync complete!');
 
   // Trigger worker restart after file sync
