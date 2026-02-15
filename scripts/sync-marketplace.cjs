@@ -78,7 +78,7 @@ try {
   // These warnings don't affect the actual file transfer
   try {
     execSync(
-      'rsync -av --delete --no-perms --exclude=.git --exclude=/.mcp.json ./ ~/.claude/plugins/marketplaces/thedotmack/',
+      'rsync -av --delete --no-perms --exclude=.git --exclude=/.mcp.json --exclude=bun.lock --exclude=package-lock.json ./ ~/.claude/plugins/marketplaces/thedotmack/',
       { stdio: 'inherit' }
     );
   } catch (rsyncError) {
@@ -89,6 +89,16 @@ try {
       console.log('\\x1b[33m%s\\x1b[0m', 'ℹ Some files had permission warnings (non-fatal, continuing...)');
     } else {
       throw rsyncError;
+    }
+  }
+
+  // Remove stale lockfiles before install — they pin old native dep versions
+  const { unlinkSync } = require('fs');
+  for (const lockfile of ['package-lock.json', 'bun.lock']) {
+    const lockpath = path.join(INSTALLED_PATH, lockfile);
+    if (existsSync(lockpath)) {
+      unlinkSync(lockpath);
+      console.log(`Removed stale ${lockfile}`);
     }
   }
 
