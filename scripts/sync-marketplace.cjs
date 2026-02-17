@@ -29,6 +29,18 @@ function getCurrentBranch() {
   }
 }
 
+function getGitignoreExcludes(basePath) {
+  const gitignorePath = path.join(basePath, '.gitignore');
+  if (!existsSync(gitignorePath)) return '';
+
+  const lines = readFileSync(gitignorePath, 'utf-8').split('\n');
+  return lines
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('#') && !line.startsWith('!'))
+    .map(pattern => `--exclude=${JSON.stringify(pattern)}`)
+    .join(' ');
+}
+
 const branch = getCurrentBranch();
 const isForce = process.argv.includes('--force');
 
@@ -60,6 +72,9 @@ function getPluginVersion() {
 // Normal rsync for main branch or fresh install
 console.log('Syncing to marketplace...');
 try {
+  const rootDir = path.join(__dirname, '..');
+  const gitignoreExcludes = getGitignoreExcludes(rootDir);
+
   // Clear Apple quarantine attributes (macOS only) to prevent "Operation not permitted" errors
   if (process.platform === 'darwin') {
     console.log('Clearing Apple quarantine attributes...');
@@ -74,17 +89,12 @@ try {
   }
 
   console.log('Transfer starting...');
-  // Use try-catch for rsync as it may return non-zero exit code due to macOS permission warnings
-  // These warnings don't affect the actual file transfer
   try {
     execSync(
-      'rsync -av --delete --no-perms --exclude=.git --exclude=/.mcp.json --exclude=bun.lock --exclude=package-lock.json ./ ~/.claude/plugins/marketplaces/thedotmack/',
+      `rsync -av --delete --no-perms --exclude=.git --exclude=/.mcp.json --exclude=bun.lock --exclude=package-lock.json ${gitignoreExcludes} ./ ~/.claude/plugins/marketplaces/thedotmack/`,
       { stdio: 'inherit' }
     );
   } catch (rsyncError) {
-    // Exit code 23 means partial transfer due to error (usually permission warnings on macOS)
-    // Exit code 24 means partial transfer due to vanished source files
-    // Both are acceptable as the core files are transferred successfully
     if (rsyncError.status === 23 || rsyncError.status === 24) {
       console.log('\\x1b[33m%s\\x1b[0m', 'ℹ Some files had permission warnings (non-fatal, continuing...)');
     } else {
@@ -93,7 +103,7 @@ try {
   }
 
   // Remove stale lockfiles before install — they pin old native dep versions
-  const { unlinkSync } = require('fs');
+  const { unlinkSync, rmSync } = require('fs');
   for (const lockfile of ['package-lock.json', 'bun.lock']) {
     const lockpath = path.join(INSTALLED_PATH, lockfile);
     if (existsSync(lockpath)) {
@@ -102,9 +112,17 @@ try {
     }
   }
 
-  console.log('Running npm install in marketplace...');
+  // Clear stale native module cache (sharp/libvips) — Bun's cache can retain
+  // native binaries that reference companion libraries at broken relative paths
+  const bunCacheImgDir = path.join(os.homedir(), '.bun', 'install', 'cache', '@img');
+  if (existsSync(bunCacheImgDir)) {
+    rmSync(bunCacheImgDir, { recursive: true, force: true });
+    console.log('Cleared stale native module cache (@img/sharp)');
+  }
+
+  console.log('Running bun install in marketplace...');
   execSync(
-    'cd ~/.claude/plugins/marketplaces/thedotmack/ && npm install',
+    'cd ~/.claude/plugins/marketplaces/thedotmack/ && bun install',
     { stdio: 'inherit' }
   );
 
@@ -112,19 +130,21 @@ try {
   const version = getPluginVersion();
   const CACHE_VERSION_PATH = path.join(CACHE_BASE_PATH, version);
 
+  const pluginDir = path.join(rootDir, 'plugin');
+  const pluginGitignoreExcludes = getGitignoreExcludes(pluginDir);
+
   console.log(`Syncing to cache folder (version ${version})...`);
   try {
-    // First ensure the cache directory exists
-    execSync(`mkdir -p "${CACHE_VERSION_PATH}"`, { stdio: 'pipe' });
-    // Use cp with plugin/. to copy all contents including hidden files
-    // Note: plugin/* would miss .claude-plugin and .mcp.json due to shell globbing
     execSync(
-      `cp -R plugin/. "${CACHE_VERSION_PATH}/"`,
+      `rsync -av --delete --no-perms --exclude=.git ${pluginGitignoreExcludes} plugin/ "${CACHE_VERSION_PATH}/"`,
       { stdio: 'inherit' }
     );
-  } catch (cpError) {
-    // cp errors are usually non-fatal for plugin functionality
-    console.log('\\x1b[33m%s\\x1b[0m', 'ℹ Cache sync had some warnings (non-fatal)');
+  } catch (rsyncError) {
+    if (rsyncError.status === 23 || rsyncError.status === 24) {
+      console.log('\\x1b[33m%s\\x1b[0m', 'ℹ Cache sync had some warnings (non-fatal)');
+    } else {
+      throw rsyncError;
+    }
   }
 
   // Install native deps in cache folder — worker runs from here, not marketplace
