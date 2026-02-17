@@ -947,12 +947,17 @@ function buildCodexJsonRequestBody(
   streaming: boolean
 ): Record<string, unknown> {
   const input = messages.map(message => ({
+    type: 'message' as const,
     role: message.role,
-    content: message.content
+    content: [{
+      type: 'input_text' as const,
+      text: message.content
+    }]
   }));
 
   const body: Record<string, unknown> = {
     model,
+    instructions: 'You are GPT-5.2 running in the Codex CLI, a terminal-based coding assistant. Codex CLI is an open source project led by OpenAI. You are expected to be precise, safe, and helpful.\n\n',
     input,
     max_output_tokens: 4096,
     text: {
