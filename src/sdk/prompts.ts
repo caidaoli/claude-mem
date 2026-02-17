@@ -184,6 +184,21 @@ export function buildObservationPrompt(obs: Observation): string {
 }
 
 /**
+ * Build observation prompt with JSON output format (used by CustomAgent)
+ * Combines tool observation data with JSON format instructions from mode config
+ */
+export function buildObservationPromptJson(obs: Observation, mode: ModeConfig): string {
+  const languageInstruction = mode.prompts.language_instruction?.trim();
+  const languageSection = languageInstruction ? `\n\n${languageInstruction}` : '';
+
+  return `${buildObservationPrompt(obs)}
+
+${buildObservationFormatSection(mode, 'json')}
+
+OUTPUT FORMAT: Return compact single-line JSON without any line breaks, indentation, or extra whitespace.${languageSection}`;
+}
+
+/**
  * Build prompt to generate progress summary
  */
 export function buildSummaryPrompt(session: SDKSession, mode: ModeConfig): string {

@@ -18,7 +18,7 @@
 import { DatabaseManager } from './DatabaseManager.js';
 import { SessionManager } from './SessionManager.js';
 import { logger } from '../../utils/logger.js';
-import { buildInitPromptJson, buildObservationPrompt, buildSummaryPromptJson, buildContinuationPromptJson } from '../../sdk/prompts.js';
+import { buildInitPromptJson, buildObservationPromptJson, buildSummaryPromptJson, buildContinuationPromptJson } from '../../sdk/prompts.js';
 import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH } from '../../shared/paths.js';
 import { getCredential } from '../../shared/EnvManager.js';
@@ -1126,31 +1126,15 @@ export class CustomAgent {
             throw new Error('Cannot process observations: memorySessionId not yet captured. This session may need to be reinitialized.');
           }
 
-          // Build observation prompt (still XML format for input data)
-          const obsPrompt = buildObservationPrompt({
+          // Build observation prompt with JSON output format from shared prompt system
+          const obsPromptWithJsonFormat = buildObservationPromptJson({
             id: 0,
             tool_name: message.tool_name!,
             tool_input: JSON.stringify(message.tool_input),
             tool_output: JSON.stringify(message.tool_response),
             created_at_epoch: originalTimestamp ?? Date.now(),
             cwd: message.cwd
-          });
-
-          // Get valid types from mode config
-          const validTypesDesc = mode.observation_types.map(t => `  - "${t.id}": ${t.description}`).join('\n');
-          const languageInstruction = mode.prompts.language_instruction?.trim();
-          const languageInstructionSection = languageInstruction ? `\n\n${languageInstruction}` : '';
-
-          // Append JSON output format reminder with type constraints
-          const obsPromptWithJsonFormat = `${obsPrompt}
-
-IMPORTANT: Respond with ONLY a valid JSON object for the observation. No explanations, no markdown.
-OUTPUT FORMAT: Return compact single-line JSON without any line breaks, indentation, or extra whitespace.
-
-CRITICAL - type field MUST be EXACTLY one of these values:
-${validTypesDesc}
-
-{"type":"${mode.observation_types[0].id}","title":"...","narrative":"...","files_read":[...],"files_modified":[...],"concepts":[...]}${languageInstructionSection}`;
+          }, mode);
 
           session.conversationHistory.push({ role: 'user', content: obsPromptWithJsonFormat });
           const obsResponse = await this.queryJsonMultiTurn(
@@ -1160,28 +1144,38 @@ ${validTypesDesc}
             requestSessionId
           );
 
-          let tokensUsed = 0;
-          if (obsResponse.content) {
-            tokensUsed = obsResponse.tokensUsed || 0;
-            session.cumulativeInputTokens += Math.floor(tokensUsed * 0.7);
-            session.cumulativeOutputTokens += Math.floor(tokensUsed * 0.3);
+          const observationText = obsResponse.content || '';
+          // Always use JSON parsing path — CustomAgent never produces XML observations.
+          const observationOptions = {
+            parseJsonObservation: true,
+            observationText
+          };
+          const observationTokensUsed = obsResponse.tokensUsed || 0;
+
+          if (observationTokensUsed > 0) {
+            session.cumulativeInputTokens += Math.floor(observationTokensUsed * 0.7);
+            session.cumulativeOutputTokens += Math.floor(observationTokensUsed * 0.3);
           }
 
-          // Process response using shared ResponseProcessor
+          if (!observationText) {
+            logger.warn('SDK', 'Empty Custom observation response; processing empty payload for queue consistency', {
+              sessionId: session.sessionDbId,
+              messageId: session.processingMessageIds[session.processingMessageIds.length - 1]
+            });
+          }
+
+          // Always process response (including empty text) to keep CLAIM-CONFIRM and cleanup state consistent.
           await processAgentResponse(
-            obsResponse.content || '',
+            observationText,
             session,
             this.dbManager,
             this.sessionManager,
             worker,
-            tokensUsed,
+            observationTokensUsed,
             originalTimestamp,
             'Custom',
             lastCwd,
-            {
-              parseJsonObservation: true,
-              observationText: obsResponse.content || ''
-            }
+            observationOptions
           );
 
         } else if (message.type === 'summarize') {
@@ -1208,28 +1202,38 @@ ${validTypesDesc}
             requestSessionId
           );
 
-          let tokensUsed = 0;
-          if (summaryResponse.content) {
-            tokensUsed = summaryResponse.tokensUsed || 0;
-            session.cumulativeInputTokens += Math.floor(tokensUsed * 0.7);
-            session.cumulativeOutputTokens += Math.floor(tokensUsed * 0.3);
+          const summaryText = summaryResponse.content || '';
+          // Always use JSON parsing path — CustomAgent never produces XML summaries.
+          const summaryOptions = {
+            parseJsonSummary: true,
+            summaryText
+          };
+          const summaryTokensUsed = summaryResponse.tokensUsed || 0;
+
+          if (summaryTokensUsed > 0) {
+            session.cumulativeInputTokens += Math.floor(summaryTokensUsed * 0.7);
+            session.cumulativeOutputTokens += Math.floor(summaryTokensUsed * 0.3);
           }
 
-          // Process response using shared ResponseProcessor
+          if (!summaryText) {
+            logger.warn('SDK', 'Empty Custom summary response; processing empty payload for queue consistency', {
+              sessionId: session.sessionDbId,
+              messageId: session.processingMessageIds[session.processingMessageIds.length - 1]
+            });
+          }
+
+          // Always process response (including empty text) to keep CLAIM-CONFIRM and cleanup state consistent.
           await processAgentResponse(
-            summaryResponse.content || '',
+            summaryText,
             session,
             this.dbManager,
             this.sessionManager,
             worker,
-            tokensUsed,
+            summaryTokensUsed,
             originalTimestamp,
             'Custom',
             lastCwd,
-            {
-              parseJsonSummary: true,
-              summaryText: summaryResponse.content || ''
-            }
+            summaryOptions
           );
         }
       }

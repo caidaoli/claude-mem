@@ -688,6 +688,76 @@ describe('CustomAgent session behavior', () => {
     expect(secondRequestHeaders.Session_id).toBe('content-1');
   });
 
+  it('processes empty observation response to keep queue state consistent', async () => {
+    const confirmProcessedMock = mock(() => {});
+    const mockStoreObservations = mock(() => ({
+      observationIds: [],
+      summaryId: null,
+      createdAtEpoch: Date.now()
+    }));
+
+    const dbManager = {
+      getSessionStore: () => ({
+        getSessionById: () => ({ memory_session_id: 'mem-custom-1' }),
+        updateMemorySessionId: () => {},
+        ensureMemorySessionIdRegistered: () => {},
+        storeObservations: mockStoreObservations
+      }),
+      getChromaSync: () => ({
+        syncObservation: () => Promise.resolve(),
+        syncSummary: () => Promise.resolve()
+      })
+    } as unknown as DatabaseManager;
+
+    const sessionManager = {
+      getMessageIterator: async function* () {
+        yield {
+          _persistentId: 333,
+          _originalTimestamp: Date.now(),
+          type: 'observation',
+          prompt_number: 2,
+          tool_name: 'Read',
+          tool_input: { path: 'a.ts' },
+          tool_response: { ok: true },
+          cwd: '/tmp/project'
+        } as any;
+      },
+      getPendingMessageStore: () => ({
+        confirmProcessed: confirmProcessedMock,
+        resetToPending: () => true
+      })
+    } as unknown as SessionManager;
+
+    let callCount = 0;
+    global.fetch = mock(() => {
+      callCount += 1;
+
+      if (callCount === 1) {
+        return Promise.resolve(new Response(JSON.stringify({
+          choices: [{ message: { content: '{"type":"discovery","title":"init","narrative":"n","files_read":[],"files_modified":[],"concepts":[]}' } }],
+          usage: { total_tokens: 12 }
+        })));
+      }
+
+      return Promise.resolve(new Response(JSON.stringify({
+        choices: [{ message: { content: '' } }],
+        usage: { total_tokens: 2 }
+      })));
+    });
+
+    const session = createSession();
+    const agent = new CustomAgent(dbManager, sessionManager);
+    await agent.startSession(session);
+
+    expect(mockStoreObservations).toHaveBeenCalledTimes(2);
+    // Second call (empty observation) should produce empty observations array
+    const secondCallArgs = mockStoreObservations.mock.calls[1];
+    expect(secondCallArgs[2]).toEqual([]); // observations parameter is empty array
+    expect(confirmProcessedMock).toHaveBeenCalledWith(333);
+    expect(session.processingMessageIds).toEqual([]);
+    expect(session.earliestPendingTimestamp).toBeNull();
+  });
+
   it('uses session-start mode for all observation prompts', async () => {
     const modeA = {
       ...mockMode,
@@ -772,7 +842,7 @@ describe('CustomAgent session behavior', () => {
     )?.content as string;
 
     expect(observationPrompt).toBeTruthy();
-    expect(observationPrompt).toContain('"type":"discovery"');
+    expect(observationPrompt).toMatch(/"type"\s*:\s*"discovery"/);
     expect(observationPrompt).toContain('LANGUAGE REQUIREMENTS: Please write the observation data in Mode A');
     expect(observationPrompt).not.toContain('LANGUAGE REQUIREMENTS: Please write the observation data in Mode B');
   });
