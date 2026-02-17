@@ -102,24 +102,6 @@ try {
     }
   }
 
-  // Remove stale lockfiles before install — they pin old native dep versions
-  const { unlinkSync, rmSync } = require('fs');
-  for (const lockfile of ['package-lock.json', 'bun.lock']) {
-    const lockpath = path.join(INSTALLED_PATH, lockfile);
-    if (existsSync(lockpath)) {
-      unlinkSync(lockpath);
-      console.log(`Removed stale ${lockfile}`);
-    }
-  }
-
-  // Clear stale native module cache (sharp/libvips) — Bun's cache can retain
-  // native binaries that reference companion libraries at broken relative paths
-  const bunCacheImgDir = path.join(os.homedir(), '.bun', 'install', 'cache', '@img');
-  if (existsSync(bunCacheImgDir)) {
-    rmSync(bunCacheImgDir, { recursive: true, force: true });
-    console.log('Cleared stale native module cache (@img/sharp)');
-  }
-
   console.log('Running bun install in marketplace...');
   execSync(
     'cd ~/.claude/plugins/marketplaces/thedotmack/ && bun install',
@@ -152,6 +134,10 @@ try {
     console.log('Running npm install in cache folder...');
     execSync(`cd "${CACHE_VERSION_PATH}" && npm install --include=optional`, { stdio: 'inherit' });
   }
+
+  // Install dependencies in cache directory so worker can resolve them
+  console.log(`Running bun install in cache folder (version ${version})...`);
+  execSync(`bun install`, { cwd: CACHE_VERSION_PATH, stdio: 'inherit' });
 
   console.log('\x1b[32m%s\x1b[0m', 'Sync complete!');
 
