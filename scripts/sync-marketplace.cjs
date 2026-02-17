@@ -75,32 +75,10 @@ try {
   const rootDir = path.join(__dirname, '..');
   const gitignoreExcludes = getGitignoreExcludes(rootDir);
 
-  // Clear Apple quarantine attributes (macOS only) to prevent "Operation not permitted" errors
-  if (process.platform === 'darwin') {
-    console.log('Clearing Apple quarantine attributes...');
-    try {
-      execSync('xattr -cr ./', { stdio: 'pipe' });
-      if (existsSync(INSTALLED_PATH)) {
-        execSync('xattr -cr "' + INSTALLED_PATH + '"', { stdio: 'pipe' });
-      }
-    } catch (e) {
-      // xattr errors are non-fatal, continue with sync
-    }
-  }
-
-  console.log('Transfer starting...');
-  try {
-    execSync(
-      `rsync -av --delete --no-perms --exclude=.git --exclude=/.mcp.json --exclude=bun.lock --exclude=package-lock.json ${gitignoreExcludes} ./ ~/.claude/plugins/marketplaces/thedotmack/`,
-      { stdio: 'inherit' }
-    );
-  } catch (rsyncError) {
-    if (rsyncError.status === 23 || rsyncError.status === 24) {
-      console.log('\\x1b[33m%s\\x1b[0m', 'ℹ Some files had permission warnings (non-fatal, continuing...)');
-    } else {
-      throw rsyncError;
-    }
-  }
+  execSync(
+    `rsync -av --delete --exclude=.git --exclude=/.mcp.json --exclude=bun.lock --exclude=package-lock.json ${gitignoreExcludes} ./ ~/.claude/plugins/marketplaces/thedotmack/`,
+    { stdio: 'inherit' }
+  );
 
   console.log('Running bun install in marketplace...');
   execSync(
@@ -116,24 +94,10 @@ try {
   const pluginGitignoreExcludes = getGitignoreExcludes(pluginDir);
 
   console.log(`Syncing to cache folder (version ${version})...`);
-  try {
-    execSync(
-      `rsync -av --delete --no-perms --exclude=.git ${pluginGitignoreExcludes} plugin/ "${CACHE_VERSION_PATH}/"`,
-      { stdio: 'inherit' }
-    );
-  } catch (rsyncError) {
-    if (rsyncError.status === 23 || rsyncError.status === 24) {
-      console.log('\\x1b[33m%s\\x1b[0m', 'ℹ Cache sync had some warnings (non-fatal)');
-    } else {
-      throw rsyncError;
-    }
-  }
-
-  // Install native deps in cache folder — worker runs from here, not marketplace
-  if (existsSync(path.join(CACHE_VERSION_PATH, 'package.json'))) {
-    console.log('Running npm install in cache folder...');
-    execSync(`cd "${CACHE_VERSION_PATH}" && npm install --include=optional`, { stdio: 'inherit' });
-  }
+  execSync(
+    `rsync -av --delete --exclude=.git ${pluginGitignoreExcludes} plugin/ "${CACHE_VERSION_PATH}/"`,
+    { stdio: 'inherit' }
+  );
 
   // Install dependencies in cache directory so worker can resolve them
   console.log(`Running bun install in cache folder (version ${version})...`);

@@ -102,7 +102,10 @@ async function buildHooks() {
         'ollama',
         // Default embedding function with native binaries
         '@chroma-core/default-embed',
-        'onnxruntime-node'
+        'onnxruntime-node',
+        // Must be external so ChromaSync and default-embed share the same module instance
+        // (bundling creates a separate copy where env.cacheDir has no effect on default-embed)
+        '@huggingface/transformers'
       ],
       define: {
         '__DEFAULT_PACKAGE_VERSION__': `"${version}"`
