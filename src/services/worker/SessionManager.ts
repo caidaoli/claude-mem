@@ -288,7 +288,7 @@ export class SessionManager {
     if (session.processingMessageIds.length > 0) {
       logger.info('QUEUE', `RESET_PROCESSING_ON_DELETE | sessionDbId=${sessionDbId} | count=${session.processingMessageIds.length} | ids=[${session.processingMessageIds.join(',')}]`);
       for (const messageId of session.processingMessageIds) {
-        this.pendingMessageStore.resetToPending(messageId);
+        this.getPendingStore().resetToPending(messageId);
       }
       session.processingMessageIds = [];
     }
