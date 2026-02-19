@@ -271,7 +271,13 @@ export class ChromaSync {
         collection_name: this.collectionName,
         ids: batch.map(d => d.id),
         documents: batch.map(d => d.document),
-        metadatas: batch.map(d => d.metadata)
+        metadatas: batch.map(d => {
+          const cleaned: Record<string, string | number> = {};
+          for (const [k, v] of Object.entries(d.metadata)) {
+            if (v != null) cleaned[k] = v;
+          }
+          return cleaned;
+        })
       });
     }
 
