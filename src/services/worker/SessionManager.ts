@@ -106,13 +106,30 @@ export class SessionManager {
       memory_session_id: dbSession.memory_session_id
     });
 
-    // Log warning if we're discarding a stale memory_session_id (Issue #817)
+    // Issue #817: Determine if memory_session_id should be preserved or discarded.
+    // CustomAgent uses stateless synthetic IDs (prefix "custom-") that are always valid
+    // regardless of worker restarts. SDK Agent IDs represent server-side conversation
+    // state that becomes stale on worker restart.
+    const isCustomSessionId = dbSession.memory_session_id?.startsWith('custom-');
+    let restoredMemorySessionId: string | null = null;
+
     if (dbSession.memory_session_id) {
-      logger.warn('SESSION', `Discarding stale memory_session_id from previous worker instance (Issue #817)`, {
-        sessionDbId,
-        staleMemorySessionId: dbSession.memory_session_id,
-        reason: 'SDK context lost on worker restart - will capture new ID'
-      });
+      if (isCustomSessionId) {
+        // CustomAgent: synthetic ID is always valid — preserve it to avoid
+        // FK constraint issues and eliminate the null → restore cycle
+        restoredMemorySessionId = dbSession.memory_session_id;
+        logger.debug('SESSION', 'Preserving CustomAgent memory_session_id from database', {
+          sessionDbId,
+          memorySessionId: dbSession.memory_session_id
+        });
+      } else {
+        // SDK Agent: server-side conversation state lost on worker restart
+        logger.warn('SESSION', `Discarding stale memory_session_id from previous worker instance (Issue #817)`, {
+          sessionDbId,
+          staleMemorySessionId: dbSession.memory_session_id,
+          reason: 'SDK context lost on worker restart - will capture new ID'
+        });
+      }
     }
 
     // Use currentUserPrompt if provided, otherwise fall back to database (first prompt)
@@ -133,15 +150,12 @@ export class SessionManager {
     }
 
     // Create active session
-    // CRITICAL: Do NOT load memorySessionId from database here (Issue #817)
-    // When creating a new in-memory session, any database memory_session_id is STALE
-    // because the SDK context was lost when the worker restarted. The SDK agent will
-    // capture a new memorySessionId on the first response and persist it.
-    // Loading stale memory_session_id causes "No conversation found" crashes on resume.
+    // Issue #817: SDK Agent memory_session_id is discarded (stale after restart).
+    // CustomAgent memory_session_id is preserved (stateless synthetic ID, always valid).
     session = {
       sessionDbId,
       contentSessionId: dbSession.content_session_id,
-      memorySessionId: null,  // Always start fresh - SDK will capture new ID
+      memorySessionId: restoredMemorySessionId,
       project: dbSession.project,
       userPrompt,
       pendingMessages: [],
@@ -158,11 +172,11 @@ export class SessionManager {
       processingMessageIds: []  // CLAIM-CONFIRM: Track message IDs for confirmProcessed()
     };
 
-    logger.debug('SESSION', 'Creating new session object (memorySessionId cleared to prevent stale resume)', {
+    logger.debug('SESSION', 'Creating new session object', {
       sessionDbId,
       contentSessionId: dbSession.content_session_id,
       dbMemorySessionId: dbSession.memory_session_id || '(none in DB)',
-      memorySessionId: '(cleared - will capture fresh from SDK)',
+      memorySessionId: restoredMemorySessionId || '(will capture from SDK)',
       lastPromptNumber: promptNumber || this.dbManager.getSessionStore().getPromptNumberFromUserPrompts(dbSession.content_session_id)
     });
 

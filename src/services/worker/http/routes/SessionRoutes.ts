@@ -677,7 +677,40 @@ export class SessionRoutes extends BaseRouteHandler {
     });
 
     res.json({ status: 'completed', sessionDbId });
+
+    // Drain pending messages left behind by the abort.
+    // Claude Code's Stop hook fires summarize and session-complete in parallel,
+    // so messages may be enqueued concurrently or reset to pending by deleteSession.
+    // Brief delay lets the parallel summarize hook finish enqueueing.
+    this.drainPendingAfterComplete(sessionDbId);
   });
+
+  /**
+   * After session-complete aborts the generator, check for orphaned pending
+   * messages and spin up a short-lived processor to drain them.
+   */
+  private drainPendingAfterComplete(sessionDbId: number): void {
+    setTimeout(() => {
+      try {
+        const pendingStore = this.sessionManager.getPendingMessageStore();
+        const pendingCount = pendingStore.getPendingCount(sessionDbId);
+
+        if (pendingCount === 0) return;
+
+        logger.info('SESSION', 'Draining pending messages after session-complete', {
+          sessionDbId,
+          pendingCount
+        });
+
+        const session = this.sessionManager.initializeSession(sessionDbId);
+        this.ensureGeneratorRunning(sessionDbId, 'post-complete-drain');
+      } catch (error) {
+        logger.error('SESSION', 'Failed to drain pending after session-complete', {
+          sessionDbId
+        }, error as Error);
+      }
+    }, 500);
+  }
 
   /**
    * Initialize session by contentSessionId (new-hook uses this)
