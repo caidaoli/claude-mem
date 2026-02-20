@@ -27,10 +27,31 @@ export interface SDKSession {
 type OutputFormat = 'xml' | 'json';
 
 /**
+ * Strip placeholder wrappers for JSON format templates.
+ * Mode configs use [**fieldname**: description] syntax designed for XML context.
+ * In JSON templates these wrappers leak into example values and models
+ * (especially gpt-5.1-codex-mini) reproduce the wrapper in their output.
+ *
+ * "[**title**: Short title capturing the core action]" → "Short title capturing the core action"
+ * "[Concise, self-contained statement]" → "Concise, self-contained statement"
+ */
+function stripPlaceholderWrapper(placeholder: string): string {
+  const trimmed = placeholder.trim();
+  // Match [**fieldname**: description] pattern
+  const boldMatch = /^\[\*\*\w+\*\*:\s*(.*)\]$/.exec(trimmed);
+  if (boldMatch) return boldMatch[1];
+  // Match simple [description] pattern
+  const simpleMatch = /^\[(.*)\]$/.exec(trimmed);
+  if (simpleMatch) return simpleMatch[1];
+  return trimmed;
+}
+
+/**
  * Build observation format section based on output type
  */
 function buildObservationFormatSection(mode: ModeConfig, format: OutputFormat): string {
   if (format === 'json') {
+    const p = mode.prompts;
     return `IMPORTANT: You MUST respond with ONLY a valid JSON object. No explanations, no markdown, no thinking process - JUST the raw JSON.
 
 CRITICAL - type field MUST be EXACTLY one of these values (no other values allowed):
@@ -39,17 +60,17 @@ ${mode.observation_types.map(t => `  - "${t.id}": ${t.description}`).join('\n')}
 Output format (JSON):
 {
   "type": "${mode.observation_types[0].id}",
-  "title": "${mode.prompts.xml_title_placeholder}",
-  "subtitle": "${mode.prompts.xml_subtitle_placeholder}",
-  "facts": ["${mode.prompts.xml_fact_placeholder}", "${mode.prompts.xml_fact_placeholder}"],
-  "narrative": "${mode.prompts.xml_narrative_placeholder}",
-  "concepts": ["${mode.prompts.xml_concept_placeholder}"],
-  "files_read": ["${mode.prompts.xml_file_placeholder}"],
-  "files_modified": ["${mode.prompts.xml_file_placeholder}"]
+  "title": "${stripPlaceholderWrapper(p.xml_title_placeholder)}",
+  "subtitle": "${stripPlaceholderWrapper(p.xml_subtitle_placeholder)}",
+  "facts": ["${stripPlaceholderWrapper(p.xml_fact_placeholder)}", "${stripPlaceholderWrapper(p.xml_fact_placeholder)}"],
+  "narrative": "${stripPlaceholderWrapper(p.xml_narrative_placeholder)}",
+  "concepts": ["${stripPlaceholderWrapper(p.xml_concept_placeholder)}"],
+  "files_read": ["${stripPlaceholderWrapper(p.xml_file_placeholder)}"],
+  "files_modified": ["${stripPlaceholderWrapper(p.xml_file_placeholder)}"]
 }
 
-${mode.prompts.field_guidance}
-${mode.prompts.concept_guidance}`;
+${p.field_guidance}
+${p.concept_guidance}`;
   }
 
   // XML format

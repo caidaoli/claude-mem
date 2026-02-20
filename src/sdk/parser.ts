@@ -418,6 +418,20 @@ export function parseSummaryJson(text: string, sessionId?: number): ParsedSummar
 }
 
 /**
+ * Strip [**fieldname**: content] wrappers that some models reproduce from prompt placeholders.
+ * Also handles [content] simple brackets.
+ *
+ * "[**title**: 统一复选框样式修复]" → "统一复选框样式修复"
+ * "[**narrative**: Full context...]" → "Full context..."
+ */
+function stripFieldWrapper(value: string): string {
+  const trimmed = value.trim();
+  const boldMatch = /^\[\*\*\w+\*\*:\s*(.*)\]$/.exec(trimmed);
+  if (boldMatch) return boldMatch[1];
+  return trimmed;
+}
+
+/**
  * Parse observations from JSON response (used by CustomAgent with responseMimeType)
  * More reliable than XML parsing as API guarantees valid JSON output
  *
@@ -524,12 +538,12 @@ export function parseObservationsJson(text: string, correlationId?: string): Par
 
       observations.push({
         type: finalType,
-        title: typeof obs.title === 'string' ? obs.title : null,
-        subtitle: typeof obs.subtitle === 'string' ? obs.subtitle : null,
+        title: typeof obs.title === 'string' ? stripFieldWrapper(obs.title) : null,
+        subtitle: typeof obs.subtitle === 'string' ? stripFieldWrapper(obs.subtitle) : null,
         facts: Array.isArray(obs.facts)
-          ? obs.facts.filter((f): f is string => typeof f === 'string')
+          ? obs.facts.filter((f): f is string => typeof f === 'string').map(stripFieldWrapper)
           : [],
-        narrative: typeof obs.narrative === 'string' ? obs.narrative : null,
+        narrative: typeof obs.narrative === 'string' ? stripFieldWrapper(obs.narrative) : null,
         concepts: cleanedConcepts,
         files_read,
         files_modified
