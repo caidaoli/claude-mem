@@ -92,7 +92,7 @@ function buildContextOutput(
 
   // Prepare timeline data
   const displaySummaries = summaries.slice(0, config.sessionCount);
-  const summariesForTimeline = prepareSummariesForTimeline(displaySummaries, summaries, observations);
+  const summariesForTimeline = prepareSummariesForTimeline(displaySummaries, summaries);
   const timeline = buildTimeline(observations, summariesForTimeline);
   const fullObservationIds = getFullObservationIds(observations, config.fullObservationCount);
 

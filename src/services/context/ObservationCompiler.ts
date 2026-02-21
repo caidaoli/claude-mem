@@ -213,26 +213,16 @@ export function getPriorSessionMessages(
  */
 export function prepareSummariesForTimeline(
   displaySummaries: SessionSummary[],
-  allSummaries: SessionSummary[],
-  observations: Observation[]
+  allSummaries: SessionSummary[]
 ): SummaryTimelineItem[] {
   const mostRecentSummaryId = allSummaries[0]?.id;
 
-  // Build per-session max observation epoch so summaries sort after all their observations
-  const maxObsEpochBySession = new Map<string, number>();
-  for (const obs of observations) {
-    const current = maxObsEpochBySession.get(obs.memory_session_id) ?? 0;
-    if (obs.created_at_epoch > current) {
-      maxObsEpochBySession.set(obs.memory_session_id, obs.created_at_epoch);
-    }
-  }
-
-  return displaySummaries.map((summary) => {
-    const maxObsEpoch = maxObsEpochBySession.get(summary.memory_session_id) ?? 0;
+  return displaySummaries.map((summary, i) => {
+    const olderSummary = i === 0 ? null : allSummaries[i + 1];
     return {
       ...summary,
-      displayEpoch: Math.max(summary.created_at_epoch, maxObsEpoch + 1),
-      displayTime: summary.created_at,
+      displayEpoch: olderSummary ? olderSummary.created_at_epoch : summary.created_at_epoch,
+      displayTime: olderSummary ? olderSummary.created_at : summary.created_at,
       shouldShowLink: summary.id !== mostRecentSummaryId
     };
   });
