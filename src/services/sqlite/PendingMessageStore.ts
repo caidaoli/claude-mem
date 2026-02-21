@@ -109,10 +109,15 @@ export class PendingMessageStore {
         logger.info('QUEUE', `SELF_HEAL | sessionDbId=${sessionId} | recovered ${resetResult.changes} stale processing message(s)`);
       }
 
+      // Priority: observations before summarize.
+      // This ensures all observations are processed before the session summary,
+      // regardless of HTTP arrival order. Prevents summary appearing mid-stream.
       const peekStmt = this.db.prepare(`
         SELECT * FROM pending_messages
         WHERE session_db_id = ? AND status = 'pending'
-        ORDER BY id ASC
+        ORDER BY
+          CASE message_type WHEN 'observation' THEN 0 WHEN 'summarize' THEN 1 END,
+          id ASC
         LIMIT 1
       `);
       const msg = peekStmt.get(sessionId) as PersistentPendingMessage | null;

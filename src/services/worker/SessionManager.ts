@@ -16,12 +16,17 @@ import { PendingMessageStore } from '../sqlite/PendingMessageStore.js';
 import { SessionQueueProcessor } from '../queue/SessionQueueProcessor.js';
 import { getProcessBySession, ensureProcessExit } from './ProcessRegistry.js';
 
+/** TTL for recently-completed session tracking (60 seconds) */
+const COMPLETED_SESSION_TTL_MS = 60_000;
+
 export class SessionManager {
   private dbManager: DatabaseManager;
   private sessions: Map<number, ActiveSession> = new Map();
   private sessionQueues: Map<number, EventEmitter> = new Map();
   private onSessionDeletedCallback?: () => void;
   private pendingStore: PendingMessageStore | null = null;
+  /** Track recently-completed contentSessionIds to block late-arriving observations */
+  private completedContentSessions = new Map<string, number>();
 
   constructor(dbManager: DatabaseManager) {
     this.dbManager = dbManager;
@@ -43,6 +48,35 @@ export class SessionManager {
    */
   setOnSessionDeleted(callback: () => void): void {
     this.onSessionDeletedCallback = callback;
+  }
+
+  /**
+   * Mark a contentSessionId as recently completed.
+   * Late-arriving observations for this session will be rejected.
+   */
+  markContentSessionCompleted(contentSessionId: string): void {
+    this.completedContentSessions.set(contentSessionId, Date.now());
+    // Lazy cleanup: prune entries older than TTL
+    const now = Date.now();
+    for (const [id, time] of this.completedContentSessions) {
+      if (now - time > COMPLETED_SESSION_TTL_MS) {
+        this.completedContentSessions.delete(id);
+      }
+    }
+  }
+
+  /**
+   * Check if a contentSessionId was recently completed.
+   * Used to block late-arriving observations from creating orphan sessions.
+   */
+  isRecentlyCompleted(contentSessionId: string): boolean {
+    const completedAt = this.completedContentSessions.get(contentSessionId);
+    if (!completedAt) return false;
+    if (Date.now() - completedAt > COMPLETED_SESSION_TTL_MS) {
+      this.completedContentSessions.delete(contentSessionId);
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -328,6 +362,9 @@ export class SessionManager {
     }
 
     // 4. Cleanup
+    // Track as recently completed to block late-arriving observations
+    this.markContentSessionCompleted(session.contentSessionId);
+
     this.sessions.delete(sessionDbId);
     this.sessionQueues.delete(sessionDbId);
 
@@ -344,6 +381,33 @@ export class SessionManager {
   }
 
   /**
+   * Signal a session to finish remaining pending work and then exit gracefully.
+   * Unlike deleteSession(), this does NOT abort the generator — it lets the
+   * generator process all queued messages (including late-arriving summarize)
+   * before exiting via the iterator's completion check.
+   *
+   * This fixes the race condition where Claude Code's Stop hook fires
+   * summarize and session-complete in parallel: instead of aborting the
+   * generator and losing the summary, we let it finish naturally.
+   */
+  requestCompletion(sessionDbId: number): void {
+    const session = this.sessions.get(sessionDbId);
+    if (!session) return;
+
+    session.completionRequested = true;
+
+    // Wake up the iterator in case it's waiting for new messages.
+    // It will see the empty queue + completionRequested and exit.
+    const emitter = this.sessionQueues.get(sessionDbId);
+    emitter?.emit('message');
+
+    logger.info('SESSION', 'Graceful completion requested', {
+      sessionId: sessionDbId,
+      hasGenerator: !!session.generatorPromise
+    });
+  }
+
+  /**
    * Remove session from in-memory maps and notify without awaiting generator.
    * Used when SDK resume fails and we give up (no fallback): avoids deadlock
    * from deleteSession() awaiting the same generator promise we're inside.
@@ -351,6 +415,9 @@ export class SessionManager {
   removeSessionImmediate(sessionDbId: number): void {
     const session = this.sessions.get(sessionDbId);
     if (!session) return;
+
+    // Track as recently completed to block late-arriving observations
+    this.markContentSessionCompleted(session.contentSessionId);
 
     this.sessions.delete(sessionDbId);
     this.sessionQueues.delete(sessionDbId);
@@ -478,6 +545,7 @@ export class SessionManager {
     for await (const message of processor.createIterator({
       sessionDbId,
       signal: session.abortController.signal,
+      isCompletionRequested: () => session?.completionRequested === true,
       onIdleTimeout: () => {
         logger.info('SESSION', 'Triggering abort due to idle timeout to kill subprocess', { sessionDbId });
         session.idleTimedOut = true;

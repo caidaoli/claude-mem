@@ -19,6 +19,7 @@ export interface Observation {
 export interface Summary {
   id: number;
   session_id: string;
+  memory_session_id?: string;
   project: string;
   request?: string;
   investigated?: string;

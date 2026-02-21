@@ -10,6 +10,8 @@ export interface CreateIteratorOptions {
   signal: AbortSignal;
   /** Called when idle timeout occurs - should trigger abort to kill subprocess */
   onIdleTimeout?: () => void;
+  /** Returns true when session-complete has been received — exit after draining queue */
+  isCompletionRequested?: () => boolean;
 }
 
 export class SessionQueueProcessor {
@@ -30,7 +32,7 @@ export class SessionQueueProcessor {
    * Just returning from the iterator is NOT enough - the subprocess stays alive!
    */
   async *createIterator(options: CreateIteratorOptions): AsyncIterableIterator<PendingMessageWithId> {
-    const { sessionDbId, signal, onIdleTimeout } = options;
+    const { sessionDbId, signal, onIdleTimeout, isCompletionRequested } = options;
     let lastActivityTime = Date.now();
 
     while (!signal.aborted) {
@@ -45,6 +47,13 @@ export class SessionQueueProcessor {
           // Yield the message for processing (it's marked as 'processing' in DB)
           yield this.toPendingMessageWithId(persistentMessage);
         } else {
+          // Queue empty — if session-complete was received, exit gracefully.
+          // The generator has finished all pending work (observations + summary).
+          if (isCompletionRequested?.()) {
+            logger.info('SESSION', 'Queue drained after completion request, exiting gracefully', { sessionDbId });
+            return;
+          }
+
           // Queue empty - wait for wake-up event or timeout
           const receivedMessage = await this.waitForMessage(signal, IDLE_TIMEOUT_MS);
 

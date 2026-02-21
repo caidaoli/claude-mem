@@ -349,6 +349,7 @@ async function syncAndBroadcastSummary(
   broadcastSummary(worker, {
     id: result.summaryId,
     session_id: session.contentSessionId,
+    memory_session_id: session.memorySessionId!,
     request: summary!.request,
     investigated: summary!.investigated,
     learned: summary!.learned,

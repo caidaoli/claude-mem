@@ -211,8 +211,11 @@ export class SessionRoutes extends BaseRouteHandler {
         const sessionDbId = session.sessionDbId;
         this.spawnInProgress.delete(sessionDbId);
         const wasAborted = session.abortController.signal.aborted;
+        const wasCompletionRequested = session.completionRequested === true;
 
-        if (wasAborted) {
+        if (wasCompletionRequested) {
+          logger.info('SESSION', 'Generator exited after graceful completion', { sessionId: sessionDbId });
+        } else if (wasAborted) {
           logger.info('SESSION', `Generator aborted`, { sessionId: sessionDbId });
         } else {
           logger.error('SESSION', `Generator exited unexpectedly`, { sessionId: sessionDbId });
@@ -221,6 +224,15 @@ export class SessionRoutes extends BaseRouteHandler {
         session.generatorPromise = null;
         session.currentProvider = null;
         this.workerService.broadcastProcessingStatus();
+
+        // Graceful completion: generator finished all pending work and exited.
+        // Clean up the session immediately (no idle wait, no crash recovery).
+        if (wasCompletionRequested) {
+          session.abortController.abort(); // Kill subprocess
+          this.sessionManager.removeSessionImmediate(sessionDbId);
+          this.eventBroadcaster.broadcastSessionCompleted(sessionDbId);
+          return;
+        }
 
         // Crash recovery: If not aborted and still has work, restart (with limit)
         if (!wasAborted) {
@@ -391,6 +403,14 @@ export class SessionRoutes extends BaseRouteHandler {
     const sessionDbId = this.parseIntParam(req, res, 'sessionDbId');
     if (sessionDbId === null) return;
 
+    // Block late observations for completing sessions
+    const session = this.sessionManager.getSession(sessionDbId);
+    if (session?.completionRequested) {
+      logger.info('SESSION', 'Skipping late observation for completing session', { sessionDbId });
+      res.json({ status: 'skipped', reason: 'session_completing' });
+      return;
+    }
+
     const { tool_name, tool_input, tool_response, prompt_number, cwd } = req.body;
 
     this.sessionManager.queueObservation(sessionDbId, {
@@ -553,6 +573,26 @@ export class SessionRoutes extends BaseRouteHandler {
       return;
     }
 
+    // Block late-arriving observations for sessions that are completing or recently completed.
+    // Claude Code fires hooks in parallel; an observation HTTP request can arrive after
+    // session-complete has already been processed.  Accepting it would create a record
+    // with a timestamp after the Session Summary, confusing the timeline.
+    const activeSession = this.sessionManager.getSession(sessionDbId);
+    if (activeSession?.completionRequested) {
+      logger.info('SESSION', 'Skipping late observation for completing session', {
+        contentSessionId, sessionDbId, tool_name
+      });
+      res.json({ status: 'skipped', reason: 'session_completing' });
+      return;
+    }
+    if (this.sessionManager.isRecentlyCompleted(contentSessionId)) {
+      logger.info('SESSION', 'Skipping late observation for recently completed session', {
+        contentSessionId, sessionDbId, tool_name
+      });
+      res.json({ status: 'skipped', reason: 'session_completed' });
+      return;
+    }
+
     // Strip memory tags from tool_input and tool_response
     const cleanedToolInput = tool_input !== undefined
       ? stripMemoryTagsFromJson(JSON.stringify(tool_input))
@@ -668,49 +708,23 @@ export class SessionRoutes extends BaseRouteHandler {
       return;
     }
 
-    // Complete the session (removes from active sessions map)
-    await this.completionHandler.completeByDbId(sessionDbId);
+    // Graceful completion: signal the generator to finish remaining work
+    // (observations + summary) and exit, instead of aborting it.
+    //
+    // Claude Code's Stop hook fires summarize and session-complete in parallel.
+    // Old approach: abort generator → drain orphaned messages (lost context, wrong timestamps).
+    // New approach: let the generator finish its queue naturally, preserving
+    // conversation context and correct timestamps.
+    this.sessionManager.requestCompletion(sessionDbId);
 
-    logger.info('SESSION', 'Session completed via API', {
+    logger.info('SESSION', 'Session graceful completion requested via API', {
       contentSessionId,
-      sessionDbId
+      sessionDbId,
+      hasGenerator: !!activeSession.generatorPromise
     });
 
-    res.json({ status: 'completed', sessionDbId });
-
-    // Drain pending messages left behind by the abort.
-    // Claude Code's Stop hook fires summarize and session-complete in parallel,
-    // so messages may be enqueued concurrently or reset to pending by deleteSession.
-    // Brief delay lets the parallel summarize hook finish enqueueing.
-    this.drainPendingAfterComplete(sessionDbId);
+    res.json({ status: 'completing', sessionDbId });
   });
-
-  /**
-   * After session-complete aborts the generator, check for orphaned pending
-   * messages and spin up a short-lived processor to drain them.
-   */
-  private drainPendingAfterComplete(sessionDbId: number): void {
-    setTimeout(() => {
-      try {
-        const pendingStore = this.sessionManager.getPendingMessageStore();
-        const pendingCount = pendingStore.getPendingCount(sessionDbId);
-
-        if (pendingCount === 0) return;
-
-        logger.info('SESSION', 'Draining pending messages after session-complete', {
-          sessionDbId,
-          pendingCount
-        });
-
-        const session = this.sessionManager.initializeSession(sessionDbId);
-        this.ensureGeneratorRunning(sessionDbId, 'post-complete-drain');
-      } catch (error) {
-        logger.error('SESSION', 'Failed to drain pending after session-complete', {
-          sessionDbId
-        }, error as Error);
-      }
-    }, 500);
-  }
 
   /**
    * Initialize session by contentSessionId (new-hook uses this)
