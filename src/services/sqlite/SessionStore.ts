@@ -13,6 +13,7 @@ import {
   LatestPromptResult
 } from '../../types/database.js';
 import type { PendingMessageStore } from './PendingMessageStore.js';
+import { allowCompleteMessageType } from './migrations/m22-complete-message-type.js';
 
 /**
  * Session data store for SDK sessions, observations, and summaries
@@ -47,6 +48,7 @@ export class SessionStore {
     this.renameSessionIdColumns();
     this.repairSessionIdColumnRename();
     this.addFailedAtEpochColumn();
+    this.allowCompleteMessageTypeInPendingMessages();
     this.addOnUpdateCascadeToForeignKeys();
   }
 
@@ -522,7 +524,7 @@ export class SessionStore {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_db_id INTEGER NOT NULL,
         content_session_id TEXT NOT NULL,
-        message_type TEXT NOT NULL CHECK(message_type IN ('observation', 'summarize')),
+        message_type TEXT NOT NULL CHECK(message_type IN ('observation', 'summarize', 'complete')),
         tool_name TEXT,
         tool_input TEXT,
         tool_response TEXT,
@@ -644,6 +646,11 @@ export class SessionStore {
     }
 
     this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(20, new Date().toISOString());
+  }
+
+  /** Migration 22: Allow 'complete' control messages in pending_messages */
+  private allowCompleteMessageTypeInPendingMessages(): void {
+    allowCompleteMessageType(this.db);
   }
 
   /**
@@ -836,6 +843,48 @@ export class SessionStore {
       SET memory_session_id = ?
       WHERE id = ?
     `).run(memorySessionId, sessionDbId);
+  }
+
+  /**
+   * Mark a session as completed (used by /api/sessions/complete)
+   *
+   * IMPORTANT: This is lifecycle state for hook coordination, not a business concept.
+   * A new init can reactivate the same content_session_id later.
+   */
+  markSessionCompleted(sessionDbId: number, completedAtEpoch: number = Date.now()): void {
+    const completedAtIso = new Date(completedAtEpoch).toISOString();
+    this.db.prepare(`
+      UPDATE sdk_sessions
+      SET
+        status = 'completed',
+        completed_at = ?,
+        completed_at_epoch = ?
+      WHERE id = ? AND status != 'completed'
+    `).run(completedAtIso, completedAtEpoch, sessionDbId);
+  }
+
+  /**
+   * Mark a session as active and clear completion fields (used by /api/sessions/init)
+   */
+  markSessionActive(sessionDbId: number): void {
+    this.db.prepare(`
+      UPDATE sdk_sessions
+      SET
+        status = 'active',
+        completed_at = NULL,
+        completed_at_epoch = NULL
+      WHERE id = ?
+    `).run(sessionDbId);
+  }
+
+  /**
+   * Check if a session is marked completed in sdk_sessions
+   */
+  isSessionCompleted(sessionDbId: number): boolean {
+    const row = this.db.prepare(`
+      SELECT status FROM sdk_sessions WHERE id = ? LIMIT 1
+    `).get(sessionDbId) as { status: string } | undefined;
+    return row?.status === 'completed';
   }
 
   /**
@@ -1625,7 +1674,7 @@ export class SessionStore {
       let summaryId: number | null = null;
       let summaryEpoch: number | null = null;
       if (summary) {
-        // INVARIANT: summary.created_at_epoch >= max(observations.created_at_epoch)
+        // INVARIANT: summary.created_at_epoch > max(observations.created_at_epoch)
         // Queue priority reordering can cause the summary's override timestamp to be
         // earlier than observations stored in a previous call for the same session.
         const maxObsRow = this.db.prepare(`
@@ -1757,7 +1806,7 @@ export class SessionStore {
       let summaryId: number | undefined;
       let summaryEpoch: number | undefined;
       if (summary) {
-        // INVARIANT: summary.created_at_epoch >= max(observations.created_at_epoch)
+        // INVARIANT: summary.created_at_epoch > max(observations.created_at_epoch)
         const maxObsRow = this.db.prepare(`
           SELECT MAX(created_at_epoch) as max_epoch
           FROM observations WHERE memory_session_id = ?

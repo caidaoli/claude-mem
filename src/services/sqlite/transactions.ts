@@ -97,7 +97,7 @@ export function storeObservationsAndMarkComplete(
     let summaryId: number | null = null;
     let summaryEpoch: number | null = null;
     if (summary) {
-      // INVARIANT: summary.created_at_epoch >= max(observations.created_at_epoch)
+      // INVARIANT: summary.created_at_epoch > max(observations.created_at_epoch)
       // Queue priority reordering can cause the summary's override timestamp to be
       // earlier than observations stored in a previous call for the same session.
       // Query the actual max to enforce the invariant.
@@ -221,7 +221,7 @@ export function storeObservations(
     let summaryId: number | null = null;
     let summaryEpoch: number | null = null;
     if (summary) {
-      // INVARIANT: summary.created_at_epoch >= max(observations.created_at_epoch)
+      // INVARIANT: summary.created_at_epoch > max(observations.created_at_epoch)
       // Queue priority reordering can cause the summary's override timestamp to be
       // earlier than observations stored in a previous call for the same session.
       // Query the actual max to enforce the invariant.

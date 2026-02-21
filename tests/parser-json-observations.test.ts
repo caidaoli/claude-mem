@@ -84,4 +84,25 @@ describe('parseObservationsJson', () => {
     expect(result).toHaveLength(1);
     expect(result[0].title).toBe('good');
   });
+
+  it('strips placeholder wrappers from JSON observation fields', () => {
+    const input = JSON.stringify({
+      type: 'discovery',
+      title: '[**title**: Hello]',
+      subtitle: '[World]',
+      facts: ['[**fact**: f1]', '[f2]'],
+      narrative: '[**narrative**: Text]',
+      concepts: [],
+      files_read: [],
+      files_modified: []
+    });
+
+    const result = parseObservationsJson(input, 'test-correlation-id');
+
+    expect(result).toHaveLength(1);
+    expect(result[0].title).toBe('Hello');
+    expect(result[0].subtitle).toBe('World');
+    expect(result[0].facts).toEqual(['f1', 'f2']);
+    expect(result[0].narrative).toBe('Text');
+  });
 });

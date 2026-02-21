@@ -565,11 +565,12 @@ export class SessionRoutes extends BaseRouteHandler {
       return;
     }
 
-    // Block late-arriving observations for sessions that already completed and cleaned up.
-    // The generator is gone, no one would process the queued message.
-    if (this.sessionManager.isRecentlyCompleted(contentSessionId)) {
-      logger.info('SESSION', 'Skipping late observation for recently completed session', {
-        contentSessionId, sessionDbId, tool_name
+    // Late-hook gating: if the session is already completed, do not resurrect it.
+    if (store.isSessionCompleted(sessionDbId)) {
+      logger.info('SESSION', 'Skipping observation for completed session', {
+        contentSessionId,
+        sessionDbId,
+        tool_name
       });
       res.json({ status: 'skipped', reason: 'session_completed' });
       return;
@@ -641,7 +642,34 @@ export class SessionRoutes extends BaseRouteHandler {
       return;
     }
 
-    // Queue summarize
+    const wasCompleted = store.isSessionCompleted(sessionDbId);
+
+    // Summarize is allowed even for completed sessions: stop-hook can race complete→summarize.
+    // If we're already completed, re-queue summarize + a completion control message so the
+    // session can finalize deterministically without resurrecting observations.
+    // NOT calling markSessionActive(): late-summarize must not re-open the gate for new observations.
+    if (wasCompleted) {
+      logger.info('SESSION', 'Late summarize for completed session (re-queueing completion)', {
+        contentSessionId,
+        sessionDbId
+      });
+
+      const pendingStore = this.sessionManager.getPendingMessageStore();
+      pendingStore.clearPendingComplete(sessionDbId);
+
+      this.sessionManager.queueSummarize(sessionDbId, last_assistant_message);
+      this.sessionManager.queueComplete(sessionDbId);
+
+      this.ensureGeneratorRunning(sessionDbId, 'summarize-late');
+
+      // Broadcast summarize queued event
+      this.eventBroadcaster.broadcastSummarizeQueued();
+
+      res.json({ status: 'queued' });
+      return;
+    }
+
+    // Queue summarize (normal path)
     this.sessionManager.queueSummarize(sessionDbId, last_assistant_message);
 
     // Ensure SDK agent is running
@@ -658,10 +686,9 @@ export class SessionRoutes extends BaseRouteHandler {
    * POST /api/sessions/complete
    * Body: { contentSessionId }
    *
-   * Removes session from active sessions map, allowing orphan reaper to
-   * clean up any remaining subprocesses.
-   *
-   * Fixes Issue #842: Sessions stay in map forever, reaper thinks all active.
+   * Enqueues a completion control message into the persistent queue.
+   * The generator drains observations + summary, then consumes the control
+   * message and exits — no abort races when stop hooks arrive in parallel.
    */
   private handleCompleteByClaudeId = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
     const { contentSessionId } = req.body;
@@ -678,34 +705,39 @@ export class SessionRoutes extends BaseRouteHandler {
     // Pass empty strings - we only need the ID lookup, not to create a new session
     const sessionDbId = store.createSDKSession(contentSessionId, '', '');
 
-    // Check if session is in the active sessions map
-    const activeSession = this.sessionManager.getSession(sessionDbId);
-    if (!activeSession) {
-      // Session may not be in memory (already completed or never initialized)
-      logger.debug('SESSION', 'session-complete: Session not in active map', {
-        contentSessionId,
-        sessionDbId
-      });
-      res.json({ status: 'skipped', reason: 'not_active' });
+    // Idempotent: already completed
+    if (store.isSessionCompleted(sessionDbId)) {
+      res.json({ status: 'completed', sessionDbId });
       return;
     }
 
-    // Graceful completion: signal the generator to finish remaining work
-    // (observations + summary) and exit, instead of aborting it.
-    //
-    // Claude Code's Stop hook fires summarize and session-complete in parallel.
-    // Old approach: abort generator → drain orphaned messages (lost context, wrong timestamps).
-    // New approach: let the generator finish its queue naturally, preserving
-    // conversation context and correct timestamps.
-    this.sessionManager.requestCompletion(sessionDbId);
+    const pendingStore = this.sessionManager.getPendingMessageStore();
+    const pendingCount = pendingStore.getPendingCount(sessionDbId);
 
-    logger.info('SESSION', 'Session graceful completion requested via API', {
+    const activeSession = this.sessionManager.getSession(sessionDbId);
+    const hasGenerator = !!activeSession?.generatorPromise;
+
+    // Ensure session exists in memory so generator can drain queue.
+    if (!activeSession) {
+      this.sessionManager.initializeSession(sessionDbId);
+    }
+
+    // Persist completion in the same queue as observations/summaries.
+    // This eliminates races when stop hooks arrive in parallel.
+    pendingStore.clearPendingComplete(sessionDbId);
+    this.sessionManager.queueComplete(sessionDbId);
+
+    // Start generator if needed (will drain pending work, then consume completion control and exit)
+    this.ensureGeneratorRunning(sessionDbId, 'complete');
+
+    logger.info('SESSION', 'Session completion queued', {
       contentSessionId,
       sessionDbId,
-      hasGenerator: !!activeSession.generatorPromise
+      pendingCount,
+      hadGenerator: hasGenerator
     });
 
-    res.json({ status: 'completing', sessionDbId });
+    res.json({ status: 'queued', sessionDbId });
   });
 
   /**
@@ -738,6 +770,16 @@ export class SessionRoutes extends BaseRouteHandler {
 
     // Step 1: Create/get SDK session (idempotent INSERT OR IGNORE)
     const sessionDbId = store.createSDKSession(contentSessionId, project, prompt);
+
+    // Session lifecycle: init always re-activates the session and cancels any stale completion request.
+    store.markSessionActive(sessionDbId);
+    const clearedComplete = this.sessionManager.getPendingMessageStore().clearPendingComplete(sessionDbId);
+    if (clearedComplete > 0) {
+      logger.info('SESSION', 'Cleared stale completion control message(s) on init', {
+        sessionId: sessionDbId,
+        cleared: clearedComplete
+      });
+    }
 
     // Verify session creation with DB lookup
     const dbSession = store.getSessionById(sessionDbId);

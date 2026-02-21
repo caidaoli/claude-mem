@@ -419,15 +419,22 @@ export function parseSummaryJson(text: string, sessionId?: number): ParsedSummar
 
 /**
  * Strip [**fieldname**: content] wrappers that some models reproduce from prompt placeholders.
- * Also handles [content] simple brackets.
+ * Also handles [content] simple brackets (no nested brackets allowed).
  *
  * "[**title**: 统一复选框样式修复]" → "统一复选框样式修复"
  * "[**narrative**: Full context...]" → "Full context..."
+ * "[World]" → "World"
+ *
+ * Only used on AI-generated JSON observation fields, never on user content.
  */
 function stripFieldWrapper(value: string): string {
   const trimmed = value.trim();
   const boldMatch = /^\[\*\*\w+\*\*:\s*(.*)\]$/.exec(trimmed);
   if (boldMatch) return boldMatch[1];
+  // Simple bracket wrapper: [content] where content has no inner brackets.
+  // This avoids false matches on strings like "[a] and [b]".
+  const simpleMatch = /^\[([^\[\]]+)\]$/.exec(trimmed);
+  if (simpleMatch) return simpleMatch[1];
   return trimmed;
 }
 

@@ -12,7 +12,7 @@ export interface PersistentPendingMessage {
   id: number;
   session_db_id: number;
   content_session_id: string;
-  message_type: 'observation' | 'summarize';
+  message_type: 'observation' | 'summarize' | 'complete';
   tool_name: string | null;
   tool_input: string | null;
   tool_response: string | null;
@@ -109,13 +109,18 @@ export class PendingMessageStore {
         logger.info('QUEUE', `SELF_HEAL | sessionDbId=${sessionId} | recovered ${resetResult.changes} stale processing message(s)`);
       }
 
-      // Priority: observations before summarize.
+      // Priority: observations → summarize → complete.
       // AI produces better summaries when it has processed all observations first.
+      // Complete is a control message that should run only after all work is drained.
       const peekStmt = this.db.prepare(`
         SELECT * FROM pending_messages
         WHERE session_db_id = ? AND status = 'pending'
         ORDER BY
-          CASE message_type WHEN 'observation' THEN 0 WHEN 'summarize' THEN 1 END,
+          CASE message_type
+            WHEN 'observation' THEN 0
+            WHEN 'summarize' THEN 1
+            WHEN 'complete' THEN 2
+          END,
           id ASC
         LIMIT 1
       `);
@@ -147,12 +152,13 @@ export class PendingMessageStore {
    * CRITICAL: Only call this AFTER the observation/summary has been stored to DB.
    * This prevents message loss on generator crash.
    */
-  confirmProcessed(messageId: number): void {
+  confirmProcessed(messageId: number): boolean {
     const stmt = this.db.prepare('DELETE FROM pending_messages WHERE id = ?');
     const result = stmt.run(messageId);
     if (result.changes > 0) {
       logger.debug('QUEUE', `CONFIRMED | messageId=${messageId} | deleted from queue`);
     }
+    return result.changes > 0;
   }
 
   /**
@@ -478,6 +484,35 @@ export class PendingMessageStore {
     `);
     const result = stmt.run();
     return result.changes;
+  }
+
+  /**
+   * Clear session-complete control messages for a session (pending or processing).
+   * Used to cancel stale completion when a new session init starts or
+   * when re-queueing completion after a late summarize.
+   */
+  clearPendingComplete(sessionDbId: number): number {
+    const stmt = this.db.prepare(`
+      DELETE FROM pending_messages
+      WHERE session_db_id = ? AND status IN ('pending', 'processing') AND message_type = 'complete'
+    `);
+    const result = stmt.run(sessionDbId);
+    return result.changes;
+  }
+
+  /**
+   * Count pending/processing work items, excluding control messages (complete).
+   * Used by the queue processor to decide whether real work remains before
+   * finalizing a completion control message.
+   */
+  getWorkCount(sessionDbId: number): number {
+    const stmt = this.db.prepare(`
+      SELECT COUNT(*) as count FROM pending_messages
+      WHERE session_db_id = ? AND status IN ('pending', 'processing')
+        AND message_type != 'complete'
+    `);
+    const result = stmt.get(sessionDbId) as { count: number };
+    return result.count;
   }
 
   /**

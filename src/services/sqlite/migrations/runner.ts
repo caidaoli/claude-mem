@@ -6,6 +6,7 @@ import {
   TableNameRow,
   SchemaVersion
 } from '../../../types/database.js';
+import { allowCompleteMessageType } from './m22-complete-message-type.js';
 
 /**
  * MigrationRunner handles all database schema migrations
@@ -31,6 +32,7 @@ export class MigrationRunner {
     this.renameSessionIdColumns();
     this.repairSessionIdColumnRename();
     this.addFailedAtEpochColumn();
+    this.allowCompleteMessageTypeInPendingMessages();
   }
 
   /**
@@ -505,7 +507,7 @@ export class MigrationRunner {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_db_id INTEGER NOT NULL,
         content_session_id TEXT NOT NULL,
-        message_type TEXT NOT NULL CHECK(message_type IN ('observation', 'summarize')),
+        message_type TEXT NOT NULL CHECK(message_type IN ('observation', 'summarize', 'complete')),
         tool_name TEXT,
         tool_input TEXT,
         tool_response TEXT,
@@ -627,5 +629,10 @@ export class MigrationRunner {
     }
 
     this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(20, new Date().toISOString());
+  }
+
+  /** Migration 22: Allow 'complete' control messages in pending_messages */
+  private allowCompleteMessageTypeInPendingMessages(): void {
+    allowCompleteMessageType(this.db);
   }
 }

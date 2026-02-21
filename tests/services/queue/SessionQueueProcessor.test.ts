@@ -10,6 +10,10 @@ import type { PendingMessageStore, PersistentPendingMessage } from '../../../src
 function createMockStore(): PendingMessageStore {
   return {
     claimNextMessage: mock(() => null),
+    confirmProcessed: mock(() => true),
+    resetToPending: mock(() => true),
+    getPendingCount: mock(() => 1),
+    getWorkCount: mock(() => 0),
     toPendingMessage: mock((msg: PersistentPendingMessage) => ({
       type: msg.message_type,
       tool_name: msg.tool_name || undefined,
@@ -229,6 +233,119 @@ describe('SessionQueueProcessor', () => {
         // onIdleTimeout should NOT have been called
         expect(onIdleTimeout).not.toHaveBeenCalled();
       });
+    });
+
+    it('should process completion control message and exit without yielding', async () => {
+      const onComplete = mock(() => {});
+
+      // Return a completion control message immediately
+      (store.claimNextMessage as any) = mock(() => createMockMessage({ id: 42, message_type: 'complete', created_at_epoch: Date.now() - 10_000 }));
+
+      const options: CreateIteratorOptions = {
+        sessionDbId: 123,
+        signal: abortController.signal,
+        onComplete
+      };
+
+      const iterator = processor.createIterator(options);
+      const results: any[] = [];
+
+      for await (const message of iterator) {
+        results.push(message);
+      }
+
+      expect(results).toHaveLength(0);
+      expect((store.confirmProcessed as any)).toHaveBeenCalledTimes(1);
+      expect((store.confirmProcessed as any)).toHaveBeenCalledWith(42);
+      expect(onComplete).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not mark complete if completion was cleared before confirmProcessed', async () => {
+      const onComplete = mock(() => {});
+      const waits: number[] = [];
+
+      let claimCount = 0;
+      (store.claimNextMessage as any) = mock(() => {
+        claimCount++;
+        if (claimCount === 1) {
+          return createMockMessage({ id: 42, message_type: 'complete', created_at_epoch: Date.now() - 10_000 });
+        }
+        return null;
+      });
+
+      // Simulate /api/sessions/init clearing the claimed completion message.
+      (store.confirmProcessed as any) = mock(() => false);
+
+      // Avoid real waiting; ensure the iterator keeps running instead of exiting.
+      (processor as any).waitForMessage = mock(async (_signal: AbortSignal, timeoutMs: number) => {
+        waits.push(timeoutMs);
+        abortController.abort();
+        return false;
+      });
+
+      const options: CreateIteratorOptions = {
+        sessionDbId: 123,
+        signal: abortController.signal,
+        onComplete
+      };
+
+      const iterator = processor.createIterator(options);
+      const results: any[] = [];
+
+      for await (const message of iterator) {
+        results.push(message);
+      }
+
+      expect(results).toHaveLength(0);
+      expect(onComplete).not.toHaveBeenCalled();
+      expect((store.confirmProcessed as any)).toHaveBeenCalledTimes(1);
+      expect((store.confirmProcessed as any)).toHaveBeenCalledWith(42);
+      // It should continue looping (queue empty) rather than return immediately.
+      expect(waits.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should back off when completion arrives but other work is still processing', async () => {
+      const onComplete = mock(() => {});
+      const timeouts: number[] = [];
+
+      let claimCount = 0;
+      (store.claimNextMessage as any) = mock(() => {
+        claimCount++;
+        if (claimCount === 1) {
+          return createMockMessage({ id: 42, message_type: 'complete', created_at_epoch: Date.now() - 10_000 });
+        }
+        return null;
+      });
+
+      // Simulate work items stuck in 'processing' (e.g. crashed worker within stale threshold)
+      (store.getWorkCount as any) = mock(() => 1);
+
+      // Avoid real waiting; capture the requested delay and stop the iterator.
+      (processor as any).waitForMessage = mock(async (_signal: AbortSignal, timeoutMs: number) => {
+        timeouts.push(timeoutMs);
+        abortController.abort();
+        return false;
+      });
+
+      const options: CreateIteratorOptions = {
+        sessionDbId: 123,
+        signal: abortController.signal,
+        onComplete
+      };
+
+      const iterator = processor.createIterator(options);
+      const results: any[] = [];
+
+      for await (const message of iterator) {
+        results.push(message);
+      }
+
+      expect(results).toHaveLength(0);
+      expect(onComplete).not.toHaveBeenCalled();
+      expect((store.resetToPending as any)).toHaveBeenCalledWith(42);
+      // Must wait/back off rather than immediately looping into the idle wait (3 minutes).
+      expect(timeouts.length).toBeGreaterThanOrEqual(1);
+      expect(timeouts[0]).toBeLessThan(3 * 60 * 1000);
     });
 
     describe('message event handling', () => {

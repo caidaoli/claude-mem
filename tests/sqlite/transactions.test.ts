@@ -237,7 +237,7 @@ describe('Transactions Module', () => {
       expect(msg?.status).toBe('processed');
     });
 
-    it('should maintain atomicity - all operations share same timestamp', () => {
+    it('should maintain atomicity - observations share timestamp and summary sorts after', () => {
       const { memorySessionId, sessionDbId } = createSessionWithMemoryId('content-atomic-ts', 'atomic-timestamp-session');
       const project = 'test-project';
       const observations = [
@@ -275,9 +275,11 @@ describe('Transactions Module', () => {
         expect(obs?.created_at_epoch).toBe(fixedTimestamp);
       }
 
-      // Summary should have same timestamp
+      // Summary should sort after observations even if they share the same override timestamp.
+      // (Invariant enforcement bumps summary epoch above max observation epoch.)
       const storedSummary = getSummaryForSession(db, memorySessionId);
-      expect(storedSummary?.created_at_epoch).toBe(fixedTimestamp);
+      expect(storedSummary?.created_at_epoch).toBe(fixedTimestamp + 1);
+      expect(result.summaryCreatedAtEpoch).toBe(fixedTimestamp + 1);
     });
 
     it('should handle null summary', () => {
