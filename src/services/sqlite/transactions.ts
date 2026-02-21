@@ -18,6 +18,8 @@ export interface StoreObservationsResult {
   observationIds: number[];
   summaryId: number | null;
   createdAtEpoch: number;
+  /** Actual epoch used for the summary (may differ from createdAtEpoch when adjusted to maintain invariant) */
+  summaryCreatedAtEpoch: number | null;
 }
 
 // Legacy alias for backwards compatibility
@@ -93,7 +95,20 @@ export function storeObservationsAndMarkComplete(
 
     // 2. Store summary if provided
     let summaryId: number | null = null;
+    let summaryEpoch: number | null = null;
     if (summary) {
+      // INVARIANT: summary.created_at_epoch >= max(observations.created_at_epoch)
+      // Queue priority reordering can cause the summary's override timestamp to be
+      // earlier than observations stored in a previous call for the same session.
+      // Query the actual max to enforce the invariant.
+      const maxObsRow = db.prepare(`
+        SELECT MAX(created_at_epoch) as max_epoch
+        FROM observations WHERE memory_session_id = ?
+      `).get(memorySessionId) as { max_epoch: number | null } | undefined;
+
+      summaryEpoch = Math.max(timestampEpoch, ((maxObsRow?.max_epoch) ?? 0) + 1);
+      const summaryIso = new Date(summaryEpoch).toISOString();
+
       const summaryStmt = db.prepare(`
         INSERT INTO session_summaries
         (memory_session_id, project, request, investigated, learned, completed,
@@ -112,8 +127,8 @@ export function storeObservationsAndMarkComplete(
         summary.notes,
         promptNumber || null,
         discoveryTokens,
-        timestampIso,
-        timestampEpoch
+        summaryIso,
+        summaryEpoch
       );
       summaryId = Number(result.lastInsertRowid);
     }
@@ -132,7 +147,7 @@ export function storeObservationsAndMarkComplete(
     `);
     updateStmt.run(timestampEpoch, messageId);
 
-    return { observationIds, summaryId, createdAtEpoch: timestampEpoch };
+    return { observationIds, summaryId, createdAtEpoch: timestampEpoch, summaryCreatedAtEpoch: summaryEpoch };
   });
 
   // Execute the transaction and return results
@@ -204,7 +219,20 @@ export function storeObservations(
 
     // 2. Store summary if provided
     let summaryId: number | null = null;
+    let summaryEpoch: number | null = null;
     if (summary) {
+      // INVARIANT: summary.created_at_epoch >= max(observations.created_at_epoch)
+      // Queue priority reordering can cause the summary's override timestamp to be
+      // earlier than observations stored in a previous call for the same session.
+      // Query the actual max to enforce the invariant.
+      const maxObsRow = db.prepare(`
+        SELECT MAX(created_at_epoch) as max_epoch
+        FROM observations WHERE memory_session_id = ?
+      `).get(memorySessionId) as { max_epoch: number | null } | undefined;
+
+      summaryEpoch = Math.max(timestampEpoch, ((maxObsRow?.max_epoch) ?? 0) + 1);
+      const summaryIso = new Date(summaryEpoch).toISOString();
+
       const summaryStmt = db.prepare(`
         INSERT INTO session_summaries
         (memory_session_id, project, request, investigated, learned, completed,
@@ -223,13 +251,13 @@ export function storeObservations(
         summary.notes,
         promptNumber || null,
         discoveryTokens,
-        timestampIso,
-        timestampEpoch
+        summaryIso,
+        summaryEpoch
       );
       summaryId = Number(result.lastInsertRowid);
     }
 
-    return { observationIds, summaryId, createdAtEpoch: timestampEpoch };
+    return { observationIds, summaryId, createdAtEpoch: timestampEpoch, summaryCreatedAtEpoch: summaryEpoch };
   });
 
   // Execute the transaction and return results

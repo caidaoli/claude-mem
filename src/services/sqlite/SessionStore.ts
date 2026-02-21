@@ -1584,7 +1584,7 @@ export class SessionStore {
     promptNumber?: number,
     discoveryTokens: number = 0,
     overrideTimestampEpoch?: number
-  ): { observationIds: number[]; summaryId: number | null; createdAtEpoch: number } {
+  ): { observationIds: number[]; summaryId: number | null; createdAtEpoch: number; summaryCreatedAtEpoch: number | null } {
     // Use override timestamp if provided
     const timestampEpoch = overrideTimestampEpoch ?? Date.now();
     const timestampIso = new Date(timestampEpoch).toISOString();
@@ -1623,7 +1623,19 @@ export class SessionStore {
 
       // 2. Store summary if provided
       let summaryId: number | null = null;
+      let summaryEpoch: number | null = null;
       if (summary) {
+        // INVARIANT: summary.created_at_epoch >= max(observations.created_at_epoch)
+        // Queue priority reordering can cause the summary's override timestamp to be
+        // earlier than observations stored in a previous call for the same session.
+        const maxObsRow = this.db.prepare(`
+          SELECT MAX(created_at_epoch) as max_epoch
+          FROM observations WHERE memory_session_id = ?
+        `).get(memorySessionId) as { max_epoch: number | null } | undefined;
+
+        summaryEpoch = Math.max(timestampEpoch, ((maxObsRow?.max_epoch) ?? 0) + 1);
+        const summaryIso = new Date(summaryEpoch).toISOString();
+
         const summaryStmt = this.db.prepare(`
           INSERT INTO session_summaries
           (memory_session_id, project, request, investigated, learned, completed,
@@ -1642,13 +1654,13 @@ export class SessionStore {
           summary.notes,
           promptNumber || null,
           discoveryTokens,
-          timestampIso,
-          timestampEpoch
+          summaryIso,
+          summaryEpoch
         );
         summaryId = Number(result.lastInsertRowid);
       }
 
-      return { observationIds, summaryId, createdAtEpoch: timestampEpoch };
+      return { observationIds, summaryId, createdAtEpoch: timestampEpoch, summaryCreatedAtEpoch: summaryEpoch };
     });
 
     // Execute the transaction and return results
@@ -1704,7 +1716,7 @@ export class SessionStore {
     promptNumber?: number,
     discoveryTokens: number = 0,
     overrideTimestampEpoch?: number
-  ): { observationIds: number[]; summaryId?: number; createdAtEpoch: number } {
+  ): { observationIds: number[]; summaryId?: number; createdAtEpoch: number; summaryCreatedAtEpoch?: number } {
     // Use override timestamp if provided
     const timestampEpoch = overrideTimestampEpoch ?? Date.now();
     const timestampIso = new Date(timestampEpoch).toISOString();
@@ -1743,7 +1755,17 @@ export class SessionStore {
 
       // 2. Store summary if provided
       let summaryId: number | undefined;
+      let summaryEpoch: number | undefined;
       if (summary) {
+        // INVARIANT: summary.created_at_epoch >= max(observations.created_at_epoch)
+        const maxObsRow = this.db.prepare(`
+          SELECT MAX(created_at_epoch) as max_epoch
+          FROM observations WHERE memory_session_id = ?
+        `).get(memorySessionId) as { max_epoch: number | null } | undefined;
+
+        summaryEpoch = Math.max(timestampEpoch, ((maxObsRow?.max_epoch) ?? 0) + 1);
+        const summaryIso = new Date(summaryEpoch).toISOString();
+
         const summaryStmt = this.db.prepare(`
           INSERT INTO session_summaries
           (memory_session_id, project, request, investigated, learned, completed,
@@ -1762,8 +1784,8 @@ export class SessionStore {
           summary.notes,
           promptNumber || null,
           discoveryTokens,
-          timestampIso,
-          timestampEpoch
+          summaryIso,
+          summaryEpoch
         );
         summaryId = Number(result.lastInsertRowid);
       }
@@ -1782,7 +1804,7 @@ export class SessionStore {
       `);
       updateStmt.run(timestampEpoch, messageId);
 
-      return { observationIds, summaryId, createdAtEpoch: timestampEpoch };
+      return { observationIds, summaryId, createdAtEpoch: timestampEpoch, summaryCreatedAtEpoch: summaryEpoch };
     });
 
     // Execute the transaction and return results

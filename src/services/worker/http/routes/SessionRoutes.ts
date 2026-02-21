@@ -403,14 +403,6 @@ export class SessionRoutes extends BaseRouteHandler {
     const sessionDbId = this.parseIntParam(req, res, 'sessionDbId');
     if (sessionDbId === null) return;
 
-    // Block late observations for completing sessions
-    const session = this.sessionManager.getSession(sessionDbId);
-    if (session?.completionRequested) {
-      logger.info('SESSION', 'Skipping late observation for completing session', { sessionDbId });
-      res.json({ status: 'skipped', reason: 'session_completing' });
-      return;
-    }
-
     const { tool_name, tool_input, tool_response, prompt_number, cwd } = req.body;
 
     this.sessionManager.queueObservation(sessionDbId, {
@@ -573,18 +565,8 @@ export class SessionRoutes extends BaseRouteHandler {
       return;
     }
 
-    // Block late-arriving observations for sessions that are completing or recently completed.
-    // Claude Code fires hooks in parallel; an observation HTTP request can arrive after
-    // session-complete has already been processed.  Accepting it would create a record
-    // with a timestamp after the Session Summary, confusing the timeline.
-    const activeSession = this.sessionManager.getSession(sessionDbId);
-    if (activeSession?.completionRequested) {
-      logger.info('SESSION', 'Skipping late observation for completing session', {
-        contentSessionId, sessionDbId, tool_name
-      });
-      res.json({ status: 'skipped', reason: 'session_completing' });
-      return;
-    }
+    // Block late-arriving observations for sessions that already completed and cleaned up.
+    // The generator is gone, no one would process the queued message.
     if (this.sessionManager.isRecentlyCompleted(contentSessionId)) {
       logger.info('SESSION', 'Skipping late observation for recently completed session', {
         contentSessionId, sessionDbId, tool_name

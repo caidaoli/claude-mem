@@ -110,8 +110,7 @@ export class PendingMessageStore {
       }
 
       // Priority: observations before summarize.
-      // This ensures all observations are processed before the session summary,
-      // regardless of HTTP arrival order. Prevents summary appearing mid-stream.
+      // AI produces better summaries when it has processed all observations first.
       const peekStmt = this.db.prepare(`
         SELECT * FROM pending_messages
         WHERE session_db_id = ? AND status = 'pending'

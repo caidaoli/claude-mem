@@ -77,6 +77,8 @@ export interface StorageResult {
   observationIds: number[];
   summaryId: number | null;
   createdAtEpoch: number;
+  /** Actual epoch used for the summary (may differ when adjusted to maintain invariant) */
+  summaryCreatedAtEpoch: number | null;
 }
 
 /**

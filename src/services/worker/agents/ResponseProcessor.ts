@@ -95,6 +95,15 @@ export async function processAgentResponse(
     observations = parseObservations(text, session.contentSessionId);
   }
 
+  // Filter vacuous observations (AI generated "nothing to report" instead of skipping)
+  const preFilterCount = observations.length;
+  observations = observations.filter(obs => !isVacuousObservation(obs));
+  if (observations.length < preFilterCount) {
+    logger.info('PARSER', `Discarded ${preFilterCount - observations.length} vacuous observation(s)`, {
+      sessionId: session.sessionDbId
+    });
+  }
+
   // Parse summary - only if explicitly requested or text contains summary markers
   let summary: ParsedSummary | null = null;
   if (options?.parseJsonSummary && options?.summaryText) {
@@ -329,7 +338,7 @@ async function syncAndBroadcastSummary(
     session.project,
     summaryForStore,
     session.lastPromptNumber,
-    result.createdAtEpoch,
+    result.summaryCreatedAtEpoch ?? result.createdAtEpoch,
     discoveryTokens
   ).then(() => {
     const chromaDuration = Date.now() - chromaStart;
@@ -358,11 +367,60 @@ async function syncAndBroadcastSummary(
     notes: summary!.notes,
     project: session.project,
     prompt_number: session.lastPromptNumber,
-    created_at_epoch: result.createdAtEpoch
+    created_at_epoch: result.summaryCreatedAtEpoch ?? result.createdAtEpoch
   });
 
   // Update Cursor context file for registered projects (fire-and-forget)
   updateCursorContextForProject(session.project, getWorkerPort()).catch(error => {
     logger.warn('CURSOR', 'Context update failed (non-critical)', { project: session.project }, error as Error);
   });
+}
+
+/**
+ * Detect vacuous observations that should have been skipped by the AI.
+ *
+ * An observation is vacuous when it carries zero concrete data AND its
+ * title/narrative explicitly says "nothing happened".  This catches the
+ * case where the AI ignores skip_guidance and emits a placeholder
+ * observation instead of producing no output.
+ *
+ * Conservative: requires BOTH empty data and matching text patterns,
+ * so legitimate discoveries with real facts/files are never discarded.
+ */
+const VACUOUS_PATTERNS = [
+  /无新观察/,
+  /无观察/,
+  /尚未记录/,
+  /尚未收到/,
+  /没有新的/,
+  /没有变更/,
+  /暂未观察/,
+  /等待更多/,
+  /等待进一步/,
+  /无后续/,
+  /no new observation/i,
+  /no observation/i,
+  /nothing to report/i,
+  /no updates/i,
+  /no changes/i,
+  /waiting for/i,
+  /no activity/i,
+];
+
+function isVacuousObservation(obs: ParsedObservation): boolean {
+  // Files always indicate real work
+  if (obs.files_read.length > 0 || obs.files_modified.length > 0) {
+    return false;
+  }
+  const text = `${obs.title || ''} ${obs.narrative || ''}`;
+  if (!VACUOUS_PATTERNS.some(p => p.test(text))) {
+    return false;
+  }
+  // Title/narrative matched vacuous pattern.
+  // If facts also look vacuous, discard. Real facts (concrete data) save the observation.
+  if (obs.facts.length === 0) {
+    return true;
+  }
+  const factsText = obs.facts.join(' ');
+  return VACUOUS_PATTERNS.some(p => p.test(factsText));
 }
