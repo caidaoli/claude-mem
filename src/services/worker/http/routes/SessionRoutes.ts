@@ -103,6 +103,20 @@ export class SessionRoutes extends BaseRouteHandler {
     const session = this.sessionManager.getSession(sessionDbId);
     if (!session) return;
 
+    // Circuit breaker: if restart limit was exceeded, don't start generator.
+    // Observations are already persisted to DB by queueObservation() before this call,
+    // so skipping here only prevents starting the generator — no data loss.
+    const MAX_CONSECUTIVE_RESTARTS = 3;
+    if (session.consecutiveRestarts > MAX_CONSECUTIVE_RESTARTS) {
+      logger.warn('SESSION', 'Circuit breaker active - generator not started (restart limit exceeded)', {
+        sessionDbId,
+        source,
+        consecutiveRestarts: session.consecutiveRestarts,
+        maxRestarts: MAX_CONSECUTIVE_RESTARTS
+      });
+      return;
+    }
+
     // GUARD: Prevent duplicate spawns
     if (this.spawnInProgress.get(sessionDbId)) {
       logger.debug('SESSION', 'Spawn already in progress, skipping', { sessionDbId, source });

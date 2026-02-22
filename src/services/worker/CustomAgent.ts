@@ -1163,10 +1163,24 @@ export class CustomAgent {
           }
 
           if (!observationText) {
+            session.consecutiveEmptyResponses = (session.consecutiveEmptyResponses || 0) + 1;
+            const MAX_CONSECUTIVE_EMPTY = 3;
+            if (session.consecutiveEmptyResponses >= MAX_CONSECUTIVE_EMPTY) {
+              logger.error('SDK', 'Too many consecutive empty responses - aborting generator to prevent silent data loss', {
+                sessionId: session.sessionDbId,
+                consecutiveEmptyResponses: session.consecutiveEmptyResponses,
+                threshold: MAX_CONSECUTIVE_EMPTY
+              });
+              session.abortController.abort();
+              return;
+            }
             logger.warn('SDK', 'Empty Custom observation response; processing empty payload for queue consistency', {
               sessionId: session.sessionDbId,
-              messageId: session.processingMessageIds[session.processingMessageIds.length - 1]
+              messageId: session.processingMessageIds[session.processingMessageIds.length - 1],
+              consecutiveEmptyResponses: session.consecutiveEmptyResponses
             });
+          } else {
+            session.consecutiveEmptyResponses = 0;
           }
 
           // Always process response (including empty text) to keep CLAIM-CONFIRM and cleanup state consistent.
@@ -1221,10 +1235,24 @@ export class CustomAgent {
           }
 
           if (!summaryText) {
+            session.consecutiveEmptyResponses = (session.consecutiveEmptyResponses || 0) + 1;
+            const MAX_CONSECUTIVE_EMPTY = 3;
+            if (session.consecutiveEmptyResponses >= MAX_CONSECUTIVE_EMPTY) {
+              logger.error('SDK', 'Too many consecutive empty responses - aborting generator to prevent silent data loss', {
+                sessionId: session.sessionDbId,
+                consecutiveEmptyResponses: session.consecutiveEmptyResponses,
+                threshold: MAX_CONSECUTIVE_EMPTY
+              });
+              session.abortController.abort();
+              return;
+            }
             logger.warn('SDK', 'Empty Custom summary response; processing empty payload for queue consistency', {
               sessionId: session.sessionDbId,
-              messageId: session.processingMessageIds[session.processingMessageIds.length - 1]
+              messageId: session.processingMessageIds[session.processingMessageIds.length - 1],
+              consecutiveEmptyResponses: session.consecutiveEmptyResponses
             });
+          } else {
+            session.consecutiveEmptyResponses = 0;
           }
 
           // Always process response (including empty text) to keep CLAIM-CONFIRM and cleanup state consistent.

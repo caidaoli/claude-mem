@@ -169,6 +169,7 @@ export class SessionManager {
       conversationHistory: [],  // Initialize empty - will be populated by agents
       currentProvider: null,  // Will be set when generator starts
       consecutiveRestarts: 0,  // Track consecutive restart attempts to prevent infinite loops
+      consecutiveEmptyResponses: 0,  // Track consecutive empty AI responses to detect stuck sessions
       processingMessageIds: []  // CLAIM-CONFIRM: Track message IDs for confirmProcessed()
     };
 

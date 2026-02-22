@@ -34,6 +34,7 @@ export interface ActiveSession {
   conversationHistory: ConversationMessage[];  // Shared conversation history for provider switching
   currentProvider: 'claude' | 'gemini' | 'openrouter' | 'custom' | null;  // Track which provider is currently running
   consecutiveRestarts: number;  // Track consecutive restart attempts to prevent infinite loops
+  consecutiveEmptyResponses: number;  // Track consecutive empty AI responses to detect stuck sessions
   forceInit?: boolean;  // Force fresh SDK session (skip resume)
   idleTimedOut?: boolean;  // Set when session exits due to idle timeout (prevents restart loop)
   // CLAIM-CONFIRM FIX: Track IDs of messages currently being processed
