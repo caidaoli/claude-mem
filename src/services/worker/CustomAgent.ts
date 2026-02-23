@@ -683,8 +683,11 @@ async function parseCodexSseStreamFromResponse(
           state.content += event.delta;
         } else if (event.type === 'response.output_text.done' && typeof event.text === 'string') {
           state.completedText = event.text;
-        } else if (event.type === 'response.completed' || event.type === 'response.failed') {
+        } else if (event.type === 'response.completed' || event.type === 'response.failed' || event.type === 'response.incomplete') {
           tryApplyResponse(event.response);
+        } else if (event.type === 'error') {
+          const errorMessage = formatOpenAIError(event.error ?? event);
+          if (errorMessage) state.error = errorMessage;
         } else {
           // Some providers stream response-shaped payloads directly
           tryApplyResponse(event as unknown as CodexResponse);
