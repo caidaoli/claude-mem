@@ -165,6 +165,8 @@ ${mode.prompts.skip_guidance}
 
 ${buildObservationFormatSection(mode, 'json')}
 
+Answer directly. No thinking process, no preamble.
+
 ${mode.prompts.footer}
 
 ${mode.prompts.header_memory_start}`;
@@ -216,7 +218,9 @@ export function buildObservationPromptJson(obs: Observation, mode: ModeConfig): 
 
 ${buildObservationFormatSection(mode, 'json')}
 
-OUTPUT FORMAT: Return compact single-line JSON without any line breaks, indentation, or extra whitespace.${languageSection}`;
+OUTPUT FORMAT: Return compact single-line JSON without any line breaks, indentation, or extra whitespace.
+
+Answer directly. No thinking process, no preamble.${languageSection}`;
 }
 
 /**
@@ -262,6 +266,7 @@ export function buildSummaryPromptJson(session: SDKSession, mode: ModeConfig): s
   })();
 
   return `IMPORTANT: You MUST respond with ONLY a valid JSON object. No explanations, no markdown, no thinking process - JUST the raw JSON.
+Answer directly. No thinking process, no preamble.
 OUTPUT FORMAT: Return compact single-line JSON without any line breaks, indentation, or extra whitespace.
 
 ${mode.prompts.header_summary_checkpoint}
@@ -308,7 +313,7 @@ export function buildContinuationPrompt(userPrompt: string, promptNumber: number
  * Uses JSON format instead of XML for more reliable parsing with responseMimeType
  */
 export function buildContinuationPromptJson(userPrompt: string, promptNumber: number, contentSessionId: string, mode: ModeConfig): string {
-  return buildContinuationPromptInternal(userPrompt, mode, 'json');
+  return buildContinuationPromptInternal(userPrompt, mode, 'json') + '\n\nAnswer directly. No thinking process, no preamble.';
 }
 
 /**
