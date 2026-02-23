@@ -525,6 +525,8 @@ export class SessionManager {
       sessionDbId,
       signal: session.abortController.signal,
       onComplete: () => {
+        // Signal to finally block that this was a graceful completion (not crash)
+        session.completionRequested = true;
         // Mark completed in DB for deterministic late-hook gating
         try {
           this.dbManager.getSessionStore().markSessionCompleted(sessionDbId);
