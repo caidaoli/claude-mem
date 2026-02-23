@@ -367,9 +367,9 @@ function parseOpenAISseStream(responseText: string): { content: string; tokensUs
         return;
       }
 
-      const delta = data.choices?.[0]?.delta?.content;
-      if (delta) {
-        content += delta;
+      const streamedContent = data.choices?.[0]?.delta?.content ?? data.choices?.[0]?.message?.content;
+      if (streamedContent) {
+        content += streamedContent;
       }
       if (data.usage?.total_tokens) {
         tokensUsed = data.usage.total_tokens;
@@ -610,8 +610,8 @@ async function parseOpenAISseStreamFromResponse(
           state.error = errorMessage;
           return;
         }
-        const delta = data.choices?.[0]?.delta?.content;
-        if (delta) state.content += delta;
+        const streamedContent = data.choices?.[0]?.delta?.content ?? data.choices?.[0]?.message?.content;
+        if (streamedContent) state.content += streamedContent;
         if (data.usage?.total_tokens) state.tokensUsed = data.usage.total_tokens;
       } catch {
         // Skip invalid JSON events

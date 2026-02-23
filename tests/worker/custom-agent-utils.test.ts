@@ -81,6 +81,20 @@ describe('CustomAgent helper utilities', () => {
       expect(content).toBe('');
       expect(error).toBe('rate_limit - Too many requests');
     });
+
+    it('parses stream events that carry content in message.content (non-delta)', () => {
+      const sse = [
+        'data: {"choices":[{"message":{"content":"{\\"type\\":\\"discovery\\"}"}}]}',
+        '',
+        'data: [DONE]',
+        ''
+      ].join('\n');
+
+      const { content, error } = __testOnly.parseOpenAISseStream(sse);
+
+      expect(error).toBeUndefined();
+      expect(content).toBe('{"type":"discovery"}');
+    });
   });
 
   describe('config parsers', () => {
