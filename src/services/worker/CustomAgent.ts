@@ -1645,21 +1645,21 @@ export class CustomAgent {
       method: 'POST',
       headers: buildBearerJsonHeaders(config.apiKey, sessionIdHeader),
       body: JSON.stringify(buildCodexJsonRequestBody(config.model, messages, false)),
-    }, config, 3, abortSignal, readResponseBodyText);
+    }, config, 3, abortSignal, parseCodexSseStreamFromResponse);
 
     if (!result.ok) {
       throw new Error(`Custom/Codex API error: ${result.status} - ${result.body}`);
     }
 
-    const data = parseJsonWithContext<CodexResponse>(result.data, 'Codex', result.status);
-    const codexError = formatOpenAIError(data.error);
+    const { content, tokensUsed, error } = result.data;
+    const codexError = error;
     if (codexError) {
       throw new Error(`Custom/Codex API error: ${codexError}`);
     }
 
     return {
-      content: extractCodexResponseText(data),
-      tokensUsed: data.usage?.total_tokens
+      content,
+      tokensUsed
     };
   }
 

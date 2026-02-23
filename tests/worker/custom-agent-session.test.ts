@@ -422,6 +422,74 @@ describe('CustomAgent session behavior', () => {
     expect(requestBody.stream).toBe(true);
   });
 
+  it('handles Codex SSE response even when custom streaming is disabled', async () => {
+    loadFromFileSpy.mockImplementation(() => ({
+      ...SettingsDefaultsManager.getAllDefaults(),
+      CLAUDE_MEM_CUSTOM_API_URL: 'https://custom.example.com',
+      CLAUDE_MEM_CUSTOM_API_KEY: 'test-key',
+      CLAUDE_MEM_CUSTOM_MODEL: 'codex-mini-latest',
+      CLAUDE_MEM_CUSTOM_PROTOCOL: 'codex',
+      CLAUDE_MEM_CUSTOM_STREAMING: 'false',
+      CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES: '0',
+      CLAUDE_MEM_CUSTOM_MAX_TOKENS: '0',
+      CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT: '0',
+      CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT: '0',
+    }));
+
+    const mockStoreObservations = mock(() => ({
+      observationIds: [1],
+      summaryId: null,
+      createdAtEpoch: Date.now(),
+    }));
+
+    const dbManager = {
+      getSessionStore: () => ({
+        getSessionById: () => ({ memory_session_id: 'mem-custom-1' }),
+        updateMemorySessionId: () => {},
+        ensureMemorySessionIdRegistered: () => {},
+        storeObservations: mockStoreObservations,
+      }),
+      getChromaSync: () => ({
+        syncObservation: () => Promise.resolve(),
+        syncSummary: () => Promise.resolve(),
+      }),
+    } as unknown as DatabaseManager;
+
+    const sessionManager = {
+      getMessageIterator: async function* () { yield* []; },
+      getPendingMessageStore: () => ({
+        confirmProcessed: () => {},
+      }),
+    } as unknown as SessionManager;
+
+    const sse = [
+      'event: response.created',
+      'data: {"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}',
+      '',
+      'event: response.output_text.delta',
+      'data: {"type":"response.output_text.delta","delta":"{\\"type\\":\\"discovery\\",\\"title\\":\\"ok\\",\\"narrative\\":\\"n\\",\\"files_read\\":[],\\"files_modified\\":[],\\"concepts\\":[]}"}',
+      '',
+      'event: response.completed',
+      'data: {"type":"response.completed","response":{"usage":{"total_tokens":12}}}',
+      '',
+      'data: [DONE]',
+      ''
+    ].join('\n');
+
+    global.fetch = mock(() => Promise.resolve(new Response(sse, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' }
+    })));
+
+    const agent = new CustomAgent(dbManager, sessionManager);
+    await agent.startSession(createSession());
+
+    expect(mockStoreObservations).toHaveBeenCalledTimes(1);
+    const call = (global.fetch as any).mock.calls[0];
+    const requestBody = JSON.parse(call[1].body as string);
+    expect(requestBody.stream).toBeUndefined();
+  });
+
   it('passes session abort signal to Custom provider requests', async () => {
     const dbManager = {
       getSessionStore: () => ({
