@@ -165,6 +165,11 @@ export class SessionRoutes extends BaseRouteHandler {
       session.abortController = new AbortController();
     }
 
+    // Reset empty response counter so the new generator gets a fair chance.
+    // Without this, the counter survives across generator restarts and causes
+    // a death spiral where every new generator is immediately killed.
+    session.consecutiveEmptyResponses = 0;
+
     // Agent registry: maps provider names to their agents and display names
     const agentRegistry: Record<string, { agent: SDKAgent | GeminiAgent | OpenRouterAgent | CustomAgent; name: string }> = {
       custom: { agent: this.customAgent, name: 'Custom' },

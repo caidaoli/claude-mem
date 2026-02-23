@@ -1171,6 +1171,9 @@ export class CustomAgent {
                 consecutiveEmptyResponses: session.consecutiveEmptyResponses,
                 threshold: MAX_CONSECUTIVE_EMPTY
               });
+              // Count as a restart so ensureGeneratorRunning's circuit breaker
+              // eventually prevents infinite abort-restart cycles.
+              session.consecutiveRestarts = (session.consecutiveRestarts || 0) + 1;
               session.abortController.abort();
               return;
             }
@@ -1243,6 +1246,9 @@ export class CustomAgent {
                 consecutiveEmptyResponses: session.consecutiveEmptyResponses,
                 threshold: MAX_CONSECUTIVE_EMPTY
               });
+              // Count as a restart so ensureGeneratorRunning's circuit breaker
+              // eventually prevents infinite abort-restart cycles.
+              session.consecutiveRestarts = (session.consecutiveRestarts || 0) + 1;
               session.abortController.abort();
               return;
             }
