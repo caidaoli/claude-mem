@@ -389,9 +389,11 @@ async function syncAndBroadcastSummary(
  */
 const VACUOUS_PATTERNS = [
   /无新观察/,
+  /无新的/,
   /无观察/,
   /尚未记录/,
   /尚未收到/,
+  /尚无可记录/,
   /没有新的/,
   /没有变更/,
   /暂未观察/,
@@ -399,6 +401,7 @@ const VACUOUS_PATTERNS = [
   /等待进一步/,
   /无后续/,
   /未捕获/,
+  /未观测/,
   /无法生成/,
   /未收到/,
   /未提供/,
@@ -411,6 +414,21 @@ const VACUOUS_PATTERNS = [
   /no activity/i,
 ];
 
+/**
+ * Heuristic: facts contain concrete artifacts (file paths, code identifiers,
+ * URLs, version numbers, error codes) that indicate real work product.
+ * Pure natural-language commentary without artifacts is not concrete.
+ */
+const CONCRETE_FACT_PATTERNS = [
+  /[/\\][\w.-]+\.\w{1,5}/,    // file paths  (foo/bar.ts, src\utils.js)
+  /\b\w+\.\w+\(/,             // function calls (foo.bar()
+  /\b(?:v?\d+\.\d+)/,         // version numbers (v1.2, 3.0)
+  /\bhttps?:\/\//,             // URLs
+  /\b(?:0x[\da-f]+|err(?:or)?[- ]?\d+)/i, // hex/error codes
+  /`[^`]+`/,                   // inline code references
+  /\b[A-Z_]{2,}\b/,           // CONSTANT_CASE identifiers
+];
+
 function isVacuousObservation(obs: ParsedObservation): boolean {
   // Files always indicate real work
   if (obs.files_read.length > 0 || obs.files_modified.length > 0) {
@@ -421,10 +439,13 @@ function isVacuousObservation(obs: ParsedObservation): boolean {
     return false;
   }
   // Title/narrative matched vacuous pattern.
-  // If facts also look vacuous, discard. Real facts (concrete data) save the observation.
+  // If no facts, clearly vacuous.
   if (obs.facts.length === 0) {
     return true;
   }
+  // Facts exist: only keep the observation if facts contain concrete
+  // artifacts (paths, identifiers, URLs, etc.).  Pure prose restating
+  // "nothing happened" in different words is still vacuous.
   const factsText = obs.facts.join(' ');
-  return VACUOUS_PATTERNS.some(p => p.test(factsText));
+  return !CONCRETE_FACT_PATTERNS.some(p => p.test(factsText));
 }
