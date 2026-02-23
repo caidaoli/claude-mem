@@ -953,7 +953,7 @@ function buildCodexJsonRequestBody(
     type: 'message' as const,
     role: message.role,
     content: [{
-      type: 'input_text' as const,
+      type: message.role === 'assistant' ? 'output_text' as const : 'input_text' as const,
       text: message.content
     }]
   }));
