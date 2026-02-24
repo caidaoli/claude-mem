@@ -165,6 +165,20 @@ async function buildHooks() {
     const contextGenStats = fs.statSync(`${hooksDir}/${CONTEXT_GENERATOR.name}.cjs`);
     console.log(`✓ context-generator built (${(contextGenStats.size / 1024).toFixed(2)} KB)`);
 
+    // Verify critical distribution files exist (skills are source files, not build outputs)
+    console.log('\n📋 Verifying distribution files...');
+    const requiredDistributionFiles = [
+      'plugin/skills/mem-search/SKILL.md',
+      'plugin/hooks/hooks.json',
+      'plugin/.claude-plugin/plugin.json',
+    ];
+    for (const filePath of requiredDistributionFiles) {
+      if (!fs.existsSync(filePath)) {
+        throw new Error(`Missing required distribution file: ${filePath}`);
+      }
+    }
+    console.log('✓ All required distribution files present');
+
     console.log('\n✅ Worker service, MCP server, and context generator built successfully!');
     console.log(`   Output: ${hooksDir}/`);
     console.log(`   - Worker: worker-service.cjs`);

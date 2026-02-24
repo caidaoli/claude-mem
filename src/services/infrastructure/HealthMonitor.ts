@@ -10,29 +10,9 @@
  */
 
 import path from 'path';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync } from 'fs';
 import { logger } from '../../utils/logger.js';
 import { MARKETPLACE_ROOT } from '../../shared/paths.js';
-
-/**
- * Get the runtime script directory.
- *
- * When bundled by esbuild, `__dirname` gets inlined to the *source* path at build time,
- * not the runtime path. This breaks version detection since we need to find package.json
- * relative to where the script actually runs (e.g., ~/.claude/plugins/.../plugin/scripts/).
- *
- * Solution: Use process.argv[1] which always points to the actual running script.
- */
-function getRuntimeScriptDir(): string {
-  // process.argv[1] is the path to the script being executed
-  // This works correctly even after bundling
-  const scriptPath = process.argv[1];
-  if (scriptPath) {
-    return path.dirname(scriptPath);
-  }
-  // Fallback for edge cases (e.g., REPL)
-  return process.cwd();
-}
 
 /**
  * Check if a port is in use by querying the health endpoint
@@ -135,45 +115,22 @@ export async function httpShutdown(port: number): Promise<boolean> {
 
 /**
  * Get the plugin version from the installed marketplace package.json
- * This is the "expected" version that should be running
- *
- * Uses getRuntimeScriptDir() to resolve path relative to the running code, supporting:
- * - Custom CLAUDE_CONFIG_DIR environments
- * - Organization-specific directories (~/.claude-orgname/)
- * - Standard installations (~/.claude/)
+ * This is the "expected" version that should be running.
+ * Returns 'unknown' on ENOENT/EBUSY (shutdown race condition, fix #1042).
  */
 export function getInstalledPluginVersion(): string {
-  // Prefer configured install location when available
   try {
     const packageJsonPath = path.join(MARKETPLACE_ROOT, 'package.json');
     const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
     return packageJson.version;
-  } catch {
-    // Fallback to runtime discovery for non-standard installations
-  }
-
-  // Walk up from current script location to find package.json
-  // This works regardless of where the plugin is installed
-  let dir = getRuntimeScriptDir();
-  while (dir !== path.dirname(dir)) {
-    const pkgPath = path.join(dir, 'package.json');
-    if (existsSync(pkgPath)) {
-      try {
-        const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-        // Verify it's the claude-mem package
-        if (pkg.name === 'claude-mem') {
-          return pkg.version;
-        }
-      } catch {
-        // Continue searching if JSON parse fails
-      }
+  } catch (error: unknown) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'EBUSY') {
+      logger.debug('SYSTEM', 'Could not read plugin version (shutdown race)', { code });
+      return 'unknown';
     }
-    dir = path.dirname(dir);
+    throw error;
   }
-
-  // Fallback: return unknown if we can't find package.json
-  logger.warn('SYSTEM', 'Could not find claude-mem package.json, version unknown');
-  return 'unknown';
 }
 
 /**
@@ -208,14 +165,8 @@ export async function checkVersionMatch(port: number): Promise<VersionCheckResul
   const pluginVersion = getInstalledPluginVersion();
   const workerVersion = await getRunningWorkerVersion(port);
 
-  // If we can't get worker version, assume it matches (graceful degradation)
-  if (!workerVersion) {
-    return { matches: true, pluginVersion, workerVersion };
-  }
-
-  // If plugin version is unknown (package.json not found), assume match (graceful degradation)
-  // This prevents unnecessary restarts when running from bundled code
-  if (pluginVersion === 'unknown') {
+  // If either version is unknown/null, assume match (graceful degradation, fix #1042)
+  if (!workerVersion || pluginVersion === 'unknown') {
     return { matches: true, pluginVersion, workerVersion };
   }
 

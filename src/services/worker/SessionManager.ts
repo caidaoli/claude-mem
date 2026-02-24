@@ -106,30 +106,13 @@ export class SessionManager {
       memory_session_id: dbSession.memory_session_id
     });
 
-    // Issue #817: Determine if memory_session_id should be preserved or discarded.
-    // CustomAgent uses stateless synthetic IDs (prefix "custom-") that are always valid
-    // regardless of worker restarts. SDK Agent IDs represent server-side conversation
-    // state that becomes stale on worker restart.
-    const isCustomSessionId = dbSession.memory_session_id?.startsWith('custom-');
-    let restoredMemorySessionId: string | null = null;
-
+    // Log warning if we're discarding a stale memory_session_id (Issue #817)
     if (dbSession.memory_session_id) {
-      if (isCustomSessionId) {
-        // CustomAgent: synthetic ID is always valid — preserve it to avoid
-        // FK constraint issues and eliminate the null → restore cycle
-        restoredMemorySessionId = dbSession.memory_session_id;
-        logger.debug('SESSION', 'Preserving CustomAgent memory_session_id from database', {
-          sessionDbId,
-          memorySessionId: dbSession.memory_session_id
-        });
-      } else {
-        // SDK Agent: server-side conversation state lost on worker restart
-        logger.warn('SESSION', `Discarding stale memory_session_id from previous worker instance (Issue #817)`, {
-          sessionDbId,
-          staleMemorySessionId: dbSession.memory_session_id,
-          reason: 'SDK context lost on worker restart - will capture new ID'
-        });
-      }
+      logger.warn('SESSION', `Discarding stale memory_session_id from previous worker instance (Issue #817)`, {
+        sessionDbId,
+        staleMemorySessionId: dbSession.memory_session_id,
+        reason: 'SDK context lost on worker restart - will capture new ID'
+      });
     }
 
     // Use currentUserPrompt if provided, otherwise fall back to database (first prompt)
@@ -150,12 +133,15 @@ export class SessionManager {
     }
 
     // Create active session
-    // Issue #817: SDK Agent memory_session_id is discarded (stale after restart).
-    // CustomAgent memory_session_id is preserved (stateless synthetic ID, always valid).
+    // CRITICAL: Do NOT load memorySessionId from database here (Issue #817)
+    // When creating a new in-memory session, any database memory_session_id is STALE
+    // because the SDK context was lost when the worker restarted. The SDK agent will
+    // capture a new memorySessionId on the first response and persist it.
+    // Loading stale memory_session_id causes "No conversation found" crashes on resume.
     session = {
       sessionDbId,
       contentSessionId: dbSession.content_session_id,
-      memorySessionId: restoredMemorySessionId,
+      memorySessionId: null,  // Always start fresh - SDK will capture new ID
       project: dbSession.project,
       userPrompt,
       pendingMessages: [],
@@ -169,15 +155,15 @@ export class SessionManager {
       conversationHistory: [],  // Initialize empty - will be populated by agents
       currentProvider: null,  // Will be set when generator starts
       consecutiveRestarts: 0,  // Track consecutive restart attempts to prevent infinite loops
-      consecutiveEmptyResponses: 0,  // Track consecutive empty AI responses to detect stuck sessions
-      processingMessageIds: []  // CLAIM-CONFIRM: Track message IDs for confirmProcessed()
+      processingMessageIds: [],  // CLAIM-CONFIRM: Track message IDs for confirmProcessed()
+      lastGeneratorActivity: Date.now()  // Initialize for stale detection (Issue #1099)
     };
 
-    logger.debug('SESSION', 'Creating new session object', {
+    logger.debug('SESSION', 'Creating new session object (memorySessionId cleared to prevent stale resume)', {
       sessionDbId,
       contentSessionId: dbSession.content_session_id,
       dbMemorySessionId: dbSession.memory_session_id || '(none in DB)',
-      memorySessionId: restoredMemorySessionId || '(will capture from SDK)',
+      memorySessionId: '(cleared - will capture fresh from SDK)',
       lastPromptNumber: promptNumber || this.dbManager.getSessionStore().getPromptNumberFromUserPrompts(dbSession.content_session_id)
     });
 
@@ -287,37 +273,6 @@ export class SessionManager {
   }
 
   /**
-   * Queue a session-complete control message.
-   *
-   * This is the ONLY supported way to close a session gracefully:
-   * completion is persisted in the same queue as observations/summaries,
-   * eliminating races with parallel stop hooks.
-   */
-  queueComplete(sessionDbId: number): void {
-    // Auto-initialize from database if needed (handles worker restarts)
-    let session = this.sessions.get(sessionDbId);
-    if (!session) {
-      session = this.initializeSession(sessionDbId);
-    }
-
-    const message: PendingMessage = { type: 'complete' };
-
-    try {
-      const messageId = this.getPendingStore().enqueue(sessionDbId, session.contentSessionId, message);
-      const queueDepth = this.getPendingStore().getPendingCount(sessionDbId);
-      logger.info('QUEUE', `ENQUEUED | sessionDbId=${sessionDbId} | messageId=${messageId} | type=complete | depth=${queueDepth}`, {
-        sessionId: sessionDbId
-      });
-    } catch (error) {
-      logger.error('SESSION', 'Failed to persist completion to DB', { sessionId: sessionDbId }, error);
-      throw error;
-    }
-
-    const emitter = this.sessionQueues.get(sessionDbId);
-    emitter?.emit('message');
-  }
-
-  /**
    * Delete a session (abort SDK agent and cleanup)
    * Verifies subprocess exit to prevent zombie process accumulation (Issue #737)
    */
@@ -329,23 +284,19 @@ export class SessionManager {
 
     const sessionDuration = Date.now() - session.startTime;
 
-    // CLAIM-CONFIRM: Reset any processing messages back to pending before abort
-    // This ensures messages that were claimed but not confirmed can be reprocessed
-    if (session.processingMessageIds.length > 0) {
-      logger.info('QUEUE', `RESET_PROCESSING_ON_DELETE | sessionDbId=${sessionDbId} | count=${session.processingMessageIds.length} | ids=[${session.processingMessageIds.join(',')}]`);
-      for (const messageId of session.processingMessageIds) {
-        this.getPendingStore().resetToPending(messageId);
-      }
-      session.processingMessageIds = [];
-    }
-
     // 1. Abort the SDK agent
     session.abortController.abort();
 
-    // 2. Wait for generator to finish
+    // 2. Wait for generator to finish (with 30s timeout to prevent stale stall, Issue #1099)
     if (session.generatorPromise) {
-      await session.generatorPromise.catch(() => {
+      const generatorDone = session.generatorPromise.catch(() => {
         logger.debug('SYSTEM', 'Generator already failed, cleaning up', { sessionId: session.sessionDbId });
+      });
+      const timeoutDone = new Promise<void>(resolve => {
+        AbortSignal.timeout(30_000).addEventListener('abort', () => resolve(), { once: true });
+      });
+      await Promise.race([generatorDone, timeoutDone]).then(() => {}, () => {
+        logger.warn('SESSION', 'Generator did not exit within 30s after abort, forcing cleanup (#1099)', { sessionDbId });
       });
     }
 
@@ -360,13 +311,6 @@ export class SessionManager {
     }
 
     // 4. Cleanup
-    // Mark completed for deterministic late-hook gating
-    try {
-      this.dbManager.getSessionStore().markSessionCompleted(sessionDbId);
-    } catch (error) {
-      logger.warn('DB', 'Failed to mark session completed during deleteSession (non-fatal)', { sessionDbId }, error as Error);
-    }
-
     this.sessions.delete(sessionDbId);
     this.sessionQueues.delete(sessionDbId);
 
@@ -390,13 +334,6 @@ export class SessionManager {
   removeSessionImmediate(sessionDbId: number): void {
     const session = this.sessions.get(sessionDbId);
     if (!session) return;
-
-    // Mark completed in DB so late-arriving observations are gated
-    try {
-      this.dbManager.getSessionStore().markSessionCompleted(sessionDbId);
-    } catch (error) {
-      logger.warn('DB', 'Failed to mark session completed during removeSessionImmediate (non-fatal)', { sessionDbId }, error as Error);
-    }
 
     this.sessions.delete(sessionDbId);
     this.sessionQueues.delete(sessionDbId);
@@ -524,16 +461,6 @@ export class SessionManager {
     for await (const message of processor.createIterator({
       sessionDbId,
       signal: session.abortController.signal,
-      onComplete: () => {
-        // Signal to finally block that this was a graceful completion (not crash)
-        session.completionRequested = true;
-        // Mark completed in DB for deterministic late-hook gating
-        try {
-          this.dbManager.getSessionStore().markSessionCompleted(sessionDbId);
-        } catch (error) {
-          logger.warn('DB', 'Failed to mark session completed on completion message (non-fatal)', { sessionDbId }, error as Error);
-        }
-      },
       onIdleTimeout: () => {
         logger.info('SESSION', 'Triggering abort due to idle timeout to kill subprocess', { sessionDbId });
         session.idleTimedOut = true;
@@ -547,6 +474,9 @@ export class SessionManager {
       } else {
         session.earliestPendingTimestamp = Math.min(session.earliestPendingTimestamp, message._originalTimestamp);
       }
+
+      // Update generator activity for stale detection (Issue #1099)
+      session.lastGeneratorActivity = Date.now();
 
       yield message;
     }
