@@ -510,6 +510,7 @@ export class SessionManager {
         } catch (error) {
           logger.warn('DB', 'Failed to mark session completed on completion message (non-fatal)', { sessionDbId }, error as Error);
         }
+        session.completionRequested = true;
       },
       onIdleTimeout: () => {
         logger.info('SESSION', 'Triggering abort due to idle timeout to kill subprocess', { sessionDbId });
