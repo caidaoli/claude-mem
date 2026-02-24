@@ -1,31 +1,58 @@
 <claude-mem-context>
 # Recent Activity
 
-### Jan 30, 2026
+### Nov 5, 2025
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #16282 | 11:12 AM | 🔵 | 了解 CLAUDE.md 文件管理工具的实现 | ~48 |
+| #4035 | 10:24 PM | 🔵 | logger.ts file exists but is empty | ~220 |
 
-### Feb 13, 2026
-
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #22166 | 9:47 PM | 🔵 | 发现日志组件类型定义 | ~69 |
-
-### Feb 18, 2026
+### Nov 10, 2025
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #25361 | 1:14 PM | ✅ | 撤回 CLAUDE_MEM_FOLDER_MD_EXCLUDE 兼容性修复 | ~161 |
-| #25360 | " | 🔵 | 排除配置修复代码已落盘确认 | ~110 |
-| #25357 | 1:13 PM | 🔴 | 修复排除路径配置解析导致的 WARN | ~177 |
-| #25353 | 1:12 PM | 🔵 | WARN 根因定位到排除配置解析方式 | ~166 |
-| #25234 | 12:59 PM | 🔵 | 确认排除路径解析告警与CLAUDE.md保护逻辑 | ~232 |
-| #25232 | 12:58 PM | 🔵 | 定位守护进程错误与重启相关源码位置 | ~302 |
-| #25213 | " | 🔵 | 确认CLAUDE.md并发修改保护与排除路径解析 | ~209 |
-| #25217 | " | 🔵 | 识别 CLAUDE.md 活跃目录保护机制 | ~158 |
-| #25220 | " | 🔵 | 确认 CLAUDE.md 排除与并发修改防护逻辑 | ~220 |
-| #25181 | 12:57 PM | 🔵 | 定位环境变量解析告警位置 | ~135 |
-| #25182 | " | 🔵 | 确认环境变量解析告警代码位置 | ~132 |
+| #6521 | 5:43 PM | 🔵 | Code Review: Enhanced HTTP Logging and Double Entries Bug Fix | ~482 |
+
+### Nov 17, 2025
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #10019 | 12:14 AM | 🔵 | TranscriptParser Utility: JSONL Parsing with Type-Safe Entry Filtering | ~569 |
+
+### Nov 23, 2025
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #14626 | 6:25 PM | 🔵 | Stop Hook Summary Not in Transcript Validator Schema | ~359 |
+
+### Nov 28, 2025
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #17238 | 11:34 PM | 🔵 | Existing TranscriptParser TypeScript implementation handles nested message structure | ~493 |
+
+### Dec 5, 2025
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #20407 | 7:20 PM | 🔵 | Tag stripping utilities implement dual-tag privacy system with ReDoS protection | ~415 |
+
+### Dec 8, 2025
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #22310 | 9:46 PM | 🟣 | Complete Hook Lifecycle Documentation Generated | ~603 |
+| #22306 | 9:45 PM | 🔵 | Dual-Tag Privacy System with ReDoS Protection | ~461 |
+
+### Dec 14, 2025
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #25691 | 4:24 PM | 🔵 | happy_path_error__with_fallback utility logs errors to silent.log and returns fallback values | ~460 |
+
+### Dec 20, 2025
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #30883 | 6:38 PM | 🔵 | Tag-Stripping DRY Violation Analysis | ~152 |
 </claude-mem-context>
