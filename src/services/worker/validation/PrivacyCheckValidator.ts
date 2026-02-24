@@ -13,7 +13,7 @@ export class PrivacyCheckValidator {
    *
    * @param store - SessionStore instance
    * @param contentSessionId - Claude session ID
-   * @param promptNumber - Prompt number within session
+   * @param promptNumber - Prompt number within session (0 = no prompts saved yet)
    * @param operationType - Type of operation being validated ('observation' or 'summarize')
    * @returns User prompt text if public, null if private
    */
@@ -25,6 +25,19 @@ export class PrivacyCheckValidator {
     sessionDbId: number,
     additionalContext?: Record<string, any>
   ): string | null {
+    // promptNumber=0 means no user prompts have been saved yet for this session.
+    // This happens when PostToolUse hooks arrive before session-init (UserPromptSubmit)
+    // completes. This is a timing issue, not a privacy signal — allow the operation
+    // through since there's no prompt to check privacy against.
+    if (promptNumber === 0) {
+      logger.debug('HOOK', `Allowing ${operationType} - session not yet initialized (no user prompts)`, {
+        sessionId: sessionDbId,
+        promptNumber,
+        ...additionalContext
+      });
+      return '[pending-init]';
+    }
+
     const userPrompt = store.getUserPrompt(contentSessionId, promptNumber);
 
     if (!userPrompt || userPrompt.trim() === '') {

@@ -592,13 +592,17 @@ export class SessionRoutes extends BaseRouteHandler {
 
       // Get or create session
       const sessionDbId = store.createSDKSession(contentSessionId, '', '');
-      const promptNumber = store.getPromptNumberFromUserPrompts(contentSessionId);
+      const promptCount = store.getPromptNumberFromUserPrompts(contentSessionId);
+
+      // promptCount=0 means session-init hasn't arrived yet (PostToolUse raced ahead).
+      // The observation belongs to the first prompt, so use 1 as the effective number.
+      const promptNumber = promptCount || 1;
 
       // Privacy check: skip if user prompt was entirely private
       const userPrompt = PrivacyCheckValidator.checkUserPromptPrivacy(
         store,
         contentSessionId,
-        promptNumber,
+        promptCount,
         'observation',
         sessionDbId,
         { tool_name }
@@ -664,13 +668,13 @@ export class SessionRoutes extends BaseRouteHandler {
 
     // Get or create session
     const sessionDbId = store.createSDKSession(contentSessionId, '', '');
-    const promptNumber = store.getPromptNumberFromUserPrompts(contentSessionId);
+    const promptCount = store.getPromptNumberFromUserPrompts(contentSessionId);
 
     // Privacy check: skip if user prompt was entirely private
     const userPrompt = PrivacyCheckValidator.checkUserPromptPrivacy(
       store,
       contentSessionId,
-      promptNumber,
+      promptCount,
       'summarize',
       sessionDbId
     );
