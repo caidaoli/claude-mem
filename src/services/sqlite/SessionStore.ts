@@ -887,6 +887,50 @@ export class SessionStore {
   }
 
   /**
+   * Mark a session as completed (used by completion control flow)
+   */
+  markSessionCompleted(sessionDbId: number, completedAtEpoch: number = Date.now()): void {
+    const completedAtIso = new Date(completedAtEpoch).toISOString();
+    this.db.prepare(`
+      UPDATE sdk_sessions
+      SET
+        status = 'completed',
+        completed_at = ?,
+        completed_at_epoch = ?
+      WHERE id = ? AND status != 'completed'
+    `).run(completedAtIso, completedAtEpoch, sessionDbId);
+  }
+
+  /**
+   * Mark a session as active and clear completion timestamps.
+   * Called by /api/sessions/init to re-activate an existing session.
+   */
+  markSessionActive(sessionDbId: number): void {
+    this.db.prepare(`
+      UPDATE sdk_sessions
+      SET
+        status = 'active',
+        completed_at = NULL,
+        completed_at_epoch = NULL
+      WHERE id = ?
+    `).run(sessionDbId);
+  }
+
+  /**
+   * Check whether a session has been marked completed.
+   */
+  isSessionCompleted(sessionDbId: number): boolean {
+    const row = this.db.prepare(`
+      SELECT status
+      FROM sdk_sessions
+      WHERE id = ?
+      LIMIT 1
+    `).get(sessionDbId) as { status: string } | undefined;
+
+    return row?.status === 'completed';
+  }
+
+  /**
    * Ensures memory_session_id is registered in sdk_sessions before FK-constrained INSERT.
    * This fixes Issue #846 where observations fail after worker restart because the
    * SDK generates a new memory_session_id but it's not registered in the parent table

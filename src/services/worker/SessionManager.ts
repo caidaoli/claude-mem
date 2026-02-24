@@ -39,6 +39,24 @@ export class SessionManager {
   }
 
   /**
+   * Get active session and refresh stale metadata from DB when needed.
+   * This prevents a long-lived in-memory session from keeping an empty project
+   * after the database row has been backfilled by a later /api/sessions/init call.
+   */
+  private getOrInitializeSession(sessionDbId: number): ActiveSession {
+    const session = this.sessions.get(sessionDbId);
+    if (!session) {
+      return this.initializeSession(sessionDbId);
+    }
+
+    if (!session.project) {
+      return this.initializeSession(sessionDbId);
+    }
+
+    return session;
+  }
+
+  /**
    * Set callback to be called when a session is deleted (for broadcasting status)
    */
   setOnSessionDeleted(callback: () => void): void {
@@ -199,11 +217,9 @@ export class SessionManager {
    * This ensures observations survive worker crashes.
    */
   queueObservation(sessionDbId: number, data: ObservationData): void {
-    // Auto-initialize from database if needed (handles worker restarts)
-    let session = this.sessions.get(sessionDbId);
-    if (!session) {
-      session = this.initializeSession(sessionDbId);
-    }
+    // Auto-initialize from database if needed (handles worker restarts),
+    // and refresh stale empty project metadata when session already exists.
+    const session = this.getOrInitializeSession(sessionDbId);
 
     // CRITICAL: Persist to database FIRST
     const message: PendingMessage = {
@@ -243,11 +259,9 @@ export class SessionManager {
    * This ensures summarize requests survive worker crashes.
    */
   queueSummarize(sessionDbId: number, lastAssistantMessage?: string): void {
-    // Auto-initialize from database if needed (handles worker restarts)
-    let session = this.sessions.get(sessionDbId);
-    if (!session) {
-      session = this.initializeSession(sessionDbId);
-    }
+    // Auto-initialize from database if needed (handles worker restarts),
+    // and refresh stale empty project metadata when session already exists.
+    const session = this.getOrInitializeSession(sessionDbId);
 
     // CRITICAL: Persist to database FIRST
     const message: PendingMessage = {
@@ -266,6 +280,35 @@ export class SessionManager {
         sessionId: sessionDbId
       }, error);
       throw error; // Don't continue if we can't persist
+    }
+
+    const emitter = this.sessionQueues.get(sessionDbId);
+    emitter?.emit('message');
+  }
+
+  /**
+   * Queue a completion control message.
+   * Persisting completion in the same queue as observations/summaries prevents
+   * races when stop hooks enqueue summarize + complete concurrently.
+   */
+  queueComplete(sessionDbId: number): void {
+    // Auto-initialize from database if needed (handles worker restarts),
+    // and refresh stale empty project metadata when session already exists.
+    const session = this.getOrInitializeSession(sessionDbId);
+
+    const message: PendingMessage = { type: 'complete' };
+
+    try {
+      const messageId = this.getPendingStore().enqueue(sessionDbId, session.contentSessionId, message);
+      const queueDepth = this.getPendingStore().getPendingCount(sessionDbId);
+      logger.info('QUEUE', `ENQUEUED | sessionDbId=${sessionDbId} | messageId=${messageId} | type=complete | depth=${queueDepth}`, {
+        sessionId: sessionDbId
+      });
+    } catch (error) {
+      logger.error('SESSION', 'Failed to persist completion to DB', {
+        sessionId: sessionDbId
+      }, error);
+      throw error;
     }
 
     const emitter = this.sessionQueues.get(sessionDbId);
@@ -461,6 +504,13 @@ export class SessionManager {
     for await (const message of processor.createIterator({
       sessionDbId,
       signal: session.abortController.signal,
+      onComplete: () => {
+        try {
+          this.dbManager.getSessionStore().markSessionCompleted(sessionDbId);
+        } catch (error) {
+          logger.warn('DB', 'Failed to mark session completed on completion message (non-fatal)', { sessionDbId }, error as Error);
+        }
+      },
       onIdleTimeout: () => {
         logger.info('SESSION', 'Triggering abort due to idle timeout to kill subprocess', { sessionDbId });
         session.idleTimedOut = true;

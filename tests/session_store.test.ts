@@ -118,4 +118,19 @@ describe('SessionStore', () => {
     expect(stored).not.toBeNull();
     expect(stored?.created_at_epoch).toBe(pastTimestamp);
   });
+
+  it('should support session lifecycle status helpers', () => {
+    const claudeId = 'claude-sess-lifecycle';
+    const sessionDbId = store.createSDKSession(claudeId, 'test-project', 'initial prompt');
+
+    // New sessions start active
+    expect(store.isSessionCompleted(sessionDbId)).toBe(false);
+
+    store.markSessionCompleted(sessionDbId, 1700000000000);
+    expect(store.isSessionCompleted(sessionDbId)).toBe(true);
+
+    // Re-init path should reactivate and clear completion state
+    store.markSessionActive(sessionDbId);
+    expect(store.isSessionCompleted(sessionDbId)).toBe(false);
+  });
 });
