@@ -246,6 +246,39 @@ describe('ResponseProcessor', () => {
       expect(observations[0].type).toBe('discovery');
       expect(observations[1].type).toBe('bugfix');
     });
+
+    it('should discard vacuous observation when it only reports no new changes', async () => {
+      const session = createMockSession();
+      const responseText = `
+        <observation>
+          <type>discovery</type>
+          <title>持续观察go测试</title>
+          <subtitle>无新增执行或变更</subtitle>
+          <narrative>尚未接收到额外的工具执行信息，因此现阶段观察记录继续保持之前的测试和环境读取结果。</narrative>
+          <facts>
+            <fact>当前未监测到新的工具调用或代码变更</fact>
+            <fact>最近操作依旧围绕运行测试和审查main/.env内容</fact>
+          </facts>
+          <concepts><concept>what-changed</concept></concepts>
+          <files_read></files_read>
+          <files_modified></files_modified>
+        </observation>
+      `;
+
+      await processAgentResponse(
+        responseText,
+        session,
+        mockDbManager,
+        mockSessionManager,
+        mockWorker,
+        100,
+        null,
+        'TestAgent'
+      );
+
+      const [, , observations] = mockStoreObservations.mock.calls[0];
+      expect(observations).toHaveLength(0);
+    });
   });
 
   describe('parsing summary from XML response', () => {

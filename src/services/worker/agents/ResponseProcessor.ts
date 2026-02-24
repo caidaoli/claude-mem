@@ -391,6 +391,7 @@ async function syncAndBroadcastSummary(
  * so legitimate discoveries with real facts/files are never discarded.
  */
 const VACUOUS_PATTERNS = [
+  /无新增/,
   /无新观察/,
   /无新的/,
   /无观察/,
@@ -442,7 +443,7 @@ function isVacuousObservation(obs: ParsedObservation): boolean {
   if (obs.files_read.length > 0 || obs.files_modified.length > 0) {
     return false;
   }
-  const text = `${obs.title || ''} ${obs.narrative || ''}`;
+  const text = `${obs.title || ''} ${obs.subtitle || ''} ${obs.narrative || ''}`;
   if (!VACUOUS_PATTERNS.some(p => p.test(text))) {
     return false;
   }
