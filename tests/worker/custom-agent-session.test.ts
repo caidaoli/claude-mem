@@ -490,6 +490,129 @@ describe('CustomAgent session behavior', () => {
     expect(requestBody.stream).toBeUndefined();
   });
 
+  it('handles OpenAI SSE response even when custom streaming is disabled', async () => {
+    loadFromFileSpy.mockImplementation(() => ({
+      ...SettingsDefaultsManager.getAllDefaults(),
+      CLAUDE_MEM_CUSTOM_API_URL: 'https://custom.example.com',
+      CLAUDE_MEM_CUSTOM_API_KEY: 'test-key',
+      CLAUDE_MEM_CUSTOM_MODEL: 'grok-4.2-fast',
+      CLAUDE_MEM_CUSTOM_PROTOCOL: 'openai',
+      CLAUDE_MEM_CUSTOM_STREAMING: 'false',
+      CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES: '0',
+      CLAUDE_MEM_CUSTOM_MAX_TOKENS: '0',
+      CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT: '0',
+      CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT: '0',
+    }));
+
+    const mockStoreObservations = mock(() => ({
+      observationIds: [1],
+      summaryId: null,
+      createdAtEpoch: Date.now(),
+    }));
+
+    const dbManager = {
+      getSessionStore: () => ({
+        getSessionById: () => ({ memory_session_id: 'mem-custom-1' }),
+        updateMemorySessionId: () => {},
+        ensureMemorySessionIdRegistered: () => {},
+        storeObservations: mockStoreObservations,
+      }),
+      getChromaSync: () => ({
+        syncObservation: () => Promise.resolve(),
+        syncSummary: () => Promise.resolve(),
+      }),
+    } as unknown as DatabaseManager;
+
+    const sessionManager = {
+      getMessageIterator: async function* () { yield* []; },
+      getPendingMessageStore: () => ({
+        confirmProcessed: () => {},
+      }),
+    } as unknown as SessionManager;
+
+    const sse = [
+      'event: message',
+      'data: {"id":"chatcmpl-1","object":"chat.completion.chunk","model":"grok-4.2-fast","choices":[{"delta":{"content":"{\\"type\\":\\"discovery\\",\\"title\\":\\"ok\\",\\"narrative\\":\\"n\\",\\"files_read\\":[],\\"files_modified\\":[],\\"concepts\\":[]}"}}],"usage":{"total_tokens":12}}',
+      '',
+      'data: [DONE]',
+      ''
+    ].join('\n');
+
+    global.fetch = mock(() => Promise.resolve(new Response(sse, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' }
+    })));
+
+    const agent = new CustomAgent(dbManager, sessionManager);
+    await agent.startSession(createSession());
+
+    expect(mockStoreObservations).toHaveBeenCalledTimes(1);
+    const call = (global.fetch as any).mock.calls[0];
+    const requestBody = JSON.parse(call[1].body as string);
+    expect(requestBody.stream).toBeUndefined();
+  });
+
+  it('handles Gemini SSE response even when custom streaming is disabled', async () => {
+    loadFromFileSpy.mockImplementation(() => ({
+      ...SettingsDefaultsManager.getAllDefaults(),
+      CLAUDE_MEM_CUSTOM_API_URL: 'https://custom.example.com',
+      CLAUDE_MEM_CUSTOM_API_KEY: 'test-key',
+      CLAUDE_MEM_CUSTOM_MODEL: 'gemini-2.5-flash',
+      CLAUDE_MEM_CUSTOM_PROTOCOL: 'gemini',
+      CLAUDE_MEM_CUSTOM_STREAMING: 'false',
+      CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES: '0',
+      CLAUDE_MEM_CUSTOM_MAX_TOKENS: '0',
+      CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT: '0',
+      CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT: '0',
+    }));
+
+    const mockStoreObservations = mock(() => ({
+      observationIds: [1],
+      summaryId: null,
+      createdAtEpoch: Date.now(),
+    }));
+
+    const dbManager = {
+      getSessionStore: () => ({
+        getSessionById: () => ({ memory_session_id: 'mem-custom-1' }),
+        updateMemorySessionId: () => {},
+        ensureMemorySessionIdRegistered: () => {},
+        storeObservations: mockStoreObservations,
+      }),
+      getChromaSync: () => ({
+        syncObservation: () => Promise.resolve(),
+        syncSummary: () => Promise.resolve(),
+      }),
+    } as unknown as DatabaseManager;
+
+    const sessionManager = {
+      getMessageIterator: async function* () { yield* []; },
+      getPendingMessageStore: () => ({
+        confirmProcessed: () => {},
+      }),
+    } as unknown as SessionManager;
+
+    const sse = [
+      'data: {"candidates":[{"content":{"parts":[{"text":"{\\"type\\":\\"discovery\\",\\"title\\":\\"ok\\",\\"narrative\\":\\"n\\",\\"files_read\\":[],\\"files_modified\\":[],\\"concepts\\":[]}"}]}}],"usageMetadata":{"totalTokenCount":12}}',
+      '',
+      'data: [DONE]',
+      ''
+    ].join('\n');
+
+    global.fetch = mock(() => Promise.resolve(new Response(sse, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' }
+    })));
+
+    const agent = new CustomAgent(dbManager, sessionManager);
+    await agent.startSession(createSession());
+
+    expect(mockStoreObservations).toHaveBeenCalledTimes(1);
+    const call = (global.fetch as any).mock.calls[0];
+    expect(call[0]).toContain(':generateContent');
+    expect(call[0]).not.toContain(':streamGenerateContent');
+  });
+
   it('passes session abort signal to Custom provider requests', async () => {
     const dbManager = {
       getSessionStore: () => ({

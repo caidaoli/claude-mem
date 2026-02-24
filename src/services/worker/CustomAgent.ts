@@ -215,6 +215,62 @@ function formatOpenAIError(errorPayload: unknown): string | null {
   return `${code}${type} - ${message}`;
 }
 
+function looksLikeSsePayload(body: string): boolean {
+  return /(^|\n)\s*(data|event):/.test(body);
+}
+
+function parseOpenAIJsonOrSseWithContext(
+  body: string,
+  status: number
+): { content: string; tokensUsed?: number; error?: string; usedSseFallback: boolean } {
+  try {
+    const data = parseJsonWithContext<OpenAIResponse>(body, 'OpenAI', status);
+    return {
+      content: data.choices?.[0]?.message?.content || '',
+      tokensUsed: data.usage?.total_tokens,
+      error: formatOpenAIError(data.error) || undefined,
+      usedSseFallback: false,
+    };
+  } catch (parseError) {
+    if (!looksLikeSsePayload(body)) {
+      throw parseError;
+    }
+
+    const parsed = parseOpenAISseStream(body);
+    return {
+      content: parsed.content,
+      tokensUsed: parsed.tokensUsed,
+      error: parsed.error,
+      usedSseFallback: true,
+    };
+  }
+}
+
+function parseGeminiJsonOrSseWithContext(
+  body: string,
+  status: number
+): { parts: Array<{ text?: string; thought?: boolean; thoughtSignature?: string }>; tokensUsed?: number; usedSseFallback: boolean } {
+  try {
+    const data = parseJsonWithContext<GeminiResponse>(body, 'Gemini', status);
+    return {
+      parts: data.candidates?.[0]?.content?.parts || [],
+      tokensUsed: data.usageMetadata?.totalTokenCount,
+      usedSseFallback: false,
+    };
+  } catch (parseError) {
+    if (!looksLikeSsePayload(body)) {
+      throw parseError;
+    }
+
+    const parsed = parseGeminiSseStream(body);
+    return {
+      parts: parsed.parts,
+      tokensUsed: parsed.tokensUsed,
+      usedSseFallback: true,
+    };
+  }
+}
+
 function extractCodexResponseText(data: CodexResponse): string {
   if (typeof data.output_text === 'string' && data.output_text) {
     return data.output_text;
@@ -1528,15 +1584,23 @@ export class CustomAgent {
       throw new Error(`Custom/Gemini API error: ${result.status} - ${result.body}`);
     }
 
-    const data = parseJsonWithContext<GeminiResponse>(result.data, 'Gemini', result.status);
-    const parts = data.candidates?.[0]?.content?.parts;
+    const parsed = parseGeminiJsonOrSseWithContext(result.data, result.status);
+    const parts = parsed.parts;
 
     if (!parts || parts.length === 0) {
-      logger.warn('SDK', 'Empty response from Custom/Gemini');
+      if (parsed.usedSseFallback) {
+        logger.warn('SDK', 'Empty stream response from Custom/Gemini');
+      } else {
+        logger.warn('SDK', 'Empty response from Custom/Gemini');
+      }
       return { content: '' };
     }
 
-    return { content: extractResponseText(parts), tokensUsed: data.usageMetadata?.totalTokenCount };
+    if (parsed.usedSseFallback) {
+      logger.debug('SDK', 'Parsed SSE response from Custom/Gemini while stream=false');
+    }
+
+    return { content: extractResponseText(parts), tokensUsed: parsed.tokensUsed };
   }
 
   /**
@@ -1568,16 +1632,21 @@ export class CustomAgent {
       throw new Error(`Custom/OpenAI API error: ${result.status} - ${result.body}`);
     }
 
-    const data = parseJsonWithContext<OpenAIResponse>(result.data, 'OpenAI', result.status);
-    const openAIError = formatOpenAIError(data.error);
-    if (openAIError) {
-      throw new Error(`Custom/OpenAI API error: ${openAIError}`);
+    const parsed = parseOpenAIJsonOrSseWithContext(result.data, result.status);
+    if (parsed.error) {
+      throw new Error(`Custom/OpenAI API error: ${parsed.error}`);
     }
 
-    const content = data.choices?.[0]?.message?.content || '';
-    const tokensUsed = data.usage?.total_tokens;
+    if (!parsed.content && parsed.usedSseFallback) {
+      logger.warn('SDK', 'Empty stream response from Custom/OpenAI');
+      return { content: '', tokensUsed: parsed.tokensUsed };
+    }
 
-    return { content, tokensUsed };
+    if (parsed.usedSseFallback) {
+      logger.debug('SDK', 'Parsed SSE response from Custom/OpenAI while stream=false');
+    }
+
+    return { content: parsed.content, tokensUsed: parsed.tokensUsed };
   }
 
   /**
