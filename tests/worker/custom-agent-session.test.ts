@@ -206,6 +206,46 @@ describe('CustomAgent session behavior', () => {
     expect(call[1].headers.Session_id).toBe('content-1');
   });
 
+  it('generates random Session_id when contentSessionId is blank', async () => {
+    const dbManager = {
+      getSessionStore: () => ({
+        getSessionById: () => ({ memory_session_id: 'mem-custom-1' }),
+        updateMemorySessionId: () => {},
+        ensureMemorySessionIdRegistered: () => {},
+        storeObservations: mock(() => ({
+          observationIds: [1],
+          summaryId: null,
+          createdAtEpoch: Date.now()
+        }))
+      }),
+      getChromaSync: () => ({
+        syncObservation: () => Promise.resolve(),
+        syncSummary: () => Promise.resolve()
+      })
+    } as unknown as DatabaseManager;
+
+    const sessionManager = {
+      getMessageIterator: async function* () { yield* []; },
+      getPendingMessageStore: () => ({
+        confirmProcessed: () => {}
+      })
+    } as unknown as SessionManager;
+
+    const session = createSession();
+    session.contentSessionId = '   ';
+
+    global.fetch = mock(() => Promise.resolve(new Response(JSON.stringify({
+      choices: [{ message: { content: '{"type":"discovery","title":"ok","narrative":"n","files_read":[],"files_modified":[],"concepts":[]}' } }],
+      usage: { total_tokens: 12 }
+    }))));
+
+    const agent = new CustomAgent(dbManager, sessionManager);
+    await agent.startSession(session);
+
+    const call = (global.fetch as any).mock.calls[0];
+    expect(call[1].headers.Session_id).toMatch(/^custom-\d+-[a-z0-9]+$/);
+  });
+
   it('sets lowest reasoning effort for gpt-* models in OpenAI requests', async () => {
     const dbManager = {
       getSessionStore: () => ({

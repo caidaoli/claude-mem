@@ -1058,6 +1058,18 @@ function parseOptionalPositiveInt(value: unknown): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
+function resolveRequestSessionId(contentSessionId: string): { sessionId: string; generated: boolean } {
+  const normalizedContentSessionId = contentSessionId.trim();
+  if (normalizedContentSessionId) {
+    return { sessionId: normalizedContentSessionId, generated: false };
+  }
+
+  return {
+    sessionId: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    generated: true
+  };
+}
+
 export class CustomAgent {
   private dbManager: DatabaseManager;
   private sessionManager: SessionManager;
@@ -1122,7 +1134,14 @@ export class CustomAgent {
 
       // Load active mode
       const mode = ModeManager.getInstance().getActiveMode();
-      const requestSessionId = session.contentSessionId || session.memorySessionId || '';
+      const requestSession = resolveRequestSessionId(session.contentSessionId || '');
+      const requestSessionId = requestSession.sessionId;
+      if (requestSession.generated) {
+        logger.warn('SDK', 'Blank contentSessionId detected; generated random Session_id for Custom provider', {
+          sessionId: session.sessionDbId,
+          generatedSessionId: requestSessionId
+        });
+      }
 
       // Build initial prompt (JSON format for Custom)
       const initPrompt = session.lastPromptNumber === 1
@@ -1394,6 +1413,39 @@ export class CustomAgent {
   }
 
   /**
+   * Build a user-only fallback message that still respects configured token limits.
+   * Prevents "empty truncation fallback" from re-introducing oversized user payloads.
+   */
+  private buildLatestUserFallback(
+    history: ConversationMessage[],
+    maxTokens: number
+  ): { message: ConversationMessage; wasTruncated: boolean; originalTokens: number; fallbackTokens: number } {
+    const latestUserMessage = [...history].reverse().find(msg => msg.role === 'user');
+    const originalContent = latestUserMessage?.content || '';
+    const originalTokens = this.estimateTokens(originalContent);
+
+    if (!originalContent || maxTokens <= 0 || originalTokens <= maxTokens) {
+      return {
+        message: { role: 'user', content: originalContent },
+        wasTruncated: false,
+        originalTokens,
+        fallbackTokens: originalTokens
+      };
+    }
+
+    const maxChars = Math.max(1, Math.floor(maxTokens * CHARS_PER_TOKEN_ESTIMATE));
+    const truncatedContent = originalContent.slice(0, maxChars);
+    const fallbackTokens = this.estimateTokens(truncatedContent);
+
+    return {
+      message: { role: 'user', content: truncatedContent },
+      wasTruncated: true,
+      originalTokens,
+      fallbackTokens
+    };
+  }
+
+  /**
    * Truncate conversation history to prevent runaway context costs.
    * Uses a simple sliding window: keep the most recent messages within limits.
    * Only active when maxContextMessages or maxTokens > 0.
@@ -1441,25 +1493,32 @@ export class CustomAgent {
       if (firstUserIdx > 0) {
         truncated.splice(0, firstUserIdx);
       } else if (firstUserIdx === -1) {
-        // No user messages - find latest from original history
-        const latestUserMessage = [...history].reverse().find(msg => msg.role === 'user');
+        // No user messages in truncated window - fallback to latest user message,
+        // but do not bypass token limits with oversized content.
+        const fallback = this.buildLatestUserFallback(history, maxTokens);
         logger.warn('SDK', 'Context truncation removed all user messages, falling back to latest user input only', {
           originalMessages: history.length,
           tokenLimit: maxTokens,
-          messageLimit: maxContextMessages
+          messageLimit: maxContextMessages,
+          fallbackOriginalTokens: fallback.originalTokens,
+          fallbackTokens: fallback.fallbackTokens,
+          fallbackWasTruncated: fallback.wasTruncated
         });
-        return [{ role: 'user', content: latestUserMessage?.content || '' }];
+        return [fallback.message];
       }
     }
 
     if (truncated.length === 0) {
-      const latestUserMessage = [...history].reverse().find(msg => msg.role === 'user');
+      const fallback = this.buildLatestUserFallback(history, maxTokens);
       logger.warn('SDK', 'Context truncation produced empty history, falling back to latest user input only', {
         originalMessages: history.length,
         tokenLimit: maxTokens,
-        messageLimit: maxContextMessages
+        messageLimit: maxContextMessages,
+        fallbackOriginalTokens: fallback.originalTokens,
+        fallbackTokens: fallback.fallbackTokens,
+        fallbackWasTruncated: fallback.wasTruncated
       });
-      return [{ role: 'user', content: latestUserMessage?.content || '' }];
+      return [fallback.message];
     }
 
     const droppedMessages = history.length - truncated.length;

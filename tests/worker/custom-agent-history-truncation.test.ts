@@ -85,10 +85,11 @@ describe('CustomAgent history truncation', () => {
       { role: 'assistant', content: 'A2' },
     ];
 
-    // Token limit of 1 excludes even LATEST_USER (~3 tokens), fallback kicks in
+    // Token limit of 1 excludes even LATEST_USER (~3 tokens), fallback kicks in.
+    // Fallback must trim oversized user content so we never bypass configured limits.
     const truncated = truncateHistory(history, { maxContextMessages: 10, maxTokens: 1 });
 
-    expect(truncated).toEqual([{ role: 'user', content: 'LATEST_USER' }]);
+    expect(truncated).toEqual([{ role: 'user', content: 'LATE' }]);
   });
 
   it('returns history unchanged when within limits', () => {
