@@ -839,9 +839,8 @@ export class SessionStore {
    * Add content_hash column to observations for deduplication (migration 22)
    */
   private addObservationContentHashColumn(): void {
-    const applied = this.db.prepare('SELECT version FROM schema_versions WHERE version = ?').get(22) as SchemaVersion | undefined;
-    if (applied) return;
-
+    // Always check actual column state — migration 21 recreates the table without
+    // content_hash, so the version flag alone is unreliable (ghost migration).
     const tableInfo = this.db.query('PRAGMA table_info(observations)').all() as TableColumnInfo[];
     const hasColumn = tableInfo.some(col => col.name === 'content_hash');
 
