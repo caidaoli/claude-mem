@@ -1732,7 +1732,19 @@ export class SessionStore {
 
       // 2. Store summary if provided
       let summaryId: number | null = null;
+      let summaryEpoch: number | null = null;
       if (summary) {
+        // INVARIANT: summary.created_at_epoch > max(observations.created_at_epoch)
+        // Hook concurrency can cause summary to arrive before all observations are stored.
+        // Query the actual max to enforce the invariant.
+        const maxObsRow = this.db.prepare(`
+          SELECT MAX(created_at_epoch) as max_epoch
+          FROM observations WHERE memory_session_id = ?
+        `).get(memorySessionId) as { max_epoch: number | null } | undefined;
+
+        summaryEpoch = Math.max(timestampEpoch, ((maxObsRow?.max_epoch) ?? 0) + 1);
+        const summaryIso = new Date(summaryEpoch).toISOString();
+
         const summaryStmt = this.db.prepare(`
           INSERT INTO session_summaries
           (memory_session_id, project, request, investigated, learned, completed,
@@ -1751,8 +1763,8 @@ export class SessionStore {
           summary.notes,
           promptNumber || null,
           discoveryTokens,
-          timestampIso,
-          timestampEpoch
+          summaryIso,
+          summaryEpoch
         );
         summaryId = Number(result.lastInsertRowid);
       }
@@ -1853,6 +1865,17 @@ export class SessionStore {
       // 2. Store summary if provided
       let summaryId: number | undefined;
       if (summary) {
+        // INVARIANT: summary.created_at_epoch > max(observations.created_at_epoch)
+        // Hook concurrency can cause summary to arrive before all observations are stored.
+        // Query the actual max to enforce the invariant.
+        const maxObsRow = this.db.prepare(`
+          SELECT MAX(created_at_epoch) as max_epoch
+          FROM observations WHERE memory_session_id = ?
+        `).get(memorySessionId) as { max_epoch: number | null } | undefined;
+
+        const summaryEpoch = Math.max(timestampEpoch, ((maxObsRow?.max_epoch) ?? 0) + 1);
+        const summaryIso = new Date(summaryEpoch).toISOString();
+
         const summaryStmt = this.db.prepare(`
           INSERT INTO session_summaries
           (memory_session_id, project, request, investigated, learned, completed,
@@ -1871,8 +1894,8 @@ export class SessionStore {
           summary.notes,
           promptNumber || null,
           discoveryTokens,
-          timestampIso,
-          timestampEpoch
+          summaryIso,
+          summaryEpoch
         );
         summaryId = Number(result.lastInsertRowid);
       }
