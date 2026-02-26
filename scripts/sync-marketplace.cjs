@@ -78,7 +78,7 @@ try {
   // --include=plugin/*** must come before gitignoreExcludes because .gitignore
   // lists "plugin" (it's a build artifact), but marketplace needs it for hooks/scripts
   execSync(
-    `rsync -av --delete --exclude=.git --exclude=/.mcp.json --exclude=bun.lock --exclude=package-lock.json --include='plugin/***' ${gitignoreExcludes} ./ ~/.claude/plugins/marketplaces/thedotmack/`,
+    `rsync -av --delete --exclude=.git --exclude=/.mcp.json --exclude=bun.lock --exclude=package-lock.json ${gitignoreExcludes} ./ ~/.claude/plugins/marketplaces/thedotmack/`,
     { stdio: 'inherit' }
   );
 
