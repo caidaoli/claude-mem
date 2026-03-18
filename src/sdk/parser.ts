@@ -135,6 +135,11 @@ export function parseSummary(text: string, sessionId?: number): ParsedSummary | 
       responseLength: text.length,
       responsePreview: text.substring(0, 200)
     });
+    // Log when the response contains <observation> instead of <summary>
+    // to help diagnose prompt conditioning issues (see #1312)
+    if (/<observation>/.test(text)) {
+      logger.warn('PARSER', 'Summary response contained <observation> tags instead of <summary> — prompt conditioning may need strengthening', { sessionId });
+    }
     return null;
   }
 
