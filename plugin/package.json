@@ -1,5 +1,5 @@
 {
-  "name": "claude-mem-plugin",
+  "name": "claude-mem",
   "version": "10.6.2",
   "private": true,
   "description": "Runtime dependencies for claude-mem bundled hooks",
