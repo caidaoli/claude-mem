@@ -165,6 +165,15 @@ export function parseSummary(text: string, sessionId?: number): ParsedSummary | 
     });
   }
 
+  // Guard: if NO sub-tags matched at all, this is a false positive —
+  // <summary> accidentally appeared inside an <observation> response with no structured content.
+  // This is NOT the same as missing some fields (which we intentionally allow above).
+  // Fix for #1360.
+  if (!request && !investigated && !learned && !completed && !next_steps) {
+    logger.warn('PARSER', 'Summary match has no sub-tags — skipping false positive', { sessionId });
+    return null;
+  }
+
   return {
     request,
     investigated,

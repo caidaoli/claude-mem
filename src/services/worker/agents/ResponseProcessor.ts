@@ -71,7 +71,8 @@ export async function processAgentResponse(
   originalTimestamp: number | null,
   agentName: string,
   projectRoot?: string,
-  options?: ProcessAgentResponseOptions
+  options?: ProcessAgentResponseOptions,
+  modelId?: string
 ): Promise<void> {
   // Track generator activity for stale detection (Issue #1099)
   session.lastGeneratorActivity = Date.now();
@@ -164,7 +165,8 @@ export async function processAgentResponse(
     summaryForStore,
     session.lastPromptNumber,
     discoveryTokens,
-    originalTimestamp ?? undefined
+    originalTimestamp ?? undefined,
+    modelId
   );
 
   // Log storage result with IDs for end-to-end traceability
@@ -285,6 +287,7 @@ async function syncAndBroadcastObservations(
       id: obsId,
       memory_session_id: session.memorySessionId,
       session_id: session.contentSessionId,
+      platform_source: session.platformSource,
       type: obs.type,
       title: obs.title,
       subtitle: obs.subtitle,
@@ -375,6 +378,7 @@ async function syncAndBroadcastSummary(
     id: result.summaryId,
     session_id: session.contentSessionId,
     memory_session_id: session.memorySessionId!,
+    platform_source: session.platformSource,
     request: summary!.request,
     investigated: summary!.investigated,
     learned: summary!.learned,

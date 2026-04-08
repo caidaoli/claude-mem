@@ -70,6 +70,14 @@ export class ViewerRoutes extends BaseRouteHandler {
    * that should not be closed on errors
    */
   private handleSSEStream(req: Request, res: Response): void {
+    // Guard: if DB is not yet initialized, return 503 before registering client
+    try {
+      this.dbManager.getSessionStore();
+    } catch {
+      res.status(503).json({ error: 'Service initializing' });
+      return;
+    }
+
     // Disable timeouts for SSE (long-lived connection)
     req.setTimeout(0);
     res.setTimeout(0);
@@ -89,12 +97,14 @@ export class ViewerRoutes extends BaseRouteHandler {
       this.sseBroadcaster.removeClient(res);
     });
 
-    // Send initial_load event with projects list
+    // Send initial_load event with project/source catalog
     try {
-      const allProjects = this.dbManager.getSessionStore().getAllProjects();
+      const projectCatalog = this.dbManager.getSessionStore().getProjectCatalog();
       this.sseBroadcaster.broadcast({
         type: 'initial_load',
-        projects: allProjects,
+        projects: projectCatalog.projects,
+        sources: projectCatalog.sources,
+        projectsBySource: projectCatalog.projectsBySource,
         timestamp: Date.now()
       });
 

@@ -23,6 +23,8 @@ import { PrivacyCheckValidator } from '../../validation/PrivacyCheckValidator.js
 import { SettingsDefaultsManager } from '../../../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH } from '../../../../shared/paths.js';
 import { getProcessBySession, ensureProcessExit } from '../../ProcessRegistry.js';
+import { getProjectName } from '../../../../utils/project-name.js';
+import { normalizePlatformSource } from '../../../../shared/platform-source.js';
 
 export class SessionRoutes extends BaseRouteHandler {
   private completionHandler: SessionCompletionHandler;
@@ -42,7 +44,8 @@ export class SessionRoutes extends BaseRouteHandler {
     super();
     this.completionHandler = new SessionCompletionHandler(
       sessionManager,
-      eventBroadcaster
+      eventBroadcaster,
+      dbManager
     );
   }
 
@@ -400,6 +403,7 @@ export class SessionRoutes extends BaseRouteHandler {
         id: latestPrompt.id,
         content_session_id: latestPrompt.content_session_id,
         project: latestPrompt.project,
+        platform_source: latestPrompt.platform_source,
         prompt_number: latestPrompt.prompt_number,
         prompt_text: latestPrompt.prompt_text,
         created_at_epoch: latestPrompt.created_at_epoch
@@ -549,6 +553,8 @@ export class SessionRoutes extends BaseRouteHandler {
    */
   private handleObservationsByClaudeId = this.wrapHandler((req: Request, res: Response): void => {
     const { contentSessionId, tool_name, tool_input, tool_response, cwd } = req.body;
+    const platformSource = normalizePlatformSource(req.body.platformSource);
+    const project = typeof cwd === 'string' && cwd.trim() ? getProjectName(cwd) : '';
 
     if (!contentSessionId) {
       return this.badRequest(res, 'Missing contentSessionId');
@@ -596,7 +602,7 @@ export class SessionRoutes extends BaseRouteHandler {
       const store = this.dbManager.getSessionStore();
 
       // Get or create session
-      const sessionDbId = store.createSDKSession(contentSessionId, '', '');
+      const sessionDbId = store.createSDKSession(contentSessionId, project, '', undefined, platformSource);
       const promptCount = store.getPromptNumberFromUserPrompts(contentSessionId);
 
       // promptCount=0 means session-init hasn't arrived yet (PostToolUse raced ahead).
@@ -664,6 +670,7 @@ export class SessionRoutes extends BaseRouteHandler {
    */
   private handleSummarizeByClaudeId = this.wrapHandler((req: Request, res: Response): void => {
     const { contentSessionId, last_assistant_message } = req.body;
+    const platformSource = normalizePlatformSource(req.body.platformSource);
 
     if (!contentSessionId) {
       return this.badRequest(res, 'Missing contentSessionId');
@@ -672,7 +679,7 @@ export class SessionRoutes extends BaseRouteHandler {
     const store = this.dbManager.getSessionStore();
 
     // Get or create session
-    const sessionDbId = store.createSDKSession(contentSessionId, '', '');
+    const sessionDbId = store.createSDKSession(contentSessionId, '', '', undefined, platformSource);
     const promptCount = store.getPromptNumberFromUserPrompts(contentSessionId);
 
     // Privacy check: skip if user prompt was entirely private
@@ -771,6 +778,7 @@ export class SessionRoutes extends BaseRouteHandler {
    */
   private handleCompleteByClaudeId = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
     const { contentSessionId } = req.body;
+    const platformSource = normalizePlatformSource(req.body.platformSource);
 
     logger.info('HTTP', '→ POST /api/sessions/complete', { contentSessionId });
 
@@ -782,7 +790,7 @@ export class SessionRoutes extends BaseRouteHandler {
 
     // Look up sessionDbId from contentSessionId (createSDKSession is idempotent)
     // Pass empty strings - we only need the ID lookup, not to create a new session
-    const sessionDbId = store.createSDKSession(contentSessionId, '', '');
+    const sessionDbId = store.createSDKSession(contentSessionId, '', '', undefined, platformSource);
 
     // Idempotent: already completed
     if (store.isSessionCompleted(sessionDbId)) {
@@ -794,15 +802,14 @@ export class SessionRoutes extends BaseRouteHandler {
     const activeSession = this.sessionManager.getSession(sessionDbId);
     if (!activeSession) {
       // Session may not be in memory (already completed or never initialized)
-      logger.debug('SESSION', 'session-complete: Session not in active map', {
+      // Still proceed with DB-backed completion so the row gets marked completed
+      logger.debug('SESSION', 'session-complete: Session not in active map; continuing with DB-backed completion', {
         contentSessionId,
         sessionDbId
       });
-      res.json({ status: 'skipped', reason: 'not_active' });
-      return;
     }
 
-    // Complete the session (removes from active sessions map)
+    // Complete the session (removes from active sessions map if present)
     // Note: The Stop hook (summarize handler) waits for pending work before calling
     // this endpoint. No polling here — that's the hook's responsibility.
     await this.completionHandler.completeByDbId(sessionDbId);
@@ -812,7 +819,7 @@ export class SessionRoutes extends BaseRouteHandler {
       sessionDbId
     });
 
-    res.json({ status: 'completed', sessionDbId });
+    res.json({ status: activeSession ? 'completed' : 'completed_db_only', sessionDbId });
   });
 
   /**
@@ -834,11 +841,13 @@ export class SessionRoutes extends BaseRouteHandler {
     // may omit prompt/project in their payload (#838, #1049)
     const project = req.body.project || 'unknown';
     const prompt = req.body.prompt || '[media prompt]';
+    const platformSource = normalizePlatformSource(req.body.platformSource);
     const customTitle = req.body.customTitle || undefined;
 
     logger.info('HTTP', 'SessionRoutes: handleSessionInitByClaudeId called', {
       contentSessionId,
       project,
+      platformSource,
       prompt_length: prompt?.length,
       customTitle
     });
@@ -851,7 +860,7 @@ export class SessionRoutes extends BaseRouteHandler {
     const store = this.dbManager.getSessionStore();
 
     // Step 1: Create/get SDK session (idempotent INSERT OR IGNORE)
-    const sessionDbId = store.createSDKSession(contentSessionId, project, prompt, customTitle);
+    const sessionDbId = store.createSDKSession(contentSessionId, project, prompt, customTitle, platformSource);
 
     // Session lifecycle: init always re-activates the session and cancels any stale completion request.
     store.markSessionActive(sessionDbId);
