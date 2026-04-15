@@ -388,7 +388,9 @@ describe('ResponseProcessor', () => {
       );
 
       const [, , , summary] = mockStoreObservations.mock.calls[0];
-      expect(summary).toBeNull();
+      // #1718: When observations exist without <summary> tags, a synthetic summary is salvaged
+      expect(summary).not.toBeNull();
+      expect(summary.notes).toContain('Salvaged from');
     });
   });
 
@@ -920,6 +922,49 @@ describe('ResponseProcessor', () => {
 
       // updateFolderClaudeMdFiles should NOT be called - no file paths
       expect(updateFolderClaudeMdFilesCalled).toBe(false);
+    });
+  });
+
+  describe('lastSummaryStored tracking (#1633)', () => {
+    it('should set lastSummaryStored=true when storage returns a summaryId', async () => {
+      mockStoreObservations.mockImplementation(() => ({
+        observationIds: [],
+        summaryId: 42,
+        createdAtEpoch: 1700000000000,
+      } as StorageResult));
+
+      const session = createMockSession();
+      const responseText = `
+        <summary>
+          <request>user asked to fix bug</request>
+          <investigated>looked at auth module</investigated>
+          <learned>JWT tokens were expiring</learned>
+          <completed>fixed expiry check</completed>
+          <next_steps>write tests</next_steps>
+        </summary>
+      `;
+
+      await processAgentResponse(responseText, session, mockDbManager, mockSessionManager, mockWorker, 0, null, 'TestAgent');
+
+      expect(session.lastSummaryStored).toBe(true);
+    });
+
+    it('should set lastSummaryStored=false when storage returns summaryId=null (silent loss path, #1633)', async () => {
+      // Simulate the silent failure: agent returns no parseable <summary> tags,
+      // storeObservations skips summary and returns summaryId=null.
+      mockStoreObservations.mockImplementation(() => ({
+        observationIds: [],
+        summaryId: null,
+        createdAtEpoch: 1700000000000,
+      } as StorageResult));
+
+      const session = createMockSession();
+      // Response with no <summary> block — LLM failed to produce structured output
+      const responseText = '<skip_summary/>';
+
+      await processAgentResponse(responseText, session, mockDbManager, mockSessionManager, mockWorker, 0, null, 'TestAgent');
+
+      expect(session.lastSummaryStored).toBe(false);
     });
   });
 });

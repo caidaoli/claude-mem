@@ -134,6 +134,27 @@ export async function processAgentResponse(
   // Convert nullable fields to empty strings for storeSummary (if summary exists)
   const summaryForStore = normalizeSummaryForStorage(summary);
 
+  // Fallback: When summary parse fails but observations exist, salvage a synthetic summary.
+  // Fixes Issue #1312: AI sometimes returns <observation> instead of <summary> despite clear instructions.
+  // Observations are stored normally; this only affects the session summary.
+  let finalSummaryForStore = summaryForStore;
+  if (!summaryForStore && observations.length > 0) {
+    const primary = observations[0];
+    finalSummaryForStore = {
+      request: primary.title || `Session observations (${observations.length} items)`,
+      investigated: primary.narrative || primary.facts?.join('; ') || '',
+      learned: primary.facts?.join('; ') || '',
+      completed: primary.type === 'feature' || primary.type === 'bugfix' ? (primary.title || '') : '',
+      next_steps: '',
+      notes: `[Salvaged from ${observations.length} observation(s)] AI returned <observation> instead of <summary>`
+    };
+    logger.warn('PARSER', `SALVAGED summary from ${observations.length} observation(s) — AI did not output <summary> tags`, {
+      sessionId: session.sessionDbId,
+      agentName,
+      observationIds: observations.map(o => o.title).filter(Boolean).slice(0, 3)
+    });
+  }
+
   // Get session store for atomic transaction
   const sessionStore = dbManager.getSessionStore();
 
@@ -151,7 +172,7 @@ export async function processAgentResponse(
   sessionStore.ensureMemorySessionIdRegistered(session.sessionDbId, session.memorySessionId);
 
   // Log pre-storage with session ID chain for verification
-  logger.info('DB', `STORING | sessionDbId=${session.sessionDbId} | memorySessionId=${session.memorySessionId} | obsCount=${observations.length} | hasSummary=${!!summaryForStore}`, {
+  logger.info('DB', `STORING | sessionDbId=${session.sessionDbId} | memorySessionId=${session.memorySessionId} | obsCount=${observations.length} | hasSummary=${!!finalSummaryForStore}`, {
     sessionId: session.sessionDbId,
     memorySessionId: session.memorySessionId
   });
@@ -162,7 +183,7 @@ export async function processAgentResponse(
     session.memorySessionId,
     session.project,
     observations,
-    summaryForStore,
+    finalSummaryForStore,
     session.lastPromptNumber,
     discoveryTokens,
     originalTimestamp ?? undefined,
@@ -174,6 +195,10 @@ export async function processAgentResponse(
     sessionId: session.sessionDbId,
     memorySessionId: session.memorySessionId
   });
+
+  // Track whether a summary record was stored so the status endpoint can expose this
+  // to the Stop hook for silent-summary-loss detection (#1633)
+  session.lastSummaryStored = result.summaryId !== null;
 
   // CLAIM-CONFIRM: Now that storage succeeded, confirm all processing messages (delete from queue)
   // This is the critical step that prevents message loss on generator crash
@@ -202,7 +227,7 @@ export async function processAgentResponse(
   // Sync and broadcast summary if present
   await syncAndBroadcastSummary(
     summary,
-    summaryForStore,
+    finalSummaryForStore,
     result,
     session,
     dbManager,
@@ -379,12 +404,12 @@ async function syncAndBroadcastSummary(
     session_id: session.contentSessionId,
     memory_session_id: session.memorySessionId!,
     platform_source: session.platformSource,
-    request: summary!.request,
-    investigated: summary!.investigated,
-    learned: summary!.learned,
-    completed: summary!.completed,
-    next_steps: summary!.next_steps,
-    notes: summary!.notes,
+    request: summaryForStore!.request,
+    investigated: summaryForStore!.investigated,
+    learned: summaryForStore!.learned,
+    completed: summaryForStore!.completed,
+    next_steps: summaryForStore!.next_steps,
+    notes: summaryForStore!.notes,
     project: session.project,
     prompt_number: session.lastPromptNumber,
     created_at_epoch: result.summaryCreatedAtEpoch ?? result.createdAtEpoch
