@@ -965,7 +965,8 @@ interface OpenAIMessage {
 function buildOpenAIJsonRequestBody(
   model: string,
   messages: OpenAIMessage[],
-  streaming: boolean
+  streaming: boolean,
+  sessionId?: string
 ): Record<string, unknown> {
   const body: Record<string, unknown> = {
     model,
@@ -982,6 +983,10 @@ function buildOpenAIJsonRequestBody(
   if (streaming) {
     body.stream = true;
     body.stream_options = { include_usage: true };
+  }
+
+  if (sessionId && sessionId.trim()) {
+    body.prompt_cache_key = sessionId.trim();
   }
 
   return body;
@@ -1003,7 +1008,8 @@ function buildBearerJsonHeaders(apiKey: string, sessionId?: string): Record<stri
 function buildCodexJsonRequestBody(
   model: string,
   messages: OpenAIMessage[],
-  streaming: boolean
+  streaming: boolean,
+  sessionId?: string
 ): Record<string, unknown> {
   const input = messages.map(message => ({
     type: 'message' as const,
@@ -1030,6 +1036,10 @@ function buildCodexJsonRequestBody(
 
   if (streaming) {
     body.stream = true;
+  }
+
+  if (sessionId && sessionId.trim()) {
+    body.prompt_cache_key = sessionId.trim();
   }
 
   return body;
@@ -1684,7 +1694,7 @@ export class CustomAgent {
     const result = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
       headers: buildBearerJsonHeaders(config.apiKey, sessionIdHeader),
-      body: JSON.stringify(buildOpenAIJsonRequestBody(config.model, messages, false)),
+      body: JSON.stringify(buildOpenAIJsonRequestBody(config.model, messages, false, sessionIdHeader)),
     }, config, 3, abortSignal, readResponseBodyText);
 
     if (!result.ok) {
@@ -1730,7 +1740,7 @@ export class CustomAgent {
     const result = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
       headers: buildBearerJsonHeaders(config.apiKey, sessionIdHeader),
-      body: JSON.stringify(buildOpenAIJsonRequestBody(config.model, messages, true)),
+      body: JSON.stringify(buildOpenAIJsonRequestBody(config.model, messages, true, sessionIdHeader)),
     }, config, 3, abortSignal, parseOpenAISseStreamFromResponse);
 
     if (!result.ok) {
@@ -1772,7 +1782,7 @@ export class CustomAgent {
     const result = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
       headers: buildBearerJsonHeaders(config.apiKey, sessionIdHeader),
-      body: JSON.stringify(buildCodexJsonRequestBody(config.model, messages, false)),
+      body: JSON.stringify(buildCodexJsonRequestBody(config.model, messages, false, sessionIdHeader)),
     }, config, 3, abortSignal, parseCodexSseStreamFromResponse);
 
     if (!result.ok) {
@@ -1813,7 +1823,7 @@ export class CustomAgent {
     const result = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
       headers: buildBearerJsonHeaders(config.apiKey, sessionIdHeader),
-      body: JSON.stringify(buildCodexJsonRequestBody(config.model, messages, true)),
+      body: JSON.stringify(buildCodexJsonRequestBody(config.model, messages, true, sessionIdHeader)),
     }, config, 3, abortSignal, parseCodexSseStreamFromResponse);
 
     if (!result.ok) {

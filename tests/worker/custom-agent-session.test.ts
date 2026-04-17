@@ -204,6 +204,8 @@ describe('CustomAgent session behavior', () => {
     const call = (global.fetch as any).mock.calls[0];
     expect(call[1].headers.Authorization).toBe('Bearer fallback-custom-key');
     expect(call[1].headers.Session_id).toBe('content-1');
+    const requestBody = JSON.parse(call[1].body as string);
+    expect(requestBody.prompt_cache_key).toBe('content-1');
   });
 
   it('generates random Session_id when contentSessionId is blank', async () => {
@@ -244,6 +246,8 @@ describe('CustomAgent session behavior', () => {
 
     const call = (global.fetch as any).mock.calls[0];
     expect(call[1].headers.Session_id).toMatch(/^custom-\d+-[a-z0-9]+$/);
+    const requestBody = JSON.parse(call[1].body as string);
+    expect(requestBody.prompt_cache_key).toBe(call[1].headers.Session_id);
   });
 
   it('sets lowest reasoning effort for gpt-* models in OpenAI requests', async () => {
@@ -391,6 +395,7 @@ describe('CustomAgent session behavior', () => {
     expect(call[0]).toBe('https://custom.example.com/v1/responses');
     expect(call[1].headers.Session_id).toBe('content-1');
     const requestBody = JSON.parse(call[1].body as string);
+    expect(requestBody.prompt_cache_key).toBe('content-1');
     expect(Array.isArray(requestBody.input)).toBe(true);
     expect(requestBody.text?.format?.type).toBe('json_object');
     expect(requestBody.messages).toBeUndefined();
