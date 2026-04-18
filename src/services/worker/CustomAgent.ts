@@ -1085,6 +1085,12 @@ export class CustomAgent {
   private sessionManager: SessionManager;
   private fallbackAgent: FallbackAgent | null = null;
 
+  // Hysteresis window: per-session tail buffer start index into conversationHistory.
+  // Once set, history.slice(tailStartIndex) is the stable tail — append-only between
+  // resets so prompt-cache prefix stays identical across turns. Cleared when tail
+  // grows back to maxContextMessages, triggering a fresh slice next time.
+  private tailStartIndex = new WeakMap<ActiveSession, number>();
+
   constructor(dbManager: DatabaseManager, sessionManager: SessionManager) {
     this.dbManager = dbManager;
     this.sessionManager = sessionManager;
@@ -1164,7 +1170,8 @@ export class CustomAgent {
         session.conversationHistory,
         config,
         session.abortController.signal,
-        requestSessionId
+        requestSessionId,
+        session
       );
 
       if (initResponse.content) {
@@ -1234,7 +1241,8 @@ export class CustomAgent {
             session.conversationHistory,
             config,
             session.abortController.signal,
-            requestSessionId
+            requestSessionId,
+            session
           );
 
           const observationText = obsResponse.content || '';
@@ -1309,7 +1317,8 @@ export class CustomAgent {
             session.conversationHistory,
             config,
             session.abortController.signal,
-            requestSessionId
+            requestSessionId,
+            session
           );
 
           const summaryText = summaryResponse.content || '';
@@ -1456,59 +1465,76 @@ export class CustomAgent {
   }
 
   /**
-   * Truncate conversation history to prevent runaway context costs.
-   * Uses a simple sliding window: keep the most recent messages within limits.
+   * Truncate conversation history for prompt-cache-friendly context management.
+   *
+   * Two strategies:
+   * 1. Hysteresis batched reset (when `session` provided and maxContextMessages > 0):
+   *    - Within reset interval (history.length ≤ max): no truncation.
+   *    - On first overflow: fix tail start index at `history.length - K`
+   *      (K = max/3). Persist index on session — subsequent turns only append,
+   *      so prefix `[head, ...history.slice(startIdx)]` is byte-identical across
+   *      turns, letting prompt cache hit on the full prefix.
+   *    - When tail grows back to max: clear index so next turn resets.
+   * 2. Anchored head + sliding tail (fallback when hysteresis not applicable):
+   *    - Keep head[0] stable, slide tail by tokens only.
+   *
+   * Head anchor + alternation alignment are common to both paths.
    * Only active when maxContextMessages or maxTokens > 0.
    */
-  private truncateHistory(history: ConversationMessage[], config: CustomAgentConfig): ConversationMessage[] {
+  private truncateHistory(
+    history: ConversationMessage[],
+    config: CustomAgentConfig,
+    session?: ActiveSession
+  ): ConversationMessage[] {
     const { maxContextMessages, maxTokens } = config;
 
-    // Disabled if both limits are 0
     if (maxContextMessages <= 0 && maxTokens <= 0) {
       return history;
     }
-
-    // Check if within limits
-    const withinMessageLimit = maxContextMessages <= 0 || history.length <= maxContextMessages;
-    const totalTokens = history.reduce((sum, m) => sum + this.estimateTokens(m.content), 0);
-    const withinTokenLimit = maxTokens <= 0 || totalTokens <= maxTokens;
-
-    if (withinMessageLimit && withinTokenLimit) {
+    if (history.length === 0) {
       return history;
     }
 
-    // Simple sliding window: keep most recent messages within limits
-    const truncated: ConversationMessage[] = [];
-    let tokenCount = 0;
+    const head = history[0];
+    const useHysteresis = session !== undefined && maxContextMessages > 0;
 
-    // Process messages in reverse (most recent first)
-    for (let i = history.length - 1; i >= 0; i--) {
-      const msg = history[i];
-      const msgTokens = this.estimateTokens(msg.content);
+    // === Hysteresis batched reset path ===
+    if (useHysteresis) {
+      const activeSession = session as ActiveSession;
 
-      const exceedsMessageLimit = maxContextMessages > 0 && truncated.length >= maxContextMessages;
-      const exceedsTokenLimit = maxTokens > 0 && tokenCount + msgTokens > maxTokens;
-
-      if (exceedsMessageLimit || exceedsTokenLimit) {
-        break;
+      // Within reset interval: no truncation, clear any stale buffer state.
+      if (history.length <= maxContextMessages) {
+        this.tailStartIndex.delete(activeSession);
+        return this.enforceTokenLimit(history, head, maxTokens);
       }
 
-      truncated.unshift(msg);
-      tokenCount += msgTokens;
-    }
+      // Exceeded threshold — fix tail start index on first hit.
+      const K = Math.max(1, Math.floor(maxContextMessages / 3));
+      let startIdx = this.tailStartIndex.get(activeSession);
+      if (startIdx === undefined) {
+        startIdx = history.length - K;
+      }
 
-    // Ensure we never send assistant-first history to provider APIs
-    if (truncated.length > 0 && truncated[0].role !== 'user') {
-      const firstUserIdx = truncated.findIndex(msg => msg.role === 'user');
-      if (firstUserIdx > 0) {
-        truncated.splice(0, firstUserIdx);
-      } else if (firstUserIdx === -1) {
-        // No user messages in truncated window - fallback to latest user message,
-        // but do not bypass token limits with oversized content.
+      // Alignment: tail must start with the role opposite to head (assistant).
+      // Advance past leading same-role messages to preserve strict alternation.
+      while (startIdx < history.length && history[startIdx].role === head.role) {
+        startIdx++;
+      }
+      this.tailStartIndex.set(activeSession, startIdx);
+
+      const tail = history.slice(startIdx);
+
+      // Tail has grown back to the threshold — clear index so next turn resets.
+      // Current turn still returns the full tail; the reset kicks in next call.
+      if (tail.length >= maxContextMessages) {
+        this.tailStartIndex.delete(activeSession);
+      }
+
+      if (tail.length === 0) {
         const fallback = this.buildLatestUserFallback(history, maxTokens);
-        logger.warn('SDK', 'Context truncation removed all user messages, falling back to latest user input only', {
+        logger.warn('SDK', 'Hysteresis tail empty after alignment, falling back to latest user only', {
           originalMessages: history.length,
-          tokenLimit: maxTokens,
+          startIdx,
           messageLimit: maxContextMessages,
           fallbackOriginalTokens: fallback.originalTokens,
           fallbackTokens: fallback.fallbackTokens,
@@ -1516,14 +1542,27 @@ export class CustomAgent {
         });
         return [fallback.message];
       }
+
+      logger.debug('SDK', 'Hysteresis window active with head anchored for cache stability', {
+        originalMessages: history.length,
+        keptMessages: 1 + tail.length,
+        startIdx,
+        tailResetAtMax: tail.length >= maxContextMessages
+      });
+
+      return this.enforceTokenLimit([head, ...tail], head, maxTokens);
     }
 
-    if (truncated.length === 0) {
+    // === Anchored head + sliding tail path (no hysteresis available) ===
+    const rest = history.slice(1);
+    const headTokens = this.estimateTokens(head.content);
+    const tokenBudget = maxTokens > 0 ? maxTokens - headTokens : Number.POSITIVE_INFINITY;
+
+    if (tokenBudget <= 0) {
       const fallback = this.buildLatestUserFallback(history, maxTokens);
-      logger.warn('SDK', 'Context truncation produced empty history, falling back to latest user input only', {
-        originalMessages: history.length,
+      logger.warn('SDK', 'Head prompt exceeds token budget, falling back to latest user input only', {
+        headTokens,
         tokenLimit: maxTokens,
-        messageLimit: maxContextMessages,
         fallbackOriginalTokens: fallback.originalTokens,
         fallbackTokens: fallback.fallbackTokens,
         fallbackWasTruncated: fallback.wasTruncated
@@ -1531,18 +1570,105 @@ export class CustomAgent {
       return [fallback.message];
     }
 
-    const droppedMessages = history.length - truncated.length;
-    if (droppedMessages > 0) {
-      logger.debug('SDK', 'Context window truncated', {
-        originalMessages: history.length,
-        keptMessages: truncated.length,
-        droppedMessages,
-        estimatedTokens: tokenCount,
-        tokenLimit: maxTokens
-      });
+    const restTokens = rest.reduce((sum, m) => sum + this.estimateTokens(m.content), 0);
+    if (restTokens <= tokenBudget) {
+      return history;
     }
 
-    return truncated;
+    const tail: ConversationMessage[] = [];
+    let tailTokens = 0;
+    for (let i = rest.length - 1; i >= 0; i--) {
+      const msgTokens = this.estimateTokens(rest[i].content);
+      if (tailTokens + msgTokens > tokenBudget) {
+        break;
+      }
+      tail.unshift(rest[i]);
+      tailTokens += msgTokens;
+    }
+
+    while (tail.length > 0 && tail[0].role === head.role) {
+      tail.shift();
+    }
+
+    if (tail.length === 0) {
+      const fallback = this.buildLatestUserFallback(history, maxTokens);
+      logger.warn('SDK', 'Sliding tail empty after alignment, falling back to latest user input only', {
+        originalMessages: history.length,
+        tokenLimit: maxTokens,
+        headTokens,
+        fallbackOriginalTokens: fallback.originalTokens,
+        fallbackTokens: fallback.fallbackTokens,
+        fallbackWasTruncated: fallback.wasTruncated
+      });
+      return [fallback.message];
+    }
+
+    return [head, ...tail];
+  }
+
+  /**
+   * Enforce maxTokens as a secondary constraint on an already-selected message set.
+   * Preserves head; trims tail from the oldest end if total tokens exceed budget.
+   */
+  private enforceTokenLimit(
+    messages: ConversationMessage[],
+    head: ConversationMessage,
+    maxTokens: number
+  ): ConversationMessage[] {
+    if (maxTokens <= 0 || messages.length === 0) {
+      return messages;
+    }
+
+    const totalTokens = messages.reduce((sum, m) => sum + this.estimateTokens(m.content), 0);
+    if (totalTokens <= maxTokens) {
+      return messages;
+    }
+
+    const headTokens = this.estimateTokens(head.content);
+    if (headTokens >= maxTokens) {
+      const fallback = this.buildLatestUserFallback(messages, maxTokens);
+      logger.warn('SDK', 'Head alone exceeds token budget, degrading to latest user fallback', {
+        headTokens,
+        tokenLimit: maxTokens
+      });
+      return [fallback.message];
+    }
+
+    const budget = maxTokens - headTokens;
+    const rest = messages[0] === head ? messages.slice(1) : messages;
+    const kept: ConversationMessage[] = [];
+    let tokenCount = 0;
+    for (let i = rest.length - 1; i >= 0; i--) {
+      const t = this.estimateTokens(rest[i].content);
+      if (tokenCount + t > budget) {
+        break;
+      }
+      kept.unshift(rest[i]);
+      tokenCount += t;
+    }
+
+    while (kept.length > 0 && kept[0].role === head.role) {
+      kept.shift();
+    }
+
+    if (kept.length === 0) {
+      const fallback = this.buildLatestUserFallback(messages, maxTokens);
+      logger.warn('SDK', 'Token enforcement left tail empty, falling back to latest user only', {
+        tokenLimit: maxTokens,
+        headTokens
+      });
+      return [fallback.message];
+    }
+
+    logger.debug('SDK', 'Token limit enforced; head preserved for cache stability', {
+      originalMessages: messages.length,
+      keptMessages: 1 + kept.length,
+      tokenLimit: maxTokens,
+      headTokens,
+      tailTokens: tokenCount
+    });
+
+    return [head, ...kept];
   }
 
   /**
@@ -1552,10 +1678,11 @@ export class CustomAgent {
     history: ConversationMessage[],
     config: CustomAgentConfig,
     abortSignal?: AbortSignal,
-    sessionIdHeader?: string
+    sessionIdHeader?: string,
+    session?: ActiveSession
   ): Promise<{ content: string; tokensUsed?: number }> {
     // Truncate history if limits are configured
-    const truncatedHistory = this.truncateHistory(history, config);
+    const truncatedHistory = this.truncateHistory(history, config, session);
 
     if (config.protocol === 'gemini') {
       if (config.streaming) {
