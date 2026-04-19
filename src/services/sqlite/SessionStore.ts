@@ -66,6 +66,7 @@ export class SessionStore {
     this.addSessionPlatformSourceColumn();
     this.addObservationModelColumns();
     this.ensureMergedIntoProjectColumns();
+    this.addObservationSubagentColumns();
   }
 
   /**
@@ -976,6 +977,44 @@ export class SessionStore {
   }
 
   /**
+   * Add agent_type and agent_id columns to observations and pending_messages (migration 27).
+   * Mirrors MigrationRunner.addObservationSubagentColumns so bundled artifacts that embed
+   * SessionStore (e.g. context-generator.cjs) stay schema-consistent.
+   */
+  private addObservationSubagentColumns(): void {
+    const applied = this.db.prepare('SELECT version FROM schema_versions WHERE version = ?').get(27) as SchemaVersion | undefined;
+
+    const obsCols = this.db.query('PRAGMA table_info(observations)').all() as TableColumnInfo[];
+    const obsHasAgentType = obsCols.some(col => col.name === 'agent_type');
+    const obsHasAgentId = obsCols.some(col => col.name === 'agent_id');
+
+    if (!obsHasAgentType) {
+      this.db.run('ALTER TABLE observations ADD COLUMN agent_type TEXT');
+    }
+    if (!obsHasAgentId) {
+      this.db.run('ALTER TABLE observations ADD COLUMN agent_id TEXT');
+    }
+    this.db.run('CREATE INDEX IF NOT EXISTS idx_observations_agent_type ON observations(agent_type)');
+    this.db.run('CREATE INDEX IF NOT EXISTS idx_observations_agent_id ON observations(agent_id)');
+
+    const pendingCols = this.db.query('PRAGMA table_info(pending_messages)').all() as TableColumnInfo[];
+    if (pendingCols.length > 0) {
+      const pendingHasAgentType = pendingCols.some(col => col.name === 'agent_type');
+      const pendingHasAgentId = pendingCols.some(col => col.name === 'agent_id');
+      if (!pendingHasAgentType) {
+        this.db.run('ALTER TABLE pending_messages ADD COLUMN agent_type TEXT');
+      }
+      if (!pendingHasAgentId) {
+        this.db.run('ALTER TABLE pending_messages ADD COLUMN agent_id TEXT');
+      }
+    }
+
+    if (!applied) {
+      this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(27, new Date().toISOString());
+    }
+  }
+
+  /**
    * Update the memory session ID for a session
    * Called by SDKAgent when it captures the session ID from the first SDK message
    * Also used to RESET to null on stale resume failures (worker-service.ts)
@@ -1778,6 +1817,8 @@ export class SessionStore {
       concepts: string[];
       files_read: string[];
       files_modified: string[];
+      agent_type?: string | null;
+      agent_id?: string | null;
     },
     promptNumber?: number,
     discoveryTokens: number = 0,
@@ -1798,9 +1839,9 @@ export class SessionStore {
     const stmt = this.db.prepare(`
       INSERT INTO observations
       (memory_session_id, project, type, title, subtitle, facts, narrative, concepts,
-       files_read, files_modified, prompt_number, discovery_tokens, content_hash, created_at, created_at_epoch,
+       files_read, files_modified, prompt_number, discovery_tokens, agent_type, agent_id, content_hash, created_at, created_at_epoch,
        generated_by_model)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
@@ -1816,6 +1857,8 @@ export class SessionStore {
       JSON.stringify(observation.files_modified),
       promptNumber || null,
       discoveryTokens,
+      observation.agent_type ?? null,
+      observation.agent_id ?? null,
       contentHash,
       timestampIso,
       timestampEpoch,
@@ -1907,6 +1950,8 @@ export class SessionStore {
       concepts: string[];
       files_read: string[];
       files_modified: string[];
+      agent_type?: string | null;
+      agent_id?: string | null;
     }>,
     summary: {
       request: string;
@@ -1933,9 +1978,9 @@ export class SessionStore {
       const obsStmt = this.db.prepare(`
         INSERT INTO observations
         (memory_session_id, project, type, title, subtitle, facts, narrative, concepts,
-         files_read, files_modified, prompt_number, discovery_tokens, content_hash, created_at, created_at_epoch,
+         files_read, files_modified, prompt_number, discovery_tokens, agent_type, agent_id, content_hash, created_at, created_at_epoch,
          generated_by_model)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       for (const observation of observations) {
@@ -1960,6 +2005,8 @@ export class SessionStore {
           JSON.stringify(observation.files_modified),
           promptNumber || null,
           discoveryTokens,
+          observation.agent_type ?? null,
+          observation.agent_id ?? null,
           contentHash,
           timestampIso,
           timestampEpoch,
@@ -2049,6 +2096,8 @@ export class SessionStore {
       concepts: string[];
       files_read: string[];
       files_modified: string[];
+      agent_type?: string | null;
+      agent_id?: string | null;
     }>,
     summary: {
       request: string;
@@ -2077,9 +2126,9 @@ export class SessionStore {
       const obsStmt = this.db.prepare(`
         INSERT INTO observations
         (memory_session_id, project, type, title, subtitle, facts, narrative, concepts,
-         files_read, files_modified, prompt_number, discovery_tokens, content_hash, created_at, created_at_epoch,
+         files_read, files_modified, prompt_number, discovery_tokens, agent_type, agent_id, content_hash, created_at, created_at_epoch,
          generated_by_model)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       for (const observation of observations) {
@@ -2104,6 +2153,8 @@ export class SessionStore {
           JSON.stringify(observation.files_modified),
           promptNumber || null,
           discoveryTokens,
+          observation.agent_type ?? null,
+          observation.agent_id ?? null,
           contentHash,
           timestampIso,
           timestampEpoch,
@@ -2675,6 +2726,8 @@ export class SessionStore {
     discovery_tokens: number;
     created_at: string;
     created_at_epoch: number;
+    agent_type?: string | null;
+    agent_id?: string | null;
   }): { imported: boolean; id: number } {
     // Check if observation already exists
     const existing = this.db.prepare(`
@@ -2690,8 +2743,9 @@ export class SessionStore {
       INSERT INTO observations (
         memory_session_id, project, text, type, title, subtitle,
         facts, narrative, concepts, files_read, files_modified,
-        prompt_number, discovery_tokens, created_at, created_at_epoch
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        prompt_number, discovery_tokens, agent_type, agent_id,
+        created_at, created_at_epoch
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
@@ -2708,6 +2762,8 @@ export class SessionStore {
       obs.files_modified,
       obs.prompt_number,
       obs.discovery_tokens || 0,
+      obs.agent_type ?? null,
+      obs.agent_id ?? null,
       obs.created_at,
       obs.created_at_epoch
     );
