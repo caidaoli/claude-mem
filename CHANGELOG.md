@@ -4,6 +4,92 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [12.3.2] - 2026-04-20
+
+## Bug Fixes
+
+- **Search**: Fix `concept`/`concepts` parameter mismatch in `/api/search/by-concept` (#1916)
+- **Search**: Add FTS5 keyword fallback when ChromaDB is unavailable (#1913, #2048)
+- **Database**: Add periodic `clearFailed()` to purge stale pending messages (#1957)
+- **Database**: Add WAL checkpoint schedule and `journal_size_limit` to prevent unbounded growth (#1956)
+- **Worker**: Mark messages as failed (with retry) instead of confirming on non-XML responses (#1874)
+- **Worker**: Include `activeSessions` in `/health` endpoint for queue liveness monitoring (#1867)
+- **Docker**: Fix nounset-safe `TTY_ARGS` expansion in `run.sh`
+- **Search**: Cache `isFts5Available()` at construction time (Greptile review)
+
+## Closed Issues
+
+#1908, #1953, #1916, #1913, #2048, #1957, #1956, #1874, #1867
+
+## [12.3.1] - 2026-04-20
+
+## Error Handling & Code Quality
+
+This patch release resolves error handling anti-patterns across the entire codebase (91 files), improving resilience and correctness.
+
+### Bug Fixes
+
+- **OpenRouterAgent**: Restored assistant replies to `conversationHistory` — multi-turn context was lost after method extraction (#2078)
+- **ChromaSync**: Fixed cross-type dedup collision where `observation#N`, `session_summary#N`, and `user_prompt#N` could silently drop results
+- **Timeline queries**: Fixed logger calls wrapping Error inside an object instead of passing directly
+- **FTS migrations**: Preserved non-Error failure details instead of silently dropping them
+
+### Error Handling Improvements
+
+- Replaced 301 error handling anti-patterns across 91 files:
+  - Narrowed overly broad try-catch blocks into focused error boundaries
+  - Replaced unsafe `error as Error` casts with `instanceof` checks
+  - Added structured error logging where catches were previously empty
+  - Extracted large try blocks into dedicated helper methods
+- **Installer resilience**: Moved filesystem operations (`mkdirSync`) inside try/catch in Cursor, Gemini CLI, Goose MCP, and OpenClaw installers to maintain numeric return-code contracts
+- **GeminiCliHooksInstaller**: Install/uninstall paths now catch `readGeminiSettings()` failures instead of throwing past the `0/1` return contract
+- **OpenClawInstaller**: Malformed `openclaw.json` now throws instead of silently returning `{}` and potentially wiping user config
+- **WindsurfHooksInstaller**: Added null-safe parsing of `hooks.json` with optional chaining
+- **McpIntegrations**: Goose YAML updater now throws when claude-mem markers exist but regex replacement fails
+- **EnvManager**: Directory setup and existing-file reads are now wrapped in structured error logging
+- **WorktreeAdoption**: `adoptedSqliteIds` mutation delayed until SQL update succeeds
+- **Import script**: Guard against malformed timestamps before `toISOString()`
+- **Runtime CLI**: Guard `response.json()` parsing with controlled error output
+
+### Documentation
+
+- Added README for Docker claude-mem harness
+
+## [12.3.0] - 2026-04-20
+
+## New features
+
+### Basic claude-mem Docker container (`docker/claude-mem/`)
+A ready-to-run container for ad-hoc claude-mem testing with zero local setup beyond Docker.
+
+- `FROM node:20`; layers pinned Bun (1.3.12) + uv (0.11.7) + the built plugin
+- Non-root `node` user so `--permission-mode bypassPermissions` works headlessly
+- `build.sh`, `run.sh` (auto-extracts OAuth from macOS Keychain or `~/.claude/.credentials.json`, falls back to `ANTHROPIC_API_KEY`), `entrypoint.sh`
+- Persistent `.claude-mem/` mount so the observations DB survives container exit
+
+Validated end-to-end: `PostToolUse` hook → queue → worker SDK call under subscription OAuth → `<observation>` XML → `observations` table → Chroma sync.
+
+### SWE-bench evaluation harness (`evals/swebench/`)
+Two-container split (our agent image + the upstream SWE-bench harness) for measuring claude-mem's effect on resolve rate.
+
+- `Dockerfile.agent` → `claude-mem/swebench-agent:latest` (same non-root, version-pinned approach)
+- `run-instance.sh` — two-turn ingest/fix protocol per instance; shallow clone at `base_commit` with full-clone fallback
+- `run-batch.py` — parallel orchestrator with OAuth extraction, per-container naming, timeout enforcement + force-cleanup, `--overwrite` guard against silent truncation of partial results
+- `eval.sh` — wraps `python -m swebench.harness.run_evaluation`
+- `summarize.py` — aggregates per-instance reports
+- `smoke-test.sh` — one-instance smoke test
+
+### Fixes / hardening (from PR review)
+- `chmod 600` on extracted OAuth creds files
+- Grouped `{ chmod || true; }` so bash precedence can't mask failed `curl|sh` installs
+- macOS creds: Keychain-first with file fallback for migrated / older setups
+- `smoke-test.sh` `TIMEOUT` now actually enforced via `timeout`/`gtimeout` plus `docker rm -f` on exit 124
+- Container naming + force-cleanup in `run-batch.py` timeout handler prevents orphan containers
+- Fixed stdin-redirection collision in the consolidated `smoke-test.sh` JSON parser
+- Drop `exec` in `run.sh` so the EXIT trap fires and cleans the temp creds file
+
+**PR:** https://github.com/thedotmack/claude-mem/pull/2076
+
 ## [12.2.3] - 2026-04-19
 
 ## Fixed

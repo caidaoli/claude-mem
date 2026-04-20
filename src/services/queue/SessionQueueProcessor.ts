@@ -41,96 +41,77 @@ export class SessionQueueProcessor {
     let lastActivityTime = Date.now();
 
     while (!signal.aborted) {
+      // Claim phase: atomically claim next pending message (marks as 'processing')
+      // Self-heals any stale processing messages before claiming
+      let persistentMessage: PersistentPendingMessage | null = null;
       try {
-        // Atomically claim next pending message (marks as 'processing')
-        // Self-heals any stale processing messages before claiming
-        const persistentMessage = this.store.claimNextMessage(sessionDbId);
+        persistentMessage = this.store.claimNextMessage(sessionDbId);
+      } catch (error) {
+        if (signal.aborted) return;
+        const normalizedError = error instanceof Error ? error : new Error(String(error));
+        logger.error('QUEUE', 'Failed to claim next message', { sessionDbId }, normalizedError);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        continue;
+      }
 
-        if (persistentMessage) {
-          // Control message: session-complete
-          if (persistentMessage.message_type === 'complete') {
-            // No downstream processing required, but we must avoid a race where
-            // /api/sessions/complete arrives before /api/sessions/summarize.
-            //
-            // Strategy:
-            // - Claim complete (marks processing)
-            // - Wait briefly for any new queued work (summarize) to appear
-            // - If more work exists, reset complete back to pending and keep draining
-            // - Otherwise, confirm and exit
-            // Note: resetToPending does not update created_at_epoch, so after a
-            // reset→re-claim cycle the grace period will have already elapsed and
-            // won't block again. This is intentional — one grace window is enough.
-            const ageMs = Date.now() - persistentMessage.created_at_epoch;
-            const remainingGraceMs = Math.max(0, COMPLETE_GRACE_MS - ageMs);
+      if (persistentMessage) {
+        // Control message: session-complete
+        if (persistentMessage.message_type === 'complete') {
+          // Avoid race where /api/sessions/complete arrives before /api/sessions/summarize.
+          // resetToPending does not update created_at_epoch, so after a reset→re-claim
+          // cycle the grace period will have already elapsed. One grace window is enough.
+          const ageMs = Date.now() - persistentMessage.created_at_epoch;
+          const remainingGraceMs = Math.max(0, COMPLETE_GRACE_MS - ageMs);
+          if (remainingGraceMs > 0) {
+            await this.waitForMessage(signal, remainingGraceMs);
+          }
 
-            if (remainingGraceMs > 0) {
-              await this.waitForMessage(signal, remainingGraceMs);
-            }
-
-            if (signal.aborted) {
-              // Don't strand a processing control message.
-              this.store.resetToPending(persistentMessage.id);
-              return;
-            }
-
-            // Check if real work (observations/summarize) is still pending.
-            // getWorkCount excludes complete messages, so 0 means only this
-            // control message remains — safe to finalize.
-            const workCount = this.store.getWorkCount(sessionDbId);
-            if (workCount > 0) {
-              this.store.resetToPending(persistentMessage.id);
-              // If only "processing" work remains, immediately re-claiming complete
-              // would spin synchronously and block the event loop. Back off.
-              await this.waitForMessage(signal, COMPLETE_DEFER_BACKOFF_MS);
-              continue;
-            }
-
-            const confirmed = this.store.confirmProcessed(persistentMessage.id);
-            if (!confirmed) {
-              // Completion can be canceled by /api/sessions/init, which clears any
-              // pending/processing complete control message. If that happens after
-              // we claim the message (within the grace window), do NOT mark the
-              // session completed and do NOT exit the iterator.
-              logger.info('SESSION', 'Completion control message was cleared before confirm; continuing', {
-                sessionDbId,
-                messageId: persistentMessage.id
-              });
-              continue;
-            }
-
-            onComplete?.();
-            logger.info('SESSION', 'Completion message processed, exiting iterator', { sessionDbId });
+          if (signal.aborted) {
+            this.store.resetToPending(persistentMessage.id);
             return;
           }
 
-          // Reset activity time when we successfully yield a message
-          lastActivityTime = Date.now();
-          // Yield the message for processing (it's marked as 'processing' in DB)
-          yield this.toPendingMessageWithId(persistentMessage);
-        } else {
-          // Queue empty - wait for wake-up event or timeout
-          const receivedMessage = await this.waitForMessage(signal, IDLE_TIMEOUT_MS);
-
-          if (!receivedMessage && !signal.aborted) {
-            // Timeout occurred - check if we've been idle too long
-            const idleDuration = Date.now() - lastActivityTime;
-            if (idleDuration >= IDLE_TIMEOUT_MS) {
-              logger.info('SESSION', 'Idle timeout reached, triggering abort to kill subprocess', {
-                sessionDbId,
-                idleDurationMs: idleDuration,
-                thresholdMs: IDLE_TIMEOUT_MS
-              });
-              onIdleTimeout?.();
-              return;
-            }
-            // Reset timer on spurious wakeup - queue is empty but duration check failed
-            lastActivityTime = Date.now();
+          // getWorkCount excludes complete messages; 0 means safe to finalize.
+          const workCount = this.store.getWorkCount(sessionDbId);
+          if (workCount > 0) {
+            this.store.resetToPending(persistentMessage.id);
+            await this.waitForMessage(signal, COMPLETE_DEFER_BACKOFF_MS);
+            continue;
           }
+
+          const confirmed = this.store.confirmProcessed(persistentMessage.id);
+          if (!confirmed) {
+            // /api/sessions/init can cancel completion by clearing the control message.
+            logger.info('SESSION', 'Completion control message was cleared before confirm; continuing', {
+              sessionDbId,
+              messageId: persistentMessage.id
+            });
+            continue;
+          }
+
+          onComplete?.();
+          logger.info('SESSION', 'Completion message processed, exiting iterator', { sessionDbId });
+          return;
         }
+
+        // Reset activity time when we successfully yield a message
+        lastActivityTime = Date.now();
+        // Yield the message for processing (it's marked as 'processing' in DB)
+        yield this.toPendingMessageWithId(persistentMessage);
+        continue;
+      }
+
+      // Wait phase: queue empty - wait for wake-up event or timeout
+      try {
+        const idleTimedOut = await this.handleWaitPhase(signal, lastActivityTime, sessionDbId, onIdleTimeout);
+        if (idleTimedOut) return;
+        // Reset timer on spurious wakeup if not timed out
+        lastActivityTime = Date.now();
       } catch (error) {
         if (signal.aborted) return;
-        logger.error('SESSION', 'Error in queue processor loop', { sessionDbId }, error as Error);
-        // Small backoff to prevent tight loop on DB error
+        const normalizedError = error instanceof Error ? error : new Error(String(error));
+        logger.error('QUEUE', 'Error waiting for message', { sessionDbId }, normalizedError);
+        // Small backoff to prevent tight loop on error
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
@@ -143,6 +124,33 @@ export class SessionQueueProcessor {
       _persistentId: msg.id,
       _originalTimestamp: msg.created_at_epoch
     };
+  }
+
+  /**
+   * Handle the wait phase: wait for a message or check idle timeout.
+   * @returns true if idle timeout was reached (caller should return/exit iterator)
+   */
+  private async handleWaitPhase(
+    signal: AbortSignal,
+    lastActivityTime: number,
+    sessionDbId: number,
+    onIdleTimeout?: () => void
+  ): Promise<boolean> {
+    const receivedMessage = await this.waitForMessage(signal, IDLE_TIMEOUT_MS);
+
+    if (!receivedMessage && !signal.aborted) {
+      const idleDuration = Date.now() - lastActivityTime;
+      if (idleDuration >= IDLE_TIMEOUT_MS) {
+        logger.info('SESSION', 'Idle timeout reached, triggering abort to kill subprocess', {
+          sessionDbId,
+          idleDurationMs: idleDuration,
+          thresholdMs: IDLE_TIMEOUT_MS
+        });
+        onIdleTimeout?.();
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
