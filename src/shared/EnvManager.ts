@@ -283,16 +283,6 @@ export function getCredential(key: keyof ClaudeMemEnv): string | undefined {
 }
 
 /**
- * Set a specific credential in claude-mem's .env
- * Pass empty string to remove the credential
- */
-export function setCredential(key: keyof ClaudeMemEnv, value: string): void {
-  const env = loadClaudeMemEnv();
-  env[key] = value || undefined;
-  saveClaudeMemEnv(env);
-}
-
-/**
  * Check if claude-mem has an Anthropic API key configured
  * If false, it means CLI billing should be used
  */

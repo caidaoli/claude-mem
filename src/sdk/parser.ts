@@ -1,7 +1,14 @@
 /**
  * XML Parser Module
- * Parses observation and summary XML blocks from SDK responses
- * Also supports JSON parsing for Gemini responses
+ *
+ * Single fail-fast entry point for SDK agent XML responses.
+ * Also supports JSON parsing for Gemini/Custom agent responses.
+ *
+ * Per PATHFINDER-2026-04-22 plan 03 phase 1:
+ * - One function (`parseAgentXml`) for all agent responses.
+ * - Discriminated-union return: `{ valid: true, kind, data }` or `{ valid: false, reason }`.
+ * - No coercion. No silent passthrough. No "lenient mode".
+ * - `<skip_summary reason="…"/>` is a first-class summary case (skipped: true).
  */
 
 import { logger } from '../utils/logger.js';
@@ -25,23 +32,103 @@ export interface ParsedSummary {
   completed: string | null;
   next_steps: string | null;
   notes: string | null;
+  /** True when the response was an explicit `<skip_summary reason="…"/>` bypass. */
+  skipped?: boolean;
+  /** Non-null when `skipped: true`. */
+  skip_reason?: string | null;
+}
+
+export type ParseResult =
+  | { valid: true; kind: 'observation'; data: ParsedObservation[] }
+  | { valid: true; kind: 'summary'; data: ParsedSummary }
+  | { valid: false; reason: string };
+
+/**
+ * Parse an SDK agent response. Inspects the first significant XML root element
+ * and returns a discriminated union. Never coerces. Never returns null/undefined.
+ *
+ * Recognised roots:
+ *   <observation> … </observation>      → { kind: 'observation', data: ParsedObservation[] }
+ *   <summary> … </summary>              → { kind: 'summary', data: ParsedSummary }
+ *   <skip_summary reason="…" />         → { kind: 'summary', data: { skipped: true, … } }
+ *
+ * Anything else → { valid: false, reason }. The caller is responsible for
+ * surfacing the reason (markFailed, log, etc.). No retry coercion.
+ */
+export function parseAgentXml(raw: string, correlationId?: string | number): ParseResult {
+  if (typeof raw !== 'string' || !raw.trim()) {
+    return { valid: false, reason: 'empty: response had no content' };
+  }
+
+  // Skip-summary is recognised even when wrapped in other text, but only as the
+  // sole structural signal. It outranks <observation> / <summary> matches because
+  // it is an explicit protocol bypass. `reason` is optional.
+  const skipMatch = /<skip_summary(?:\s+reason="([^"]*)")?\s*\/>/.exec(raw);
+  if (skipMatch) {
+    return {
+      valid: true,
+      kind: 'summary',
+      data: {
+        request: null,
+        investigated: null,
+        learned: null,
+        completed: null,
+        next_steps: null,
+        notes: null,
+        skipped: true,
+        skip_reason: skipMatch[1] ?? null,
+      },
+    };
+  }
+
+  // Find the first significant element by scanning for the first `<…>` opener
+  // that is one of the recognised roots. This tolerates leading prose / debug
+  // output from the model while still failing fast on entirely-non-XML payloads.
+  const firstRoot = /<(observation|summary)\b/i.exec(raw);
+  if (!firstRoot) {
+    const preview = raw.length > 120 ? `${raw.slice(0, 120)}…` : raw;
+    return {
+      valid: false,
+      reason: `unknown root: response contained no <observation>, <summary>, or <skip_summary/> element (preview: ${preview.replace(/\s+/g, ' ')})`,
+    };
+  }
+
+  const rootName = firstRoot[1].toLowerCase();
+  if (rootName === 'observation') {
+    const observations = parseObservationBlocks(raw, correlationId);
+    if (observations.length === 0) {
+      return {
+        valid: false,
+        reason: '<observation>: no parseable observation block (every block was empty or ghost)',
+      };
+    }
+    return { valid: true, kind: 'observation', data: observations };
+  }
+
+  // rootName === 'summary'
+  const summary = parseSummaryBlock(raw, correlationId);
+  if (!summary) {
+    return {
+      valid: false,
+      reason: '<summary>: empty or missing every required sub-tag (request/investigated/learned/completed/next_steps)',
+    };
+  }
+  return { valid: true, kind: 'summary', data: summary };
 }
 
 /**
- * Parse observation XML blocks from SDK response
- * Returns all observations found in the response
+ * Parse all <observation>…</observation> blocks. Filters out ghost
+ * observations (every content field empty). Returns the surviving list.
  */
-export function parseObservations(text: string, correlationId?: string): ParsedObservation[] {
+export function parseObservationBlocks(text: string, correlationId?: string | number): ParsedObservation[] {
   const observations: ParsedObservation[] = [];
 
-  // Match <observation>...</observation> blocks (non-greedy)
   const observationRegex = /<observation>([\s\S]*?)<\/observation>/g;
 
   let match;
   while ((match = observationRegex.exec(text)) !== null) {
     const obsContent = match[1];
 
-    // Extract all fields
     const type = extractField(obsContent, 'type');
     const title = extractField(obsContent, 'title');
     const subtitle = extractField(obsContent, 'subtitle');
@@ -51,13 +138,13 @@ export function parseObservations(text: string, correlationId?: string): ParsedO
     const files_read = extractArrayElements(obsContent, 'files_read', 'file');
     const files_modified = extractArrayElements(obsContent, 'files_modified', 'file');
 
-    // All fields except type are nullable in schema.
-    // If type is missing or invalid, use first type from mode as fallback.
-
-    // Determine final type using active mode's valid types
+    // Type fallback: per existing semantics, missing/invalid type degrades to the
+    // first type in the active mode. This is parser-internal validation, not
+    // recovery from a contract violation: every mode's first type is intentionally
+    // the catch-all bucket.
     const mode = ModeManager.getInstance().getActiveMode();
     const validTypes = mode.observation_types.map(t => t.id);
-    const fallbackType = validTypes[0]; // First type in mode's list is the fallback
+    const fallbackType = validTypes[0];
     let finalType = fallbackType;
     if (type) {
       if (validTypes.includes(type.trim())) {
@@ -68,8 +155,6 @@ export function parseObservations(text: string, correlationId?: string): ParsedO
     } else {
       logger.error('PARSER', `Observation missing type field, using "${fallbackType}"`, { correlationId });
     }
-
-    // All other fields are optional - save whatever we have
 
     // Filter out type from concepts array (types and concepts are separate dimensions)
     const cleanedConcepts = concepts.filter(c => c !== finalType);
@@ -84,10 +169,8 @@ export function parseObservations(text: string, correlationId?: string): ParsedO
     }
 
     // Skip ghost observations — records where every content field is null/empty.
-    // These accumulate when the LLM emits a bare <observation/> (or one with only <type>)
-    // due to context overflow. They carry no information and pollute the context window.
-    // (subtitle and file lists are intentionally excluded from this guard: an observation
-    // with only a subtitle is still too thin to be useful on its own.)
+    // (subtitle and file lists are intentionally excluded from this guard:
+    // an observation with only a subtitle is still too thin to be useful.)
     if (!title && !narrative && facts.length === 0 && cleanedConcepts.length === 0) {
       logger.warn('PARSER', 'Skipping empty observation (all content fields null)', {
         correlationId,
@@ -111,14 +194,12 @@ export function parseObservations(text: string, correlationId?: string): ParsedO
   return observations;
 }
 
+export { parseObservationBlocks as parseObservations };
+
 /**
- * Parse summary XML block from SDK response
- * Returns null if no valid summary found or if summary was skipped
- *
- * @param coerceFromObservation - When true, attempts to convert <observation> tags
- *   into summary fields if no <summary> tags are found. Only set this when the
- *   response was expected to be a summary (i.e., a summarize message was sent).
- *   Prevents the infinite retry loop described in #1633.
+ * Parse a single <summary>…</summary> block. Returns null when the block has
+ * no usable sub-tags (every required field empty) — the caller maps this to
+ * a fail-fast `{ valid: false, reason }` result.
  */
 export function parseSummary(text: string, sessionId?: number, coerceFromObservation: boolean = false): ParsedSummary | null {
   // Check for skip_summary first
@@ -141,71 +222,41 @@ export function parseSummary(text: string, sessionId?: number, coerceFromObserva
     cleanedText = markdownMatch[1];
   }
 
-  // Match <summary>...</summary> block (non-greedy)
-  const summaryRegex = /<summary>([\s\S]*?)<\/summary>/;
-  const summaryMatch = summaryRegex.exec(cleanedText);
+  const block = parseSummaryBlock(cleanedText, sessionId);
+  if (block) return block;
 
-  if (!summaryMatch) {
-    // When the LLM returns <observation> tags instead of <summary> tags on a
-    // summary turn, coerce the observation content into summary fields rather
-    // than discarding it. This breaks the infinite retry loop described in
-    // #1633: without coercion, the summary is silently dropped, the session
-    // completes without a summary, a new session is spawned with an ever-growing
-    // prompt, and the cycle repeats.
-    //
-    // parseSummary is called on every response (see ResponseProcessor), not just
-    // summary turns — so the absence of <summary> in an observation response is
-    // expected, not a prompt-conditioning failure. Only act when the caller
-    // actually expected a summary (coerceFromObservation=true).
-    if (coerceFromObservation && /<observation>/.test(text)) {
-      const coerced = coerceObservationToSummary(text, sessionId);
-      if (coerced) {
-        return coerced;
-      }
-      logger.warn('PARSER', 'Summary response contained <observation> tags instead of <summary> — coercion failed, no usable content', { sessionId });
+  // No usable <summary> block — fall back to <observation> coercion if requested.
+  // Guards the #1633 retry loop: if the LLM emits <observation> on a summary turn,
+  // we salvage what we can rather than discarding the response and re-prompting.
+  if (coerceFromObservation && /<observation>/.test(text)) {
+    const coerced = coerceObservationToSummary(text, sessionId);
+    if (coerced) {
+      return coerced;
     }
-    return null;
+    logger.warn('PARSER', 'Summary response contained <observation> tags instead of <summary> — coercion failed, no usable content', { sessionId });
   }
+  return null;
+}
+
+function parseSummaryBlock(text: string, correlationId?: string | number): ParsedSummary | null {
+  const summaryRegex = /<summary>([\s\S]*?)<\/summary>/;
+  const summaryMatch = summaryRegex.exec(text);
+  if (!summaryMatch) return null;
 
   const summaryContent = summaryMatch[1];
 
-  // Extract fields
   const request = extractField(summaryContent, 'request');
   const investigated = extractField(summaryContent, 'investigated');
   const learned = extractField(summaryContent, 'learned');
   const completed = extractField(summaryContent, 'completed');
   const next_steps = extractField(summaryContent, 'next_steps');
-  const notes = extractField(summaryContent, 'notes'); // Optional
+  const notes = extractField(summaryContent, 'notes'); // optional
 
-  // NOTE FROM THEDOTMACK: 100% of the time we must SAVE the summary, even if fields are missing. 10/24/2025
-  // NEVER DO THIS NONSENSE AGAIN.
-
-  // Log warning if all required fields are empty (diagnostic for Gemini issue)
+  // Per maintainer note: a summary with at least one populated sub-tag must be
+  // saved. Missing sub-tags are tolerated; an entirely empty <summary> block is
+  // a false-positive (covered the #1360 regression) and is rejected.
   if (!request && !investigated && !learned && !completed && !next_steps) {
-    logger.warn('PARSER', 'Summary tag found but all fields are empty', {
-      sessionId,
-      summaryContentLength: summaryContent.length,
-      summaryContentPreview: summaryContent.substring(0, 200)
-    });
-  }
-
-  // Guard: if NO sub-tags matched at all, this is a false positive —
-  // <summary> accidentally appeared inside an <observation> response with no structured content.
-  // This is NOT the same as missing some fields (which we intentionally allow above).
-  // Fix for #1360.
-  if (!request && !investigated && !learned && !completed && !next_steps) {
-    // If the response also contains <observation> tags with real content, fall
-    // back to coercion rather than discarding the response entirely — this covers
-    // the case where the LLM wraps empty <summary></summary> around observation
-    // content, which would otherwise resurrect the #1633 retry loop.
-    if (coerceFromObservation && /<observation>/.test(text)) {
-      const coerced = coerceObservationToSummary(text, sessionId);
-      if (coerced) {
-        logger.warn('PARSER', 'Empty <summary> match rejected — coerced from <observation> fallback (#1633)', { sessionId });
-        return coerced;
-      }
-    }
-    logger.warn('PARSER', 'Summary match has no sub-tags — skipping false positive', { sessionId });
+    logger.warn('PARSER', 'Summary block has no sub-tags — rejecting false positive', { correlationId });
     return null;
   }
 
@@ -215,7 +266,7 @@ export function parseSummary(text: string, sessionId?: number, coerceFromObserva
     learned,
     completed,
     next_steps,
-    notes
+    notes,
   };
 }
 
@@ -239,12 +290,11 @@ function coerceObservationToSummary(text: string, sessionId?: number): ParsedSum
     const facts = extractArrayElements(obsContent, 'facts', 'fact');
 
     if (title || narrative || facts.length > 0) {
-      // Map observation fields → summary fields (best-effort)
       const request = title || subtitle || null;
       const investigated = narrative || null;
       const learned = facts.length > 0 ? facts.join('; ') : null;
       const completed = title ? `${title}${subtitle ? ' — ' + subtitle : ''}` : null;
-      const next_steps = null; // No direct observation equivalent
+      const next_steps = null;
 
       logger.warn('PARSER', 'Coerced <observation> response into <summary> to prevent retry loop (#1633)', {
         sessionId,
@@ -271,8 +321,6 @@ function coerceObservationToSummary(text: string, sessionId?: number): ParsedSum
  * Also strips wrapper tags and orphan same-name tags from malformed model output.
  */
 function extractField(content: string, fieldName: string): string | null {
-  // Use [\s\S]*? to match any character including newlines, non-greedily
-  // This handles nested XML tags like <item>...</item> inside the field
   const regex = new RegExp(`<${fieldName}>([\\s\\S]*?)</${fieldName}>`);
   const match = regex.exec(content);
   if (!match) return null;
@@ -320,7 +368,6 @@ function extractField(content: string, fieldName: string): string | null {
 function extractArrayElements(content: string, arrayName: string, elementName: string): string[] {
   const elements: string[] = [];
 
-  // Match the array block using [\s\S]*? for nested content
   const arrayRegex = new RegExp(`<${arrayName}>([\\s\\S]*?)</${arrayName}>`);
   const arrayMatch = arrayRegex.exec(content);
 
@@ -330,7 +377,6 @@ function extractArrayElements(content: string, arrayName: string, elementName: s
 
   const arrayContent = arrayMatch[1];
 
-  // Extract individual elements using [\s\S]*? for nested content
   const elementRegex = new RegExp(`<${elementName}>([\\s\\S]*?)</${elementName}>`, 'g');
   let elementMatch;
   while ((elementMatch = elementRegex.exec(arrayContent)) !== null) {

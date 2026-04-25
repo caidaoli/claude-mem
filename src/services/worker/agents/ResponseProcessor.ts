@@ -12,8 +12,9 @@
  */
 
 import { logger } from '../../../utils/logger.js';
-import { parseObservations, parseObservationsJson, parseSummary, parseSummaryJson, type ParsedObservation, type ParsedSummary } from '../../../sdk/parser.js';
+import { parseObservations, parseObservationsJson, parseSummary, parseSummaryJson, parseAgentXml, type ParsedObservation, type ParsedSummary } from '../../../sdk/parser.js';
 import { SUMMARY_MODE_MARKER, MAX_CONSECUTIVE_SUMMARY_FAILURES } from '../../../sdk/prompts.js';
+import { ingestSummary } from '../http/shared.js';
 import { updateCursorContextForProject } from '../../integrations/CursorHooksInstaller.js';
 import { notifyTelegram } from '../../integrations/TelegramNotifier.js';
 import { updateFolderClaudeMdFiles } from '../../../utils/claude-md-utils.js';
@@ -143,10 +144,8 @@ export async function processAgentResponse(
     const preview = text.length > 200 ? `${text.slice(0, 200)}...` : text;
     logger.warn('PARSER', `${agentName} returned non-XML response; marking messages as failed for retry (#1874)`, {
       sessionId: session.sessionDbId,
-      preview
+      preview,
     });
-
-    // Mark messages as failed (retry logic in PendingMessageStore handles retries)
     const pendingStore = sessionManager.getPendingMessageStore();
     for (const messageId of session.processingMessageIds) {
       pendingStore.markFailed(messageId);
@@ -221,30 +220,23 @@ export async function processAgentResponse(
   // to the Stop hook for silent-summary-loss detection (#1633)
   session.lastSummaryStored = result.summaryId !== null;
 
-  // Circuit breaker: track consecutive summary failures (#1633).
-  // Only evaluate when a summary was actually expected (summarize message was sent).
-  // Without this guard, the counter would increment on every normal observation
-  // response, tripping the breaker after 3 observations and permanently blocking
-  // summarization — reproducing the data-loss scenario this fix is meant to prevent.
-  if (summaryExpected) {
-    const skippedIntentionally = /<skip_summary\b/.test(text);
-    if (summaryForStore !== null) {
-      // Summary was present in the response — reset the failure counter
-      session.consecutiveSummaryFailures = 0;
-    } else if (skippedIntentionally) {
-      // Explicit <skip_summary/> is a valid protocol response — neither success
-      // nor failure. Leave the counter unchanged so we don't mask a bad run that
-      // happens to end on a skip, but also don't punish intentional skips.
-    } else {
-      // Summary was expected but none was stored — count as failure
-      session.consecutiveSummaryFailures += 1;
-      if (session.consecutiveSummaryFailures >= MAX_CONSECUTIVE_SUMMARY_FAILURES) {
-        logger.error('SESSION', `Circuit breaker: ${session.consecutiveSummaryFailures} consecutive summary failures — further summarize requests will be skipped (#1633)`, {
-          sessionId: session.sessionDbId,
-          contentSessionId: session.contentSessionId
-        });
-      }
-    }
+  // Gate ingestSummary({kind:'parsed'}) on real persistence so the event bus
+  // only fires for summaries that actually landed in the DB. Skipped summaries
+  // (<skip_summary/>) are an explicit bypass and still notify.
+  if (summary && (summary.skipped || session.lastSummaryStored)) {
+    const messageId = session.processingMessageIds[0] ?? -1;
+    ingestSummary({
+      kind: 'parsed',
+      sessionDbId: session.sessionDbId,
+      messageId,
+      contentSessionId: session.contentSessionId,
+      parsed: summary,
+    });
+  } else if (summary) {
+    logger.warn('DB', 'summary parsed but no row persisted; suppressing summaryStoredEvent', {
+      sessionId: session.sessionDbId,
+      memorySessionId: session.memorySessionId,
+    });
   }
 
   // CLAIM-CONFIRM: Now that storage succeeded, confirm all processing messages (delete from queue)
@@ -389,7 +381,7 @@ async function syncAndBroadcastObservations(
   // Only runs if CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED is true (default: false)
   const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
   // Handle both string 'true' and boolean true from JSON settings
-  const settingValue = settings.CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED;
+  const settingValue: unknown = settings.CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED;
   const folderClaudeMdEnabled = settingValue === 'true' || settingValue === true;
 
   if (folderClaudeMdEnabled) {
