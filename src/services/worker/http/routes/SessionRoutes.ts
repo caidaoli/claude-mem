@@ -468,11 +468,6 @@ export class SessionRoutes extends BaseRouteHandler {
       validateBody(SessionRoutes.summarizeByClaudeIdSchema),
       this.handleSummarizeByClaudeId.bind(this)
     );
-    app.post(
-      '/api/sessions/complete',
-      validateBody(SessionRoutes.completeByClaudeIdSchema),
-      this.handleCompleteByClaudeId.bind(this)
-    );
     app.get('/api/sessions/status', this.handleStatusByClaudeId.bind(this));
   }
 
@@ -525,11 +520,6 @@ export class SessionRoutes extends BaseRouteHandler {
     contentSessionId: z.string().min(1),
     last_assistant_message: z.string().optional(),
     agentId: z.string().optional(),
-    platformSource: z.string().optional(),
-  }).passthrough();
-
-  private static readonly completeByClaudeIdSchema = z.object({
-    contentSessionId: z.string().min(1),
     platformSource: z.string().optional(),
   }).passthrough();
 
@@ -856,57 +846,6 @@ export class SessionRoutes extends BaseRouteHandler {
       summaryStored: session.lastSummaryStored ?? null,
       uptime: Date.now() - session.startTime
     });
-  });
-
-  /**
-   * Complete session by contentSessionId (session-complete hook uses this)
-   * POST /api/sessions/complete
-   * Body: { contentSessionId }
-   *
-   * Enqueues a completion control message into the persistent queue.
-   * The generator drains observations + summary, then consumes the control
-   * message and exits — no abort races when stop hooks arrive in parallel.
-   */
-  private handleCompleteByClaudeId = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    const { contentSessionId } = req.body;
-    const platformSource = normalizePlatformSource(req.body.platformSource);
-
-    logger.info('HTTP', '→ POST /api/sessions/complete', { contentSessionId });
-
-    const store = this.dbManager.getSessionStore();
-
-    // Look up sessionDbId from contentSessionId (createSDKSession is idempotent)
-    // Pass empty strings - we only need the ID lookup, not to create a new session
-    const sessionDbId = store.createSDKSession(contentSessionId, '', '', undefined, platformSource);
-
-    // Idempotent: already completed
-    if (store.isSessionCompleted(sessionDbId)) {
-      res.json({ status: 'completed', sessionDbId });
-      return;
-    }
-
-    // Check if session is in the active sessions map
-    const activeSession = this.sessionManager.getSession(sessionDbId);
-    if (!activeSession) {
-      // Session may not be in memory (already completed or never initialized)
-      // Still proceed with DB-backed completion so the row gets marked completed
-      logger.debug('SESSION', 'session-complete: Session not in active map; continuing with DB-backed completion', {
-        contentSessionId,
-        sessionDbId
-      });
-    }
-
-    // Complete the session (removes from active sessions map if present)
-    // Note: The Stop hook (summarize handler) waits for pending work before calling
-    // this endpoint. No polling here — that's the hook's responsibility.
-    await this.completionHandler.completeByDbId(sessionDbId);
-
-    logger.info('SESSION', 'Session completed via API', {
-      contentSessionId,
-      sessionDbId
-    });
-
-    res.json({ status: activeSession ? 'completed' : 'completed_db_only', sessionDbId });
   });
 
   /**
