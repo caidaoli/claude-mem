@@ -1034,6 +1034,14 @@ export class MigrationRunner {
       return;
     }
 
+    // If worker_pid already exists the table was already rebuilt (e.g. a previous
+    // run succeeded but the version record was not committed). Just stamp the version.
+    const existingCols = this.db.query('PRAGMA table_info(pending_messages)').all() as TableColumnInfo[];
+    if (existingCols.some(c => c.name === 'worker_pid')) {
+      this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(28, new Date().toISOString());
+      return;
+    }
+
     logger.debug('DB', 'Rebuilding pending_messages for self-healing claim (migration 28)');
 
     // PRAGMA foreign_keys must be set outside a transaction.
