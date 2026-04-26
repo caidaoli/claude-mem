@@ -176,7 +176,8 @@ export class PaginationHelper {
       params.push(project, project);
     } else {
       // Hide internal observer-session rows from the unfiltered UI list.
-      conditions.push("ss.project != 'observer-sessions'");
+      conditions.push('ss.project != ?');
+      params.push(OBSERVER_SESSIONS_PROJECT);
     }
 
     if (platformSource) {
@@ -230,7 +231,8 @@ export class PaginationHelper {
       params.push(project);
     } else {
       // Hide internal observer-session rows from the unfiltered UI list.
-      conditions.push("s.project != 'observer-sessions'");
+      conditions.push('s.project != ?');
+      params.push(OBSERVER_SESSIONS_PROJECT);
     }
 
     if (platformSource) {
