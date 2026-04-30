@@ -75,7 +75,7 @@ export interface Settings {
   CLAUDE_MEM_WORKER_HOST: string;
 
   // AI Provider Configuration
-  CLAUDE_MEM_PROVIDER?: string;  // 'claude' | 'gemini' | 'openrouter'
+  CLAUDE_MEM_PROVIDER?: string;  // 'claude' | 'gemini' | 'openrouter' | 'custom'
   CLAUDE_MEM_GEMINI_API_KEY?: string;
   CLAUDE_MEM_GEMINI_MODEL?: string;  // 'gemini-2.5-flash-lite' | 'gemini-2.5-flash' | 'gemini-3-flash-preview'
   CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED?: string;  // 'true' | 'false'
@@ -83,6 +83,17 @@ export interface Settings {
   CLAUDE_MEM_OPENROUTER_MODEL?: string;
   CLAUDE_MEM_OPENROUTER_SITE_URL?: string;
   CLAUDE_MEM_OPENROUTER_APP_NAME?: string;
+
+  // Custom Provider Configuration
+  CLAUDE_MEM_CUSTOM_API_URL?: string;
+  CLAUDE_MEM_CUSTOM_API_KEY?: string;
+  CLAUDE_MEM_CUSTOM_MODEL?: string;
+  CLAUDE_MEM_CUSTOM_PROTOCOL?: string;  // 'openai' | 'gemini' | 'codex'
+  CLAUDE_MEM_CUSTOM_STREAMING?: string;  // 'true' | 'false'
+  CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES?: string;  // '0' = disabled
+  CLAUDE_MEM_CUSTOM_MAX_TOKENS?: string;  // '0' = disabled
+  CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT?: string;  // seconds, '0' = disabled
+  CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT?: string;  // seconds, '0' = disabled
 
   // Token Economics Display
   CLAUDE_MEM_CONTEXT_SHOW_READ_TOKENS?: string;

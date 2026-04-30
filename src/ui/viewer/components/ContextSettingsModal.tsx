@@ -337,7 +337,7 @@ export function ContextSettingsModal({
             >
               <FormField
                 label="AI Provider"
-                tooltip="Choose between Claude (via Agent SDK) or Gemini (via REST API)"
+                tooltip="Choose between Claude (via Agent SDK), Gemini (via REST API), OpenRouter (multi-model), or a Custom endpoint"
               >
                 <select
                   value={formState.CLAUDE_MEM_PROVIDER || 'claude'}
@@ -346,6 +346,7 @@ export function ContextSettingsModal({
                   <option value="claude">Claude (uses your Claude account)</option>
                   <option value="gemini">Gemini (uses API key)</option>
                   <option value="openrouter">OpenRouter (multi-model)</option>
+                  <option value="custom">Custom (your own endpoint)</option>
                 </select>
               </FormField>
 
@@ -452,6 +453,114 @@ export function ContextSettingsModal({
                       placeholder="claude-mem"
                     />
                   </FormField>
+                </>
+              )}
+
+              {formState.CLAUDE_MEM_PROVIDER === 'custom' && (
+                <>
+                  <FormField
+                    label="API Base URL"
+                    tooltip="Base URL of your endpoint. Examples: https://api.openai.com, https://your-proxy.example.com, https://generativelanguage.googleapis.com"
+                  >
+                    <input
+                      type="text"
+                      value={formState.CLAUDE_MEM_CUSTOM_API_URL || ''}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_CUSTOM_API_URL', e.target.value)}
+                      placeholder="https://your-proxy.example.com"
+                    />
+                  </FormField>
+                  <FormField
+                    label="API Key"
+                    tooltip="API key for the custom endpoint (or set CUSTOM_API_KEY env var)"
+                  >
+                    <input
+                      type="password"
+                      value={formState.CLAUDE_MEM_CUSTOM_API_KEY || ''}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_CUSTOM_API_KEY', e.target.value)}
+                      placeholder="Enter API key..."
+                    />
+                  </FormField>
+                  <FormField
+                    label="Model"
+                    tooltip="Model identifier expected by the endpoint (e.g., gpt-4o, gemini-2.5-flash, gpt-5.4-mini)"
+                  >
+                    <input
+                      type="text"
+                      value={formState.CLAUDE_MEM_CUSTOM_MODEL || 'gpt-4o'}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_CUSTOM_MODEL', e.target.value)}
+                      placeholder="gpt-4o"
+                    />
+                  </FormField>
+                  <FormField
+                    label="Protocol"
+                    tooltip="Wire protocol the endpoint speaks. OpenAI = /v1/chat/completions, Gemini = generateContent, Codex = /v1/responses"
+                  >
+                    <select
+                      value={formState.CLAUDE_MEM_CUSTOM_PROTOCOL || 'openai'}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_CUSTOM_PROTOCOL', e.target.value)}
+                    >
+                      <option value="openai">OpenAI</option>
+                      <option value="gemini">Gemini</option>
+                      <option value="codex">Codex (Responses API)</option>
+                    </select>
+                  </FormField>
+                  <FormField
+                    label="Max Context Messages"
+                    tooltip="Conversation messages kept per request after head-anchored truncation. 0 = unlimited (no truncation)"
+                  >
+                    <input
+                      type="number"
+                      min="0"
+                      max="200"
+                      value={formState.CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES || '0'}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES', e.target.value)}
+                    />
+                  </FormField>
+                  <FormField
+                    label="Max Tokens"
+                    tooltip="Estimated token budget per request (chars/4). 0 = disabled"
+                  >
+                    <input
+                      type="number"
+                      min="0"
+                      max="2000000"
+                      value={formState.CLAUDE_MEM_CUSTOM_MAX_TOKENS || '0'}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_CUSTOM_MAX_TOKENS', e.target.value)}
+                    />
+                  </FormField>
+                  <FormField
+                    label="First Token Timeout (s)"
+                    tooltip="Seconds to wait for the first response chunk before retrying. 0 = disabled"
+                  >
+                    <input
+                      type="number"
+                      min="0"
+                      max="600"
+                      value={formState.CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT || '0'}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT', e.target.value)}
+                    />
+                  </FormField>
+                  <FormField
+                    label="Total Timeout (s)"
+                    tooltip="Seconds for the full request including body read. 0 = disabled"
+                  >
+                    <input
+                      type="number"
+                      min="0"
+                      max="3600"
+                      value={formState.CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT || '0'}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT', e.target.value)}
+                    />
+                  </FormField>
+                  <div className="toggle-group" style={{ marginTop: '8px' }}>
+                    <ToggleSwitch
+                      id="custom-streaming"
+                      label="Streaming"
+                      description="Use SSE streaming for partial responses (recommended for long generations)"
+                      checked={formState.CLAUDE_MEM_CUSTOM_STREAMING !== 'false'}
+                      onChange={(checked) => updateSetting('CLAUDE_MEM_CUSTOM_STREAMING', checked ? 'true' : 'false')}
+                    />
+                  </div>
                 </>
               )}
 

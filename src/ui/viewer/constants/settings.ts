@@ -24,6 +24,17 @@ export const DEFAULT_SETTINGS = {
   CLAUDE_MEM_OPENROUTER_APP_NAME: 'claude-mem',
   CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED: 'true',
 
+  // Custom Provider Configuration — match SettingsDefaultsManager defaults
+  CLAUDE_MEM_CUSTOM_API_URL: '',
+  CLAUDE_MEM_CUSTOM_API_KEY: '',
+  CLAUDE_MEM_CUSTOM_MODEL: 'gpt-4o',
+  CLAUDE_MEM_CUSTOM_PROTOCOL: 'openai',
+  CLAUDE_MEM_CUSTOM_STREAMING: 'true',
+  CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES: '0',
+  CLAUDE_MEM_CUSTOM_MAX_TOKENS: '0',
+  CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT: '0',
+  CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT: '0',
+
   // Token Economics — match SettingsDefaultsManager defaults (off by default to keep context lean)
   CLAUDE_MEM_CONTEXT_SHOW_READ_TOKENS: 'false',
   CLAUDE_MEM_CONTEXT_SHOW_WORK_TOKENS: 'false',

@@ -121,6 +121,16 @@ export class SettingsRoutes extends BaseRouteHandler {
       'CLAUDE_MEM_OPENROUTER_APP_NAME',
       'CLAUDE_MEM_OPENROUTER_MAX_CONTEXT_MESSAGES',
       'CLAUDE_MEM_OPENROUTER_MAX_TOKENS',
+      // Custom Provider Configuration
+      'CLAUDE_MEM_CUSTOM_API_URL',
+      'CLAUDE_MEM_CUSTOM_API_KEY',
+      'CLAUDE_MEM_CUSTOM_MODEL',
+      'CLAUDE_MEM_CUSTOM_PROTOCOL',
+      'CLAUDE_MEM_CUSTOM_STREAMING',
+      'CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES',
+      'CLAUDE_MEM_CUSTOM_MAX_TOKENS',
+      'CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT',
+      'CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT',
       // System Configuration
       'CLAUDE_MEM_DATA_DIR',
       'CLAUDE_MEM_LOG_LEVEL',
@@ -244,9 +254,43 @@ export class SettingsRoutes extends BaseRouteHandler {
   private validateSettings(settings: any): { valid: boolean; error?: string } {
     // Validate CLAUDE_MEM_PROVIDER
     if (settings.CLAUDE_MEM_PROVIDER) {
-    const validProviders = ['claude', 'gemini', 'openrouter'];
+    const validProviders = ['claude', 'gemini', 'openrouter', 'custom'];
     if (!validProviders.includes(settings.CLAUDE_MEM_PROVIDER)) {
-      return { valid: false, error: 'CLAUDE_MEM_PROVIDER must be "claude", "gemini", or "openrouter"' };
+      return { valid: false, error: 'CLAUDE_MEM_PROVIDER must be "claude", "gemini", "openrouter", or "custom"' };
+      }
+    }
+
+    // Validate CLAUDE_MEM_CUSTOM_PROTOCOL
+    if (settings.CLAUDE_MEM_CUSTOM_PROTOCOL) {
+      const validProtocols = ['openai', 'gemini', 'codex'];
+      if (!validProtocols.includes(settings.CLAUDE_MEM_CUSTOM_PROTOCOL)) {
+        return { valid: false, error: 'CLAUDE_MEM_CUSTOM_PROTOCOL must be "openai", "gemini", or "codex"' };
+      }
+    }
+
+    // Validate Custom numeric ranges (0 = disabled, so allow 0)
+    const customNumericRanges: Array<{ key: string; min: number; max: number }> = [
+      { key: 'CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES', min: 0, max: 200 },
+      { key: 'CLAUDE_MEM_CUSTOM_MAX_TOKENS', min: 0, max: 2_000_000 },
+      { key: 'CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT', min: 0, max: 600 },
+      { key: 'CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT', min: 0, max: 3600 },
+    ];
+    for (const { key, min, max } of customNumericRanges) {
+      if (settings[key] !== undefined && settings[key] !== '') {
+        const n = parseInt(settings[key], 10);
+        if (isNaN(n) || n < min || n > max) {
+          return { valid: false, error: `${key} must be an integer between ${min} and ${max}` };
+        }
+      }
+    }
+
+    // Validate Custom API URL if provided
+    if (settings.CLAUDE_MEM_CUSTOM_API_URL) {
+      try {
+        new URL(settings.CLAUDE_MEM_CUSTOM_API_URL);
+      } catch (error) {
+        logger.debug('SETTINGS', 'Invalid URL format', { url: settings.CLAUDE_MEM_CUSTOM_API_URL, error: error instanceof Error ? error.message : String(error) });
+        return { valid: false, error: 'CLAUDE_MEM_CUSTOM_API_URL must be a valid URL' };
       }
     }
 
@@ -324,6 +368,7 @@ export class SettingsRoutes extends BaseRouteHandler {
       'CLAUDE_MEM_CONTEXT_SHOW_SAVINGS_PERCENT',
       'CLAUDE_MEM_CONTEXT_SHOW_LAST_SUMMARY',
       'CLAUDE_MEM_CONTEXT_SHOW_LAST_MESSAGE',
+      'CLAUDE_MEM_CUSTOM_STREAMING',
     ];
 
     for (const key of booleanSettings) {
