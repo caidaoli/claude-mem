@@ -330,6 +330,29 @@ export class SessionRoutes extends BaseRouteHandler {
           logger.info('SESSION', 'Generator exited after graceful completion', { sessionId: sessionDbId });
         } else if (wasAborted) {
           logger.info('SESSION', `Generator aborted`, { sessionId: sessionDbId });
+
+          // #2192: when the generator aborts (idle timeout, user cancel,
+          // shutdown) with rows already claimed and yielded but not yet
+          // confirmed by ResponseProcessor, those rows sit in 'processing'
+          // under THIS worker's PID. The self-healing claim predicate skips
+          // them because the worker is still alive — the queue deadlocks
+          // until the worker restarts. Walk the in-flight ids and run them
+          // through markFailed so the retry ladder requeues them or marks
+          // them terminally failed.
+          const inflightStore = this.sessionManager.getPendingMessageStore();
+          const inflightIds = session.processingMessageIds.slice();
+          session.processingMessageIds = [];
+          for (const messageId of inflightIds) {
+            try {
+              inflightStore.markFailed(messageId);
+            } catch (markErr) {
+              const normalized = markErr instanceof Error ? markErr : new Error(String(markErr));
+              logger.error('SESSION', 'Failed to requeue in-flight message after abort', {
+                sessionId: sessionDbId,
+                messageId,
+              }, normalized);
+            }
+          }
         }
         // Don't log "exited unexpectedly" here — a non-abort exit is normal when
         // the SDK subprocess completes its work. The crash-recovery block below
@@ -639,7 +662,10 @@ export class SessionRoutes extends BaseRouteHandler {
 
     const { last_assistant_message } = req.body;
 
-    this.sessionManager.queueSummarize(sessionDbId, last_assistant_message);
+    const cleanedLastAssistantMessage = last_assistant_message
+      ? stripMemoryTagsFromPrompt(String(last_assistant_message))
+      : last_assistant_message;
+    this.sessionManager.queueSummarize(sessionDbId, cleanedLastAssistantMessage);
 
     // CRITICAL: Ensure SDK agent is running to consume the queue
     this.ensureGeneratorRunning(sessionDbId, 'summarize');
@@ -786,6 +812,10 @@ export class SessionRoutes extends BaseRouteHandler {
 
     const wasCompleted = store.isSessionCompleted(sessionDbId);
 
+    const cleanedLastAssistantMessage = last_assistant_message
+      ? stripMemoryTagsFromPrompt(String(last_assistant_message))
+      : last_assistant_message;
+
     // Summarize is allowed even for completed sessions: stop-hook can race complete→summarize.
     // If we're already completed, re-queue summarize + a completion control message so the
     // session can finalize deterministically without resurrecting observations.
@@ -799,7 +829,7 @@ export class SessionRoutes extends BaseRouteHandler {
       const pendingStore = this.sessionManager.getPendingMessageStore();
       pendingStore.clearPendingComplete(sessionDbId);
 
-      this.sessionManager.queueSummarize(sessionDbId, last_assistant_message);
+      this.sessionManager.queueSummarize(sessionDbId, cleanedLastAssistantMessage);
       this.sessionManager.queueComplete(sessionDbId);
 
       this.ensureGeneratorRunning(sessionDbId, 'summarize-late');
@@ -812,7 +842,7 @@ export class SessionRoutes extends BaseRouteHandler {
     }
 
     // Queue summarize (normal path)
-    this.sessionManager.queueSummarize(sessionDbId, last_assistant_message);
+    this.sessionManager.queueSummarize(sessionDbId, cleanedLastAssistantMessage);
 
     // Ensure SDK agent is running
     this.ensureGeneratorRunning(sessionDbId, 'summarize');
