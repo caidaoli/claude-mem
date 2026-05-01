@@ -577,6 +577,22 @@ export function ContextSettingsModal({
                 />
               </FormField>
 
+              <FormField
+                label="Log Level"
+                tooltip="Worker/hook log verbosity. DEBUG = most verbose; SILENT = no logs. Default: INFO"
+              >
+                <select
+                  value={formState.CLAUDE_MEM_LOG_LEVEL || 'INFO'}
+                  onChange={(e) => updateSetting('CLAUDE_MEM_LOG_LEVEL', e.target.value)}
+                >
+                  <option value="DEBUG">DEBUG (most verbose)</option>
+                  <option value="INFO">INFO (default)</option>
+                  <option value="WARN">WARN</option>
+                  <option value="ERROR">ERROR</option>
+                  <option value="SILENT">SILENT (no logs)</option>
+                </select>
+              </FormField>
+
               <div className="toggle-group" style={{ marginTop: '12px' }}>
                 <ToggleSwitch
                   id="show-last-summary"

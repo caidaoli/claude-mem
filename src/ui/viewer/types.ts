@@ -109,6 +109,9 @@ export interface Settings {
   // Feature Toggles
   CLAUDE_MEM_CONTEXT_SHOW_LAST_SUMMARY?: string;
   CLAUDE_MEM_CONTEXT_SHOW_LAST_MESSAGE?: string;
+
+  // Logging
+  CLAUDE_MEM_LOG_LEVEL?: string;  // 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' | 'SILENT'
 }
 
 export interface WorkerStats {

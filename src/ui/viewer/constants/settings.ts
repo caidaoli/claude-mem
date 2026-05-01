@@ -51,6 +51,9 @@ export const DEFAULT_SETTINGS = {
   CLAUDE_MEM_CONTEXT_SHOW_LAST_MESSAGE: 'false',
   CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED: 'false',
 
+  // Logging — match SettingsDefaultsManager defaults
+  CLAUDE_MEM_LOG_LEVEL: 'INFO',
+
   // Exclusion Settings
   CLAUDE_MEM_EXCLUDED_PROJECTS: '',
   CLAUDE_MEM_FOLDER_MD_EXCLUDE: '[]',
