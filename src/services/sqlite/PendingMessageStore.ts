@@ -251,6 +251,44 @@ export class PendingMessageStore {
   }
 
   /**
+   * Delete all pending_messages rows for a session — upstream-introduced
+   * complement to `transitionMessagesTo`. Used by `clearPendingForSession`
+   * call sites in ResponseProcessor / GeneratorExitHandler / SessionRoutes
+   * to fully drain the queue when a session is finalized or restarted.
+   */
+  clearPendingForSession(sessionDbId: number): number {
+    const stmt = this.db.prepare(`
+      DELETE FROM pending_messages WHERE session_db_id = ?
+    `);
+    const changes = stmt.run(sessionDbId).changes;
+    if (changes > 0) {
+      logger.info('QUEUE', `CLEARED | sessionDbId=${sessionDbId} | rowsDeleted=${changes}`, {
+        sessionId: sessionDbId
+      });
+    }
+    return changes;
+  }
+
+  /**
+   * Reset all processing rows for a session back to pending — upstream-introduced
+   * helper. Differs from `resetToPending(messageId)` which scopes to a single message.
+   */
+  resetProcessingToPending(sessionDbId: number): number {
+    const stmt = this.db.prepare(`
+      UPDATE pending_messages
+         SET status = 'pending'
+       WHERE session_db_id = ? AND status = 'processing'
+    `);
+    const changes = stmt.run(sessionDbId).changes;
+    if (changes > 0) {
+      logger.info('QUEUE', `RESET_PROCESSING | sessionDbId=${sessionDbId} | rowsReset=${changes}`, {
+        sessionId: sessionDbId
+      });
+    }
+    return changes;
+  }
+
+  /**
    * Transition pending_messages rows to a terminal status — PATHFINDER-2026-04-22
    * Plan 06 Phase 9. One SQL UPDATE path, one place to add a new terminal status
    * later, zero divergence between call sites.

@@ -1,20 +1,9 @@
-/**
- * Default settings values for Claude Memory
- * Shared across UI components and hooks
- */
 export const DEFAULT_SETTINGS = {
   CLAUDE_MEM_MODEL: 'claude-sonnet-4-6',
   CLAUDE_MEM_CONTEXT_OBSERVATIONS: '50',
-  // Build-time placeholder only. The viewer runs in-browser served by the
-  // worker itself, so actual API calls use window.location and the real port
-  // is fetched from /api/settings into useSettings(). This literal is just a
-  // form-field fallback rendered for the brief moment before the API response
-  // arrives. Multi-account / per-UID port resolution lives in
-  // SettingsDefaultsManager (server-side); see CLAUDE.md → Multi-account.
   CLAUDE_MEM_WORKER_PORT: '37777',
   CLAUDE_MEM_WORKER_HOST: '127.0.0.1',
 
-  // AI Provider Configuration
   CLAUDE_MEM_PROVIDER: 'claude',
   CLAUDE_MEM_GEMINI_API_KEY: '',
   CLAUDE_MEM_GEMINI_MODEL: 'gemini-2.5-flash-lite',
@@ -41,12 +30,10 @@ export const DEFAULT_SETTINGS = {
   CLAUDE_MEM_CONTEXT_SHOW_SAVINGS_AMOUNT: 'false',
   CLAUDE_MEM_CONTEXT_SHOW_SAVINGS_PERCENT: 'true',
 
-  // Display Configuration — match SettingsDefaultsManager defaults
   CLAUDE_MEM_CONTEXT_FULL_COUNT: '0',
   CLAUDE_MEM_CONTEXT_FULL_FIELD: 'narrative',
   CLAUDE_MEM_CONTEXT_SESSION_COUNT: '10',
 
-  // Feature Toggles
   CLAUDE_MEM_CONTEXT_SHOW_LAST_SUMMARY: 'true',
   CLAUDE_MEM_CONTEXT_SHOW_LAST_MESSAGE: 'false',
   CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED: 'false',
@@ -54,7 +41,6 @@ export const DEFAULT_SETTINGS = {
   // Logging — match SettingsDefaultsManager defaults
   CLAUDE_MEM_LOG_LEVEL: 'INFO',
 
-  // Exclusion Settings
   CLAUDE_MEM_EXCLUDED_PROJECTS: '',
   CLAUDE_MEM_FOLDER_MD_EXCLUDE: '[]',
 } as const;

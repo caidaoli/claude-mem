@@ -1,18 +1,7 @@
-/**
- * SDK Prompts Module
- * Generates prompts for the Claude Agent SDK memory worker
- */
 
 import { logger } from '../utils/logger.js';
 import type { ModeConfig } from '../services/domain/types.js';
 
-/**
- * Marker string embedded in summary prompts — historically used by
- * ResponseProcessor to detect summary turns for the (now-deleted) coercion
- * fallback. Kept here because `buildSummaryPrompt` still embeds it as the
- * mode-switch banner; deleting the constant would require rewriting the
- * prompt builder, which is out of scope for plan 03.
- */
 export const SUMMARY_MODE_MARKER = 'MODE SWITCH: PROGRESS SUMMARY';
 
 export interface Observation {
@@ -179,11 +168,7 @@ ${mode.prompts.footer}
 ${mode.prompts.header_memory_start}`;
 }
 
-/**
- * Build prompt to send tool observation to SDK agent
- */
 export function buildObservationPrompt(obs: Observation): string {
-  // Safely parse tool_input and tool_output - they're already JSON strings
   let toolInput: any;
   let toolOutput: any;
 

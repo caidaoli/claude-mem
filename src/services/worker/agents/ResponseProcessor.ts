@@ -1,15 +1,3 @@
-/**
- * ResponseProcessor: Shared response processing for all agent implementations
- *
- * Responsibility:
- * - Parse observations and summaries from agent responses
- * - Execute atomic database transactions
- * - Orchestrate Chroma sync (fire-and-forget)
- * - Broadcast to SSE clients
- * - Clean up processed messages
- *
- * This module extracts 150+ lines of duplicate code from SDKAgent, GeminiAgent, and OpenRouterAgent.
- */
 
 import { logger } from '../../../utils/logger.js';
 import { parseObservations, parseObservationsJson, parseSummary, parseSummaryJson, parseAgentXml, type ParsedObservation, type ParsedSummary } from '../../../sdk/parser.js';
@@ -26,7 +14,6 @@ import type { DatabaseManager } from '../DatabaseManager.js';
 import type { SessionManager } from '../SessionManager.js';
 import type { WorkerRef, StorageResult } from './types.js';
 import { broadcastObservation, broadcastSummary } from './ObservationBroadcaster.js';
-import { cleanupProcessedMessages } from './SessionCleanupHelper.js';
 
 /**
  * Options for processAgentResponse
@@ -77,7 +64,6 @@ export async function processAgentResponse(
   options?: ProcessAgentResponseOptions,
   modelId?: string
 ): Promise<void> {
-  // Track generator activity for stale detection (Issue #1099)
   session.lastGeneratorActivity = Date.now();
 
   // Add assistant response to shared conversation history for provider interop.
@@ -146,53 +132,42 @@ export async function processAgentResponse(
       sessionId: session.sessionDbId,
       preview,
     });
-    const pendingStore = sessionManager.getPendingMessageStore();
-    for (const messageId of session.processingMessageIds) {
-      pendingStore.markFailed(messageId);
-    }
-    session.processingMessageIds = [];
+    // Reset claimed messages back to pending so they're re-claimed on the
+    // next pass instead of leaving them in `processing` (which counts toward
+    // pendingCount, which triggers a respawn loop, which trips the restart
+    // guard, which deletes the message — silent data loss).
+    sessionManager.getPendingMessageStore().resetProcessingToPending(session.sessionDbId);
+    return;
+  }
+
+  if (!session.memorySessionId) {
+    logger.warn('SDK', 'memorySessionId not yet captured; deferring storage until next round', {
+      sessionId: session.sessionDbId
+    });
+    // Reset any claimed-but-undelivered messages back to pending so they don't
+    // count as "in progress" and trigger a respawn loop while we wait for the
+    // memory session id to appear. The next generator pass will re-claim them.
+    sessionManager.getPendingMessageStore().resetProcessingToPending(session.sessionDbId);
     return;
   }
 
   // Convert nullable fields to empty strings for storeSummary (if summary exists)
   const summaryForStore = normalizeSummaryForStorage(summary);
 
-  // Get session store for atomic transaction
   const sessionStore = dbManager.getSessionStore();
-
-  // CRITICAL: Must use memorySessionId (not contentSessionId) for FK constraint
-  if (!session.memorySessionId) {
-    throw new Error('Cannot store observations: memorySessionId not yet captured');
-  }
-
-  // SAFETY NET (Issue #846 / Multi-terminal FK fix):
-  // The PRIMARY fix is in SDKAgent.ts where ensureMemorySessionIdRegistered() is called
-  // immediately when the SDK returns a memory_session_id. This call is a defensive safety net
-  // in case the DB was somehow not updated (race condition, crash, etc.).
-  // In multi-terminal scenarios, createSDKSession() now resets memory_session_id to NULL
-  // for each new generator, ensuring clean isolation.
   sessionStore.ensureMemorySessionIdRegistered(session.sessionDbId, session.memorySessionId);
 
-  // Log pre-storage with session ID chain for verification
   logger.info('DB', `STORING | sessionDbId=${session.sessionDbId} | memorySessionId=${session.memorySessionId} | obsCount=${observations.length} | hasSummary=${!!summaryForStore}`, {
     sessionId: session.sessionDbId,
     memorySessionId: session.memorySessionId
   });
 
-  // Label observations with the subagent identity captured from the claimed messages.
-  // Main-session messages leave these null, so main-session rows stay NULL in the DB.
   const labeledObservations = observations.map(obs => ({
     ...obs,
     agent_type: session.pendingAgentType ?? null,
     agent_id: session.pendingAgentId ?? null
   }));
 
-  // ATOMIC TRANSACTION: Store observations + summary ONCE
-  // Messages are already deleted from queue on claim, so no completion tracking needed.
-  // Wrap in try/finally so the subagent tracker clears even if storage throws —
-  // otherwise stale identity could leak into the next batch and mislabel rows.
-  // Expected invariant: all observations in a batch share the same agent context,
-  // because ResponseProcessor runs after a single agent-response cycle.
   let result: ReturnType<typeof sessionStore.storeObservations>;
   try {
     result = sessionStore.storeObservations(
@@ -210,14 +185,11 @@ export async function processAgentResponse(
     session.pendingAgentType = null;
   }
 
-  // Log storage result with IDs for end-to-end traceability
   logger.info('DB', `STORED | sessionDbId=${session.sessionDbId} | memorySessionId=${session.memorySessionId} | obsCount=${result.observationIds.length} | obsIds=[${result.observationIds.join(',')}] | summaryId=${result.summaryId || 'none'}`, {
     sessionId: session.sessionDbId,
     memorySessionId: session.memorySessionId
   });
 
-  // Track whether a summary record was stored so the status endpoint can expose this
-  // to the Stop hook for silent-summary-loss detection (#1633)
   session.lastSummaryStored = result.summaryId !== null;
 
   // Gate ingestSummary({kind:'parsed'}) on real persistence so the event bus
@@ -239,19 +211,9 @@ export async function processAgentResponse(
     });
   }
 
-  // CLAIM-CONFIRM: Now that storage succeeded, confirm all processing messages (delete from queue)
-  // This is the critical step that prevents message loss on generator crash
-  const pendingStore = sessionManager.getPendingMessageStore();
-  for (const messageId of session.processingMessageIds) {
-    pendingStore.confirmProcessed(messageId);
-  }
-  if (session.processingMessageIds.length > 0) {
-    logger.debug('QUEUE', `CONFIRMED_BATCH | sessionDbId=${session.sessionDbId} | count=${session.processingMessageIds.length} | ids=[${session.processingMessageIds.join(',')}]`);
-    // Record successful processing so restart guard decay is anchored to real successes
-    session.restartGuard?.recordSuccess();
-  }
-  // Clear the tracking array after confirmation
-  session.processingMessageIds = [];
+  sessionManager.clearPendingForSession(session.sessionDbId);
+  session.earliestPendingTimestamp = null;
+  session.restartGuard?.recordSuccess();
 
   void notifyTelegram({
     observations: labeledObservations,
@@ -260,7 +222,6 @@ export async function processAgentResponse(
     memorySessionId: session.memorySessionId,
   });
 
-  // AFTER transaction commits - async operations (can fail safely without data loss)
   await syncAndBroadcastObservations(
     observations,
     result,
@@ -272,7 +233,6 @@ export async function processAgentResponse(
     projectRoot
   );
 
-  // Sync and broadcast summary if present
   await syncAndBroadcastSummary(
     summary,
     summaryForStore,
@@ -283,14 +243,8 @@ export async function processAgentResponse(
     discoveryTokens,
     agentName
   );
-
-  // Clean up session state
-  cleanupProcessedMessages(session, worker);
 }
 
-/**
- * Normalize summary for storage (convert null fields to empty strings)
- */
 function normalizeSummaryForStorage(summary: ParsedSummary | null): {
   request: string;
   investigated: string;
@@ -300,6 +254,7 @@ function normalizeSummaryForStorage(summary: ParsedSummary | null): {
   notes: string | null;
 } | null {
   if (!summary) return null;
+  if (summary.skipped) return null;
 
   return {
     request: summary.request || '',
@@ -311,9 +266,6 @@ function normalizeSummaryForStorage(summary: ParsedSummary | null): {
   };
 }
 
-/**
- * Sync observations to Chroma and broadcast to SSE clients
- */
 async function syncAndBroadcastObservations(
   observations: ParsedObservation[],
   result: StorageResult,
@@ -329,7 +281,6 @@ async function syncAndBroadcastObservations(
     const obs = observations[i];
     const chromaStart = Date.now();
 
-    // Sync to Chroma (fire-and-forget, skipped if Chroma is disabled)
     dbManager.getChromaSync()?.syncObservation(
       obsId,
       session.contentSessionId,
@@ -354,8 +305,6 @@ async function syncAndBroadcastObservations(
       }, error);
     });
 
-    // Broadcast to SSE clients (for web UI)
-    // BUGFIX: Use obs.files_read and obs.files_modified (not obs.files)
     broadcastObservation(worker, {
       id: obsId,
       memory_session_id: session.memorySessionId,
@@ -364,7 +313,7 @@ async function syncAndBroadcastObservations(
       type: obs.type,
       title: obs.title,
       subtitle: obs.subtitle,
-      text: null,  // text field is not in ParsedObservation
+      text: null,
       narrative: obs.narrative || null,
       facts: JSON.stringify(obs.facts || []),
       concepts: JSON.stringify(obs.concepts || []),
@@ -376,11 +325,7 @@ async function syncAndBroadcastObservations(
     });
   }
 
-  // Update folder CLAUDE.md files for touched folders (fire-and-forget)
-  // This runs per-observation batch to ensure folders are updated as work happens
-  // Only runs if CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED is true (default: false)
   const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
-  // Handle both string 'true' and boolean true from JSON settings
   const settingValue: unknown = settings.CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED;
   const folderClaudeMdEnabled = settingValue === 'true' || settingValue === true;
 
@@ -404,9 +349,6 @@ async function syncAndBroadcastObservations(
   }
 }
 
-/**
- * Sync summary to Chroma and broadcast to SSE clients
- */
 async function syncAndBroadcastSummary(
   summary: ParsedSummary | null,
   summaryForStore: { request: string; investigated: string; learned: string; completed: string; next_steps: string; notes: string | null } | null,
@@ -423,7 +365,6 @@ async function syncAndBroadcastSummary(
 
   const chromaStart = Date.now();
 
-  // Sync to Chroma (fire-and-forget, skipped if Chroma is disabled)
   dbManager.getChromaSync()?.syncSummary(
     result.summaryId,
     session.contentSessionId,
@@ -446,7 +387,6 @@ async function syncAndBroadcastSummary(
     }, error);
   });
 
-  // Broadcast to SSE clients (for web UI)
   broadcastSummary(worker, {
     id: result.summaryId,
     session_id: session.contentSessionId,
@@ -463,7 +403,6 @@ async function syncAndBroadcastSummary(
     created_at_epoch: result.summaryCreatedAtEpoch ?? result.createdAtEpoch
   });
 
-  // Update Cursor context file for registered projects (fire-and-forget)
   updateCursorContextForProject(session.project, getWorkerPort()).catch(error => {
     logger.warn('CURSOR', 'Context update failed (non-critical)', { project: session.project }, error as Error);
   });

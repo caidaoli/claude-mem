@@ -53,8 +53,6 @@ export interface StreamEvent {
   summaries?: Summary[];
   prompts?: UserPrompt[];
   projects?: string[];
-  sources?: string[];
-  projectsBySource?: Record<string, string[]>;
   observation?: Observation;
   summary?: Summary;
   prompt?: UserPrompt;
@@ -77,8 +75,8 @@ export interface Settings {
   // AI Provider Configuration
   CLAUDE_MEM_PROVIDER?: string;  // 'claude' | 'gemini' | 'openrouter' | 'custom'
   CLAUDE_MEM_GEMINI_API_KEY?: string;
-  CLAUDE_MEM_GEMINI_MODEL?: string;  // 'gemini-2.5-flash-lite' | 'gemini-2.5-flash' | 'gemini-3-flash-preview'
-  CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED?: string;  // 'true' | 'false'
+  CLAUDE_MEM_GEMINI_MODEL?: string;  
+  CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED?: string;  
   CLAUDE_MEM_OPENROUTER_API_KEY?: string;
   CLAUDE_MEM_OPENROUTER_MODEL?: string;
   CLAUDE_MEM_OPENROUTER_SITE_URL?: string;
@@ -101,12 +99,10 @@ export interface Settings {
   CLAUDE_MEM_CONTEXT_SHOW_SAVINGS_AMOUNT?: string;
   CLAUDE_MEM_CONTEXT_SHOW_SAVINGS_PERCENT?: string;
 
-  // Display Configuration
   CLAUDE_MEM_CONTEXT_FULL_COUNT?: string;
   CLAUDE_MEM_CONTEXT_FULL_FIELD?: string;
   CLAUDE_MEM_CONTEXT_SESSION_COUNT?: string;
 
-  // Feature Toggles
   CLAUDE_MEM_CONTEXT_SHOW_LAST_SUMMARY?: string;
   CLAUDE_MEM_CONTEXT_SHOW_LAST_MESSAGE?: string;
 
@@ -126,6 +122,7 @@ export interface DatabaseStats {
   observations?: number;
   sessions?: number;
   summaries?: number;
+  firstObservationAt?: string | null;
 }
 
 export interface Stats {

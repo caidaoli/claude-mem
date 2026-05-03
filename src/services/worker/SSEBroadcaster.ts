@@ -1,12 +1,3 @@
-/**
- * SSEBroadcaster: SSE client management
- *
- * Responsibility:
- * - Manage SSE client connections
- * - Broadcast events to all connected clients
- * - Handle disconnections gracefully
- * - Single-pass broadcast (no two-step cleanup)
- */
 
 import type { Response } from 'express';
 import { logger } from '../../utils/logger.js';
@@ -17,9 +8,6 @@ export class SSEBroadcaster {
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private static readonly HEARTBEAT_INTERVAL_MS = 30000; // 30 seconds
 
-  /**
-   * Add a new SSE client connection
-   */
   addClient(res: Response): void {
     this.sseClients.add(res);
     logger.debug('WORKER', 'Client connected', { total: this.sseClients.size });
@@ -34,13 +22,9 @@ export class SSEBroadcaster {
       this.removeClient(res);
     });
 
-    // Send initial event
     this.sendToClient(res, { type: 'connected', timestamp: Date.now() });
   }
 
-  /**
-   * Remove a client connection
-   */
   removeClient(res: Response): void {
     this.sseClients.delete(res);
     logger.debug('WORKER', 'Client disconnected', { total: this.sseClients.size });
@@ -51,13 +35,10 @@ export class SSEBroadcaster {
     }
   }
 
-  /**
-   * Broadcast an event to all connected clients (single-pass)
-   */
   broadcast(event: SSEEvent): void {
     if (this.sseClients.size === 0) {
       logger.debug('WORKER', 'SSE broadcast skipped (no clients)', { eventType: event.type });
-      return; // Short-circuit if no clients
+      return; 
     }
 
     const eventWithTimestamp = { ...event, timestamp: Date.now() };
@@ -83,16 +64,10 @@ export class SSEBroadcaster {
     }
   }
 
-  /**
-   * Get number of connected clients
-   */
   getClientCount(): number {
     return this.sseClients.size;
   }
 
-  /**
-   * Send event to a specific client
-   */
   private sendToClient(res: Response, event: SSEEvent): void {
     const data = `data: ${JSON.stringify(event)}\n\n`;
     res.write(data);
