@@ -31,9 +31,6 @@ export interface ActiveSession {
   idleTimedOut?: boolean;  // Set when session exits due to idle timeout (prevents restart loop)
   completionRequested?: boolean;  // Set when session-complete control message is processed
   lastGeneratorActivity: number;  // Timestamp of last generator progress (for stale detection, Issue #1099)
-  // CLAIM-CONFIRM FIX: Track IDs of messages currently being processed
-  // These IDs will be confirmed (deleted) after successful storage
-  processingMessageIds: number[];
   // Tier routing: model override per session based on queue complexity
   modelOverride?: string;
   lastSummaryStored?: boolean;

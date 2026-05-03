@@ -196,7 +196,7 @@ export async function processAgentResponse(
   // only fires for summaries that actually landed in the DB. Skipped summaries
   // (<skip_summary/>) are an explicit bypass and still notify.
   if (summary && (summary.skipped || session.lastSummaryStored)) {
-    const messageId = session.processingMessageIds[0] ?? -1;
+    const messageId = -1;
     ingestSummary({
       kind: 'parsed',
       sessionDbId: session.sessionDbId,

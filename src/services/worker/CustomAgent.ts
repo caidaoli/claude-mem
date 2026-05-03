@@ -26,10 +26,8 @@ import type { ActiveSession, ConversationMessage } from '../worker-types.js';
 import { ModeManager } from '../domain/ModeManager.js';
 import {
   processAgentResponse,
-  shouldFallbackToClaude,
   isAbortError,
-  type WorkerRef,
-  type FallbackAgent
+  type WorkerRef
 } from './agents/index.js';
 
 // Context window management constants
@@ -1083,7 +1081,6 @@ function resolveRequestSessionId(contentSessionId: string): { sessionId: string;
 export class CustomAgent {
   private dbManager: DatabaseManager;
   private sessionManager: SessionManager;
-  private fallbackAgent: FallbackAgent | null = null;
 
   // Hysteresis window: per-session tail buffer start index into conversationHistory.
   // Once set, history.slice(tailStartIndex) is the stable tail — append-only between
@@ -1094,28 +1091,6 @@ export class CustomAgent {
   constructor(dbManager: DatabaseManager, sessionManager: SessionManager) {
     this.dbManager = dbManager;
     this.sessionManager = sessionManager;
-  }
-
-  /**
-   * Set the fallback agent (Claude SDK) for when Custom API fails
-   */
-  setFallbackAgent(agent: FallbackAgent): void {
-    this.fallbackAgent = agent;
-  }
-
-  private resetProcessingMessagesToPending(session: ActiveSession): void {
-    if (session.processingMessageIds.length === 0) {
-      return;
-    }
-
-    logger.info('SESSION', `RESET_PROCESSING_ON_FALLBACK | sessionDbId=${session.sessionDbId} | count=${session.processingMessageIds.length} | ids=[${session.processingMessageIds.join(',')}]`);
-
-    const pendingStore = this.sessionManager.getPendingMessageStore();
-    for (const messageId of session.processingMessageIds) {
-      pendingStore.resetToPending(messageId);
-    }
-
-    session.processingMessageIds = [];
   }
 
   /**
@@ -1206,9 +1181,8 @@ export class CustomAgent {
       let lastCwd: string | undefined;
 
       for await (const message of this.sessionManager.getMessageIterator(session.sessionDbId)) {
-        // CLAIM-CONFIRM: Track message ID for confirmProcessed() after successful storage
-        // The message is now in 'processing' status in DB until ResponseProcessor calls confirmProcessed()
-        session.processingMessageIds.push(message._persistentId);
+        session.pendingAgentId = message.agentId ?? null;
+        session.pendingAgentType = message.agentType ?? null;
 
         if (message.cwd) {
           lastCwd = message.cwd;
@@ -1259,27 +1233,10 @@ export class CustomAgent {
           }
 
           if (!observationText) {
-            session.consecutiveEmptyResponses = (session.consecutiveEmptyResponses || 0) + 1;
-            const MAX_CONSECUTIVE_EMPTY = 3;
-            if (session.consecutiveEmptyResponses >= MAX_CONSECUTIVE_EMPTY) {
-              logger.error('SDK', 'Too many consecutive empty responses - aborting generator to prevent silent data loss', {
-                sessionId: session.sessionDbId,
-                consecutiveEmptyResponses: session.consecutiveEmptyResponses,
-                threshold: MAX_CONSECUTIVE_EMPTY
-              });
-              // Count as a restart so ensureGeneratorRunning's circuit breaker
-              // eventually prevents infinite abort-restart cycles.
-              session.consecutiveRestarts = (session.consecutiveRestarts || 0) + 1;
-              session.abortController.abort();
-              return;
-            }
             logger.warn('SDK', 'Empty Custom observation response; processing empty payload for queue consistency', {
               sessionId: session.sessionDbId,
-              messageId: session.processingMessageIds[session.processingMessageIds.length - 1],
-              consecutiveEmptyResponses: session.consecutiveEmptyResponses
+              messageId: message._persistentId
             });
-          } else {
-            session.consecutiveEmptyResponses = 0;
           }
 
           // Always process response (including empty text) to keep CLAIM-CONFIRM and cleanup state consistent.
@@ -1335,27 +1292,10 @@ export class CustomAgent {
           }
 
           if (!summaryText) {
-            session.consecutiveEmptyResponses = (session.consecutiveEmptyResponses || 0) + 1;
-            const MAX_CONSECUTIVE_EMPTY = 3;
-            if (session.consecutiveEmptyResponses >= MAX_CONSECUTIVE_EMPTY) {
-              logger.error('SDK', 'Too many consecutive empty responses - aborting generator to prevent silent data loss', {
-                sessionId: session.sessionDbId,
-                consecutiveEmptyResponses: session.consecutiveEmptyResponses,
-                threshold: MAX_CONSECUTIVE_EMPTY
-              });
-              // Count as a restart so ensureGeneratorRunning's circuit breaker
-              // eventually prevents infinite abort-restart cycles.
-              session.consecutiveRestarts = (session.consecutiveRestarts || 0) + 1;
-              session.abortController.abort();
-              return;
-            }
             logger.warn('SDK', 'Empty Custom summary response; processing empty payload for queue consistency', {
               sessionId: session.sessionDbId,
-              messageId: session.processingMessageIds[session.processingMessageIds.length - 1],
-              consecutiveEmptyResponses: session.consecutiveEmptyResponses
+              messageId: message._persistentId
             });
-          } else {
-            session.consecutiveEmptyResponses = 0;
           }
 
           // Always process response (including empty text) to keep CLAIM-CONFIRM and cleanup state consistent.
@@ -1385,18 +1325,6 @@ export class CustomAgent {
       if (isAbortError(error)) {
         logger.warn('SDK', 'Custom agent aborted', { sessionId: session.sessionDbId });
         throw error;
-      }
-
-      if (shouldFallbackToClaude(error) && this.fallbackAgent) {
-        this.resetProcessingMessagesToPending(session);
-
-        logger.warn('SDK', 'Custom API failed, falling back to Claude SDK', {
-          sessionDbId: session.sessionDbId,
-          error: error instanceof Error ? error.message : String(error),
-          historyLength: session.conversationHistory.length
-        });
-
-        return this.fallbackAgent.startSession(session, worker);
       }
 
       logger.failure('SDK', 'Custom agent error', { sessionDbId: session.sessionDbId }, error as Error);
