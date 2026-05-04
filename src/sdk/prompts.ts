@@ -74,7 +74,6 @@ ${p.concept_guidance}`;
   // XML format
   return `${mode.prompts.output_format_header}
 
-\`\`\`xml
 <observation>
   <type>[ ${mode.observation_types.map(t => t.id).join(' | ')} ]</type>
   <!--

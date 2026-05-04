@@ -61,8 +61,8 @@ export async function processAgentResponse(
   originalTimestamp: number | null,
   agentName: string,
   projectRoot?: string,
-  options?: ProcessAgentResponseOptions,
-  modelId?: string
+  modelId?: string,
+  options?: ProcessAgentResponseOptions
 ): Promise<void> {
   session.lastGeneratorActivity = Date.now();
 
@@ -276,9 +276,15 @@ async function syncAndBroadcastObservations(
   agentName: string,
   projectRoot?: string
 ): Promise<void> {
-  for (let i = 0; i < observations.length; i++) {
-    const obsId = result.observationIds[i];
-    const obs = observations[i];
+  // Dedupe observation IDs before sync/broadcast: storeObservations may collapse
+  // multiple parsed observations onto the same row via content_hash, producing
+  // duplicate IDs. Syncing them 1:1 triggers repeated Chroma "IDs already exist"
+  // reconciles. See issue #2240.
+  const uniqueObservationIds = [...new Set(result.observationIds)];
+
+  for (const obsId of uniqueObservationIds) {
+    const observationIndex = result.observationIds.indexOf(obsId);
+    const obs = observations[observationIndex];
     const chromaStart = Date.now();
 
     dbManager.getChromaSync()?.syncObservation(

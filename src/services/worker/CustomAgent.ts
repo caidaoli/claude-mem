@@ -1164,6 +1164,7 @@ export class CustomAgent {
           null,
           'Custom',
           undefined,
+          undefined,
           {
             parseJsonObservation: true,
             observationText: initResponse.content
@@ -1250,6 +1251,7 @@ export class CustomAgent {
             originalTimestamp,
             'Custom',
             lastCwd,
+            undefined,
             observationOptions
           );
 
@@ -1309,6 +1311,7 @@ export class CustomAgent {
             originalTimestamp,
             'Custom',
             lastCwd,
+            undefined,
             summaryOptions
           );
         }
