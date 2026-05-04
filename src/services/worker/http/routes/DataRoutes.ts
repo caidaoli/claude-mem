@@ -73,7 +73,8 @@ export class DataRoutes extends BaseRouteHandler {
     private sessionManager: SessionManager,
     private sseBroadcaster: SSEBroadcaster,
     private workerService: WorkerService,
-    private startTime: number
+    private startTime: number,
+    private ensureGeneratorRunning?: (sessionDbId: number, source: string) => void
   ) {
     super();
   }
@@ -269,11 +270,27 @@ export class DataRoutes extends BaseRouteHandler {
   });
 
   private handleSetProcessing = this.wrapHandler((req: Request, res: Response): void => {
+    let sessionsStarted = 0;
+
+    if (this.ensureGeneratorRunning) {
+      const pendingSessionIds = this.sessionManager.getPendingMessageStore().getSessionsWithPendingMessages();
+
+      for (const sessionDbId of pendingSessionIds) {
+        const session = this.sessionManager.getSession(sessionDbId)
+          ?? this.sessionManager.initializeSession(sessionDbId);
+
+        if (!session.generatorPromise) {
+          this.ensureGeneratorRunning(sessionDbId, 'manual-processing');
+          sessionsStarted++;
+        }
+      }
+    }
+
     const isProcessing = this.sessionManager.isAnySessionProcessing();
     const queueDepth = this.sessionManager.getTotalQueueDepth();
     const activeSessions = this.sessionManager.getActiveSessionCount();
 
-    res.json({ status: 'ok', isProcessing, queueDepth, activeSessions });
+    res.json({ status: 'ok', isProcessing, queueDepth, activeSessions, sessionsStarted });
   });
 
   private parsePaginationParams(req: Request): { offset: number; limit: number; project?: string; platformSource?: string } {

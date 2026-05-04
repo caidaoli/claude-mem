@@ -78,9 +78,13 @@ export async function processAgentResponse(
     }
   }
 
+  const parseAsJsonObservation = options?.parseJsonObservation === true;
+  const parseAsJsonSummary = options?.parseJsonSummary === true;
+  const usesJsonParsing = parseAsJsonObservation || parseAsJsonSummary;
+
   // Parse observations - JSON or XML based on options
   let observations: ParsedObservation[];
-  if (options?.parseJsonObservation && options?.observationText) {
+  if (parseAsJsonObservation && options?.observationText !== undefined) {
     // JSON observations: explicitly provided (CustomAgent)
     observations = parseObservationsJson(options.observationText, session.contentSessionId);
   } else {
@@ -107,7 +111,7 @@ export async function processAgentResponse(
 
   // Parse summary - only if explicitly requested or text contains summary markers
   let summary: ParsedSummary | null = null;
-  if (options?.parseJsonSummary && options?.summaryText) {
+  if (parseAsJsonSummary && options?.summaryText) {
     // JSON summary: explicitly provided
     summary = parseSummaryJson(options.summaryText, session.sessionDbId);
   } else if (text.includes('<summary>') || text.includes('<skip_summary') || summaryExpected) {
@@ -116,10 +120,13 @@ export async function processAgentResponse(
   }
 
   // Detect non-XML responses (auth errors, rate limits, garbled output).
+  // JSON-mode providers use an empty object/array/no-payload as a valid skip
+  // sentinel, so the XML fail-fast path must not override that contract.
   // When the response contains no parseable XML and produced no observations,
   // mark the pending messages as failed instead of confirming them — this prevents
   // silent data loss when the LLM returns garbage (#1874).
   const isNonXmlResponse = (
+    !usesJsonParsing &&
     text.trim() &&
     observations.length === 0 &&
     !summary &&

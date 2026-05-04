@@ -148,6 +148,62 @@ describe('DataRoutes Type Coercion', () => {
     });
   });
 
+  describe('handleSetProcessing', () => {
+    it('initializes pending sessions and starts their generators', () => {
+      const initializeSession = mock((sessionDbId: number) => ({
+        sessionDbId,
+        generatorPromise: null,
+      }));
+      const ensureGeneratorRunning = mock(() => {});
+      const sessionManager = {
+        getPendingMessageStore: () => ({
+          getSessionsWithPendingMessages: () => [125],
+        }),
+        getSession: () => undefined,
+        initializeSession,
+        isAnySessionProcessing: () => true,
+        getTotalQueueDepth: () => 41,
+        getActiveSessionCount: () => 1,
+      };
+
+      routes = new DataRoutes(
+        {} as any,
+        {
+          getSessionStore: () => ({
+            getObservationsByIds: mockGetObservationsByIds,
+            getSdkSessionsBySessionIds: mockGetSdkSessionsBySessionIds,
+          }),
+        } as any,
+        sessionManager as any,
+        {} as any,
+        {} as any,
+        Date.now(),
+        ensureGeneratorRunning
+      );
+
+      const mockApp: any = {
+        get: mock(() => {}),
+        post: mock(() => {}),
+        delete: mock(() => {}),
+        use: mock(() => {}),
+      };
+      const handler = captureChain(mockApp, '/api/processing');
+      routes.setupRoutes(mockApp as any);
+
+      const { req, res, jsonSpy } = createMockReqRes({});
+      handler(req as Request, res as Response);
+
+      expect(initializeSession).toHaveBeenCalledWith(125);
+      expect(ensureGeneratorRunning).toHaveBeenCalledWith(125, 'manual-processing');
+      expect(jsonSpy).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'ok',
+        queueDepth: 41,
+        activeSessions: 1,
+        sessionsStarted: 1,
+      }));
+    });
+  });
+
   describe('handleGetSdkSessionsByIds — memorySessionIds coercion', () => {
     let handler: (req: Request, res: Response) => void;
 

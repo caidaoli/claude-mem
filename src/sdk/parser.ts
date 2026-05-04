@@ -605,6 +605,10 @@ export function parseObservationsJson(text: string, correlationId?: string): Par
       // Single observation object
       rawObservations = [data];
     } else {
+      if (typeof data === 'object' && data !== null && Object.keys(data).length === 0) {
+        logger.debug('PARSER', 'JSON observation skipped via empty object', { correlationId });
+        return [];
+      }
       logger.warn('PARSER', 'JSON response has no observations', {
         correlationId,
         keys: Object.keys(data)

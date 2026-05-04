@@ -269,7 +269,15 @@ export class WorkerService implements WorkerRef {
     attachIngestGeneratorStarter((sessionDbId, source) =>
       sessionRoutes.ensureGeneratorRunning(sessionDbId, source),
     );
-    this.server.registerRoutes(new DataRoutes(this.paginationHelper, this.dbManager, this.sessionManager, this.sseBroadcaster, this, this.startTime));
+    this.server.registerRoutes(new DataRoutes(
+      this.paginationHelper,
+      this.dbManager,
+      this.sessionManager,
+      this.sseBroadcaster,
+      this,
+      this.startTime,
+      (sessionDbId, source) => sessionRoutes.ensureGeneratorRunning(sessionDbId, source),
+    ));
     this.server.registerRoutes(new SettingsRoutes(this.settingsManager));
     this.server.registerRoutes(new LogsRoutes());
     this.server.registerRoutes(new MemoryRoutes(this.dbManager, 'claude-mem'));
