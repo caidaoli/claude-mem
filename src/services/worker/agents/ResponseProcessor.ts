@@ -1,7 +1,7 @@
 
 import { logger } from '../../../utils/logger.js';
 import { parseObservations, parseObservationsJson, parseSummary, parseSummaryJson, parseAgentXml, type ParsedObservation, type ParsedSummary } from '../../../sdk/parser.js';
-import { SUMMARY_MODE_MARKER, MAX_CONSECUTIVE_SUMMARY_FAILURES } from '../../../sdk/prompts.js';
+import { SUMMARY_MODE_MARKER } from '../../../sdk/prompts.js';
 import { ingestSummary } from '../http/shared.js';
 import { updateCursorContextForProject } from '../../integrations/CursorHooksInstaller.js';
 import { notifyTelegram } from '../../integrations/TelegramNotifier.js';
