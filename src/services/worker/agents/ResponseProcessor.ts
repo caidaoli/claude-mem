@@ -1,6 +1,6 @@
 
 import { logger } from '../../../utils/logger.js';
-import { parseObservations, parseObservationsJson, parseSummary, parseSummaryJson, parseAgentXml, type ParsedObservation, type ParsedSummary } from '../../../sdk/parser.js';
+import { parseObservations, parseObservationsJson, parseSummary, parseSummaryJson, type ParsedObservation, type ParsedSummary } from '../../../sdk/parser.js';
 import { SUMMARY_MODE_MARKER } from '../../../sdk/prompts.js';
 import { ingestSummary } from '../http/shared.js';
 import { updateCursorContextForProject } from '../../integrations/CursorHooksInstaller.js';
@@ -123,8 +123,10 @@ export async function processAgentResponse(
   // JSON-mode providers use an empty object/array/no-payload as a valid skip
   // sentinel, so the XML fail-fast path must not override that contract.
   // When the response contains no parseable XML and produced no observations,
-  // mark the pending messages as failed instead of confirming them — this prevents
-  // silent data loss when the LLM returns garbage (#1874).
+  // drop the queued batch — re-queueing low-signal text creates an observer
+  // loop where the same batch is retried until the restart guard fires or
+  // the provider quota is exhausted (upstream v12.6.4: drain invalid observer
+  // responses; supersedes #1874 mark-as-failed).
   const isNonXmlResponse = (
     !usesJsonParsing &&
     text.trim() &&
@@ -135,15 +137,15 @@ export async function processAgentResponse(
 
   if (isNonXmlResponse) {
     const preview = text.length > 200 ? `${text.slice(0, 200)}...` : text;
-    logger.warn('PARSER', `${agentName} returned non-XML response; marking messages as failed for retry (#1874)`, {
+    logger.warn('PARSER', `${agentName} returned non-XML/empty response — ignoring queued batch`, {
       sessionId: session.sessionDbId,
       preview,
     });
-    // Reset claimed messages back to pending so they're re-claimed on the
-    // next pass instead of leaving them in `processing` (which counts toward
-    // pendingCount, which triggers a respawn loop, which trips the restart
-    // guard, which deletes the message — silent data loss).
-    sessionManager.getPendingMessageStore().resetProcessingToPending(session.sessionDbId);
+    // Plain-text skip responses are intentionally ignored. Re-queueing them
+    // creates an observer loop where the same low-signal batch is retried
+    // until the restart guard fires or the provider quota is exhausted.
+    sessionManager.clearPendingForSession(session.sessionDbId);
+    session.earliestPendingTimestamp = null;
     return;
   }
 
