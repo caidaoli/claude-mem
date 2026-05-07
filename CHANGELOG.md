@@ -4,6 +4,40 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [12.7.2] - 2026-05-06
+
+### Fixed
+- Disable Claude Code built-in auto-memory during claude-code installs by setting `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` in Claude settings.
+- Make JSON config writes crash-safe, durable, symlink-safe, and safe for dangling symlink destinations.
+- Add regression coverage for atomic JSON writes through symlinked and dangling-symlink settings paths.
+
+## [12.7.1] - 2026-05-06
+
+## Added
+- Package the new `babysit` skill for monitoring PR checks, review comments, and unresolved review threads until a PR is merge-ready.
+
+## Verification
+- `npm run build`
+- `npm publish` completed for `claude-mem@12.7.1`
+
+## [12.7.0] - 2026-05-06
+
+## Added
+- Add native Codex hooks integration through the Codex plugin marketplace.
+- Add Codex hook payload normalization, file-context extraction, and Stop hook observation support.
+- Add Codex installer support for `npx claude-mem@latest install` with Codex CLI version guidance.
+
+## Fixed
+- Avoid slow observation flow retries by replacing the worker-side initialization wait with hook-side readiness polling.
+- Keep Codex file-context extraction from consuming boolean flags like `cat -n`.
+- Include `bun-runner.js` in hook distribution verification.
+
+## [12.6.4] - 2026-05-05
+
+## Fixed
+- Drain invalid/non-XML observer responses so pending agent observations are cleared instead of retrying forever (PR #2316 / issue #2315).
+- Correct all plugin manifest versions so Claude, Codex, OpenClaw, bundled plugin, and npm metadata agree on 12.6.4.
+
 ## [12.6.5] - 2026-05-05
 
 ### Added
