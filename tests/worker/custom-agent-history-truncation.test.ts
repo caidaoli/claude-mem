@@ -23,10 +23,10 @@ describe('CustomAgent history truncation', () => {
 
     const truncated = truncateHistory(history, { maxContextMessages: 4, maxTokens: 0 });
 
-    // Simple sliding window: keep last 4 messages, but assistant-first is trimmed
-    // So we get [U3, A3, U4] after removing the leading assistant message
+    // Head stays anchored for prompt-cache stability. The tail is sliced and
+    // aligned so it starts with the opposite role.
     expect(truncated).toHaveLength(3);
-    expect(truncated[0]).toEqual({ role: 'user', content: 'U3' });
+    expect(truncated[0]).toEqual({ role: 'user', content: 'INIT_PROMPT' });
     expect(truncated[1]).toEqual({ role: 'assistant', content: 'A3' });
     expect(truncated[2]).toEqual({ role: 'user', content: 'U4' });
   });
@@ -64,11 +64,11 @@ describe('CustomAgent history truncation', () => {
       { role: 'assistant', content: 'A2' },
     ];
 
-    // Taking last 2 would give [U1, A2], which starts with user - good
+    // With an assistant head, message-limit alignment must not return an
+    // assistant-first request to OpenAI-compatible providers.
     const truncated = truncateHistory(history, { maxContextMessages: 2, maxTokens: 0 });
 
-    expect(truncated.length).toBeGreaterThan(0);
-    expect(truncated[0].role).toBe('user');
+    expect(truncated).toEqual([{ role: 'user', content: 'U1' }]);
   });
 
   it('returns latest user message when token limit excludes all messages', () => {

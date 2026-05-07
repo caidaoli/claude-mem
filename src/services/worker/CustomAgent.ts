@@ -1485,7 +1485,36 @@ export class CustomAgent {
     }
 
     // === Anchored head + sliding tail path (no hysteresis available) ===
-    const rest = history.slice(1);
+    let rest = history.slice(1);
+    const maxTailMessages = maxContextMessages > 0
+      ? Math.max(0, maxContextMessages - 1)
+      : Number.POSITIVE_INFINITY;
+    const messageLimitApplied = Number.isFinite(maxTailMessages) && rest.length > maxTailMessages;
+
+    if (messageLimitApplied) {
+      rest = maxTailMessages === 0 ? [] : rest.slice(-maxTailMessages);
+
+      while (rest.length > 0 && rest[0].role === head.role) {
+        rest.shift();
+      }
+
+      if (rest.length === 0) {
+        if (head.role === 'user') {
+          return this.enforceTokenLimit([head], head, maxTokens);
+        }
+
+        const fallback = this.buildLatestUserFallback(history, maxTokens);
+        logger.warn('SDK', 'Sliding tail empty after message-limit alignment, falling back to latest user input only', {
+          originalMessages: history.length,
+          messageLimit: maxContextMessages,
+          fallbackOriginalTokens: fallback.originalTokens,
+          fallbackTokens: fallback.fallbackTokens,
+          fallbackWasTruncated: fallback.wasTruncated
+        });
+        return [fallback.message];
+      }
+    }
+
     const headTokens = this.estimateTokens(head.content);
     const tokenBudget = maxTokens > 0 ? maxTokens - headTokens : Number.POSITIVE_INFINITY;
 
@@ -1503,7 +1532,7 @@ export class CustomAgent {
 
     const restTokens = rest.reduce((sum, m) => sum + this.estimateTokens(m.content), 0);
     if (restTokens <= tokenBudget) {
-      return history;
+      return [head, ...rest];
     }
 
     const tail: ConversationMessage[] = [];

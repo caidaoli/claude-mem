@@ -129,6 +129,7 @@ describe('CustomAgent session behavior', () => {
     } as unknown as DatabaseManager;
 
     const sessionManager = {
+      clearPendingForSession: () => {},
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -185,6 +186,7 @@ describe('CustomAgent session behavior', () => {
     } as unknown as DatabaseManager;
 
     const sessionManager = {
+      clearPendingForSession: () => {},
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -227,6 +229,7 @@ describe('CustomAgent session behavior', () => {
     } as unknown as DatabaseManager;
 
     const sessionManager = {
+      clearPendingForSession: () => {},
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -269,6 +272,7 @@ describe('CustomAgent session behavior', () => {
     } as unknown as DatabaseManager;
 
     const sessionManager = {
+      clearPendingForSession: () => {},
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -319,6 +323,7 @@ describe('CustomAgent session behavior', () => {
     } as unknown as DatabaseManager;
 
     const sessionManager = {
+      clearPendingForSession: () => {},
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -371,6 +376,7 @@ describe('CustomAgent session behavior', () => {
     } as unknown as DatabaseManager;
 
     const sessionManager = {
+      clearPendingForSession: () => {},
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -435,6 +441,7 @@ describe('CustomAgent session behavior', () => {
     } as unknown as DatabaseManager;
 
     const sessionManager = {
+      clearPendingForSession: () => {},
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -501,6 +508,7 @@ describe('CustomAgent session behavior', () => {
     } as unknown as DatabaseManager;
 
     const sessionManager = {
+      clearPendingForSession: () => {},
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -569,6 +577,7 @@ describe('CustomAgent session behavior', () => {
     } as unknown as DatabaseManager;
 
     const sessionManager = {
+      clearPendingForSession: () => {},
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -631,6 +640,7 @@ describe('CustomAgent session behavior', () => {
     } as unknown as DatabaseManager;
 
     const sessionManager = {
+      clearPendingForSession: () => {},
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -677,6 +687,7 @@ describe('CustomAgent session behavior', () => {
     } as unknown as DatabaseManager;
 
     const sessionManager = {
+      clearPendingForSession: () => {},
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -732,6 +743,7 @@ describe('CustomAgent session behavior', () => {
     } as unknown as DatabaseManager;
 
     const sessionManager = {
+      clearPendingForSession: () => {},
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -796,73 +808,6 @@ describe('CustomAgent session behavior', () => {
     expect(mockStoreObservations).toHaveBeenCalledTimes(1);
   });
 
-  it('resets processing messages before fallback to Claude', async () => {
-    const resetToPendingMock = mock(() => true);
-    const fallbackStartSession = mock(async () => {});
-
-    const dbManager = {
-      getSessionStore: () => ({
-        getSessionById: () => ({ memory_session_id: 'mem-custom-1' }),
-        updateMemorySessionId: () => {},
-        ensureMemorySessionIdRegistered: () => {},
-        storeObservations: mock(() => ({
-          observationIds: [1],
-          summaryId: null,
-          createdAtEpoch: Date.now()
-        }))
-      }),
-      getChromaSync: () => ({
-        syncObservation: () => Promise.resolve(),
-        syncSummary: () => Promise.resolve()
-      })
-    } as unknown as DatabaseManager;
-
-    const sessionManager = {
-      getMessageIterator: async function* () {
-        yield {
-          _persistentId: 777,
-          _originalTimestamp: Date.now(),
-          type: 'observation',
-          prompt_number: 2,
-          tool_name: 'Read',
-          tool_input: { path: 'a.ts' },
-          tool_response: { ok: true },
-          cwd: '/tmp/project'
-        } as any;
-      },
-      getPendingMessageStore: () => ({
-        confirmProcessed: () => {},
-        resetToPending: resetToPendingMock
-      })
-    } as unknown as SessionManager;
-
-    const session = createSession();
-
-    let callCount = 0;
-    global.fetch = mock(() => {
-      callCount += 1;
-
-      if (callCount === 1) {
-        return Promise.resolve(new Response(JSON.stringify({
-          choices: [{ message: { content: '{"type":"discovery","title":"ok","narrative":"n","files_read":[],"files_modified":[],"concepts":[]}' } }],
-          usage: { total_tokens: 12 }
-        })));
-      }
-
-      return Promise.reject(new Error('503 upstream unavailable'));
-    });
-
-    const agent = new CustomAgent(dbManager, sessionManager);
-    agent.setFallbackAgent({ startSession: fallbackStartSession });
-
-    await agent.startSession(session);
-
-    expect(resetToPendingMock).toHaveBeenCalledTimes(1);
-    expect(resetToPendingMock).toHaveBeenCalledWith(777);
-    expect(fallbackStartSession).toHaveBeenCalledTimes(1);
-    expect(session.processingMessageIds).toEqual([]);
-  });
-
   it('injects structured language instruction into observation prompt without footer regex', async () => {
     const dbManager = {
       getSessionStore: () => ({
@@ -882,6 +827,7 @@ describe('CustomAgent session behavior', () => {
     } as unknown as DatabaseManager;
 
     const sessionManager = {
+      clearPendingForSession: () => {},
       getMessageIterator: async function* () {
         yield {
           _persistentId: 901,
@@ -926,6 +872,7 @@ describe('CustomAgent session behavior', () => {
 
   it('processes empty observation response to keep queue state consistent', async () => {
     const confirmProcessedMock = mock(() => {});
+    const clearPendingForSessionMock = mock(() => {});
     const mockStoreObservations = mock(() => ({
       observationIds: [],
       summaryId: null,
@@ -946,6 +893,7 @@ describe('CustomAgent session behavior', () => {
     } as unknown as DatabaseManager;
 
     const sessionManager = {
+      clearPendingForSession: clearPendingForSessionMock,
       getMessageIterator: async function* () {
         yield {
           _persistentId: 333,
@@ -989,7 +937,8 @@ describe('CustomAgent session behavior', () => {
     // Second call (empty observation) should produce empty observations array
     const secondCallArgs = mockStoreObservations.mock.calls[1];
     expect(secondCallArgs[2]).toEqual([]); // observations parameter is empty array
-    expect(confirmProcessedMock).toHaveBeenCalledWith(333);
+    expect(clearPendingForSessionMock).toHaveBeenCalledWith(session.sessionDbId);
+    expect(confirmProcessedMock).not.toHaveBeenCalled();
     expect(session.processingMessageIds).toEqual([]);
     expect(session.earliestPendingTimestamp).toBeNull();
   });
@@ -1038,6 +987,7 @@ describe('CustomAgent session behavior', () => {
     } as unknown as DatabaseManager;
 
     const sessionManager = {
+      clearPendingForSession: () => {},
       getMessageIterator: async function* () {
         yield {
           _persistentId: 902,
@@ -1102,6 +1052,7 @@ describe('CustomAgent session behavior', () => {
     } as unknown as DatabaseManager;
 
     const sessionManager = {
+      clearPendingForSession: () => {},
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -1137,6 +1088,7 @@ describe('CustomAgent session behavior', () => {
     } as unknown as DatabaseManager;
 
     const sessionManager = {
+      clearPendingForSession: () => {},
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -1192,6 +1144,7 @@ describe('CustomAgent session behavior', () => {
     } as unknown as DatabaseManager;
 
     const sessionManager = {
+      clearPendingForSession: () => {},
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -1260,6 +1213,7 @@ describe('CustomAgent session behavior', () => {
     } as unknown as DatabaseManager;
 
     const sessionManager = {
+      clearPendingForSession: () => {},
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
