@@ -35,7 +35,7 @@ function getRuntimeScriptDir(): string {
 // SettingsDefaultsManager.get() handles env > default. For settings file
 // support, we do a one-time synchronous read of the default settings path
 // to check if the user configured a custom DATA_DIR there.
-function resolveDataDir(): string {
+export function resolveDataDir(): string {
   if (process.env.CLAUDE_MEM_DATA_DIR) {
     return process.env.CLAUDE_MEM_DATA_DIR;
   }
