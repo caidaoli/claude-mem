@@ -272,17 +272,17 @@ export class DataRoutes extends BaseRouteHandler {
     res.json(store.getProjectCatalog());
   });
 
-  private handleGetProcessingStatus = this.wrapHandler((req: Request, res: Response): void => {
-    const isProcessing = this.sessionManager.isAnySessionProcessing();
-    const queueDepth = this.sessionManager.getTotalActiveWork(); 
+  private handleGetProcessingStatus = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
+    const isProcessing = await this.sessionManager.isAnySessionProcessing();
+    const queueDepth = await this.sessionManager.getTotalActiveWork(); 
     res.json({ isProcessing, queueDepth });
   });
 
-  private handleSetProcessing = this.wrapHandler((req: Request, res: Response): void => {
+  private handleSetProcessing = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
     let sessionsStarted = 0;
 
     if (this.ensureGeneratorRunning) {
-      const pendingSessionIds = this.sessionManager.getPendingMessageStore().getSessionsWithPendingMessages();
+      const pendingSessionIds = await this.sessionManager.getPendingMessageStore().getSessionsWithPendingMessages();
 
       for (const sessionDbId of pendingSessionIds) {
         const session = this.sessionManager.getSession(sessionDbId)
@@ -295,8 +295,8 @@ export class DataRoutes extends BaseRouteHandler {
       }
     }
 
-    const isProcessing = this.sessionManager.isAnySessionProcessing();
-    const queueDepth = this.sessionManager.getTotalQueueDepth();
+    const isProcessing = await this.sessionManager.isAnySessionProcessing();
+    const queueDepth = await this.sessionManager.getTotalQueueDepth();
     const activeSessions = this.sessionManager.getActiveSessionCount();
 
     res.json({ status: 'ok', isProcessing, queueDepth, activeSessions, sessionsStarted });

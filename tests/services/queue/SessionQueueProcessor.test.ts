@@ -17,7 +17,9 @@ function createMockStore(): PendingMessageStore {
       tool_response: msg.tool_response ? JSON.parse(msg.tool_response) : undefined,
       prompt_number: msg.prompt_number || undefined,
       cwd: msg.cwd || undefined,
-      last_assistant_message: msg.last_assistant_message || undefined
+      last_assistant_message: msg.last_assistant_message || undefined,
+      agentId: msg.agent_id ?? undefined,
+      agentType: msg.agent_type ?? undefined
     }))
   } as unknown as PendingMessageStore;
 }
@@ -35,10 +37,9 @@ function createMockMessage(overrides: Partial<PersistentPendingMessage> = {}): P
     last_assistant_message: null,
     prompt_number: 1,
     status: 'pending',
-    retry_count: 0,
     created_at_epoch: Date.now(),
-    started_processing_at_epoch: null,
-    completed_at_epoch: null,
+    agent_type: null,
+    agent_id: null,
     ...overrides
   };
 }
@@ -71,21 +72,20 @@ describe('SessionQueueProcessor', () => {
         const options: CreateIteratorOptions = {
           sessionDbId: 123,
           signal: abortController.signal,
-          onIdleTimeout
+          onIdleTimeout,
+          idleTimeoutMs: SHORT_TIMEOUT_MS
         };
 
         const iterator = processor.createIterator(options);
 
-        const startTime = Date.now();
         const results: any[] = [];
-
-        setTimeout(() => abortController.abort(), 100);
 
         for await (const message of iterator) {
           results.push(message);
         }
 
         expect(results).toHaveLength(0);
+        expect(onIdleTimeout).toHaveBeenCalled();
       });
 
       it('should invoke onIdleTimeout callback when idle timeout occurs', async () => {
@@ -97,12 +97,11 @@ describe('SessionQueueProcessor', () => {
         const options: CreateIteratorOptions = {
           sessionDbId: 123,
           signal: abortController.signal,
-          onIdleTimeout
+          onIdleTimeout,
+          idleTimeoutMs: 50
         };
 
         const iterator = processor.createIterator(options);
-
-        setTimeout(() => abortController.abort(), 50);
 
         const results: any[] = [];
         for await (const message of iterator) {
@@ -127,13 +126,14 @@ describe('SessionQueueProcessor', () => {
         const options: CreateIteratorOptions = {
           sessionDbId: 123,
           signal: abortController.signal,
-          onIdleTimeout
+          onIdleTimeout,
+          idleTimeoutMs: 50
         };
 
         const iterator = processor.createIterator(options);
         const results: any[] = [];
 
-        setTimeout(() => abortController.abort(), 100);
+        setTimeout(() => abortController.abort(), 25);
 
         for await (const message of iterator) {
           results.push(message);
@@ -398,7 +398,7 @@ describe('SessionQueueProcessor', () => {
     });
 
     describe('error handling', () => {
-      it('should continue after store error with backoff', async () => {
+      it('should retry after a transient store claim error', async () => {
         let callCount = 0;
 
         (store.claimNextMessage as any) = mock(() => {
@@ -406,29 +406,22 @@ describe('SessionQueueProcessor', () => {
           if (callCount === 1) {
             throw new Error('Database error');
           }
-          if (callCount === 2) {
-            return createMockMessage({ id: 1 });
-          }
-          return null;
+          return createMockMessage({ id: 7 });
         });
 
         const options: CreateIteratorOptions = {
           sessionDbId: 123,
-          signal: abortController.signal
+          signal: abortController.signal,
+          claimRetryDelayMs: 1
         };
 
         const iterator = processor.createIterator(options);
-        const results: any[] = [];
+        const result = await iterator.next();
+        abortController.abort();
 
-        setTimeout(() => abortController.abort(), 1500);
-
-        for await (const message of iterator) {
-          results.push(message);
-          break; 
-        }
-
-        expect(results).toHaveLength(1);
-        expect(callCount).toBeGreaterThanOrEqual(2);
+        expect(result.done).toBe(false);
+        expect(result.value._persistentId).toBe(7);
+        expect(callCount).toBe(2);
       });
 
       it('should exit cleanly if aborted during error backoff', async () => {

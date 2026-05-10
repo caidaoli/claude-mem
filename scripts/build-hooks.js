@@ -12,6 +12,11 @@ const WORKER_SERVICE = {
   source: 'src/services/worker-service.ts'
 };
 
+const SERVER_BETA_SERVICE = {
+  name: 'server-beta-service',
+  source: 'src/server/runtime/ServerBetaService.ts'
+};
+
 const MCP_SERVER = {
   name: 'mcp-server',
   source: 'src/servers/mcp-server.ts'
@@ -139,6 +144,7 @@ async function buildHooks() {
       logLevel: 'error', // Suppress warnings (import.meta warning is benign)
       external: [
         'bun:sqlite',
+        'zod',
         'cohere-ai',
         'ollama',
         '@chroma-core/default-embed',
@@ -146,6 +152,44 @@ async function buildHooks() {
         // Must be external so ChromaSync and default-embed share the same module instance
         // (bundling creates a separate copy where env.cacheDir has no effect on default-embed)
         '@huggingface/transformers'
+      ],
+      define: {
+        '__DEFAULT_PACKAGE_VERSION__': `"${version}"`,
+        // Polyfill import.meta.url for ESM deps bundled into CJS output.
+        // @anthropic-ai/claude-agent-sdk's *.mjs files use createRequire(import.meta.url)
+        // and `new URL(rel, import.meta.url)`. We map import.meta.url to a file:// URL
+        // (not the raw __filename path) so URL construction preserves its semantics.
+        'import.meta.url': '__IMPORT_META_URL__'
+      },
+      banner: {
+        js: [
+          '#!/usr/bin/env bun',
+          'var __filename = __filename || require("node:path").resolve(process.argv[1] || "");',
+          'var __dirname = __dirname || require("node:path").dirname(__filename);',
+          'var __IMPORT_META_URL__ = require("node:url").pathToFileURL(__filename).href;'
+        ].join('\n')
+      }
+    });
+
+    stripHardcodedDirname(`${hooksDir}/${WORKER_SERVICE.name}.cjs`);
+
+    fs.chmodSync(`${hooksDir}/${WORKER_SERVICE.name}.cjs`, 0o755);
+    const workerStats = fs.statSync(`${hooksDir}/${WORKER_SERVICE.name}.cjs`);
+    console.log(`✓ worker-service built (${(workerStats.size / 1024).toFixed(2)} KB)`);
+
+    console.log(`\n🔧 Building server beta service...`);
+    await build({
+      entryPoints: [SERVER_BETA_SERVICE.source],
+      bundle: true,
+      platform: 'node',
+      target: 'node18',
+      format: 'cjs',
+      outfile: `${hooksDir}/${SERVER_BETA_SERVICE.name}.cjs`,
+      minify: true,
+      logLevel: 'error',
+      external: [
+        'bun:sqlite',
+        'zod',
       ],
       define: {
         '__DEFAULT_PACKAGE_VERSION__': `"${version}"`
@@ -159,11 +203,11 @@ async function buildHooks() {
       }
     });
 
-    stripHardcodedDirname(`${hooksDir}/${WORKER_SERVICE.name}.cjs`);
+    stripHardcodedDirname(`${hooksDir}/${SERVER_BETA_SERVICE.name}.cjs`);
 
-    fs.chmodSync(`${hooksDir}/${WORKER_SERVICE.name}.cjs`, 0o755);
-    const workerStats = fs.statSync(`${hooksDir}/${WORKER_SERVICE.name}.cjs`);
-    console.log(`✓ worker-service built (${(workerStats.size / 1024).toFixed(2)} KB)`);
+    fs.chmodSync(`${hooksDir}/${SERVER_BETA_SERVICE.name}.cjs`, 0o755);
+    const serverBetaStats = fs.statSync(`${hooksDir}/${SERVER_BETA_SERVICE.name}.cjs`);
+    console.log(`✓ server-beta-service built (${(serverBetaStats.size / 1024).toFixed(2)} KB)`);
 
     console.log(`\n🔧 Building MCP server...`);
     await build({
@@ -409,6 +453,7 @@ async function buildHooks() {
     console.log('\n✅ All build targets compiled successfully!');
     console.log(`   Output: ${hooksDir}/`);
     console.log(`   - Worker: worker-service.cjs`);
+    console.log(`   - Server beta: server-beta-service.cjs`);
     console.log(`   - MCP Server: mcp-server.cjs`);
     console.log(`   - Context Generator: context-generator.cjs`);
     console.log(`   Output: ${npxCliOutDir}/`);

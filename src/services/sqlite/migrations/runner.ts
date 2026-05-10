@@ -8,6 +8,7 @@ import {
 } from '../../../types/database.js';
 import { DEFAULT_PLATFORM_SOURCE } from '../../../shared/platform-source.js';
 import { allowCompleteMessageType } from './m22-complete-message-type.js';
+import { ensureServerStorageSchema, SERVER_STORAGE_SCHEMA_VERSION } from '../../../storage/sqlite/schema.js';
 
 export class MigrationRunner {
   constructor(private db: Database) {}
@@ -35,6 +36,7 @@ export class MigrationRunner {
     this.addObservationsUniqueContentHashIndex();
     this.addObservationsMetadataColumn();
     this.allowCompleteMessageTypeInPendingMessages();
+    this.createServerOwnedTables();
   }
 
   private initializeSchema(): void {
@@ -423,10 +425,8 @@ export class MigrationRunner {
         last_user_message TEXT,
         last_assistant_message TEXT,
         prompt_number INTEGER,
-        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'processing', 'processed', 'failed')),
-        retry_count INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'processing')),
         created_at_epoch INTEGER NOT NULL,
-        completed_at_epoch INTEGER,
         FOREIGN KEY (session_db_id) REFERENCES sdk_sessions(id) ON DELETE CASCADE
       )
     `);
@@ -853,12 +853,8 @@ export class MigrationRunner {
           last_assistant_message   TEXT,
           prompt_number            INTEGER,
           status                   TEXT    NOT NULL DEFAULT 'pending'
-                                           CHECK(status IN ('pending', 'processing', 'processed', 'failed')),
-          retry_count              INTEGER NOT NULL DEFAULT 0,
+                                           CHECK(status IN ('pending', 'processing')),
           created_at_epoch         INTEGER NOT NULL,
-          failed_at_epoch          INTEGER,
-          completed_at_epoch       INTEGER,
-          worker_pid               INTEGER,
           agent_type               TEXT,
           agent_id                 TEXT,
           FOREIGN KEY (session_db_id) REFERENCES sdk_sessions(id) ON DELETE CASCADE
@@ -869,8 +865,7 @@ export class MigrationRunner {
         INSERT INTO pending_messages_new (
           id, session_db_id, content_session_id, tool_use_id, message_type,
           tool_name, tool_input, tool_response, cwd, last_user_message,
-          last_assistant_message, prompt_number, status, retry_count,
-          created_at_epoch, failed_at_epoch, completed_at_epoch, worker_pid,
+          last_assistant_message, prompt_number, status, created_at_epoch,
           agent_type, agent_id
         )
         SELECT
@@ -879,22 +874,19 @@ export class MigrationRunner {
           content_session_id,
           ${has('tool_use_id') ? 'tool_use_id' : 'NULL'},
           message_type,
-          tool_name,
-          tool_input,
-          tool_response,
-          cwd,
+          ${has('tool_name') ? 'tool_name' : 'NULL'},
+          ${has('tool_input') ? 'tool_input' : 'NULL'},
+          ${has('tool_response') ? 'tool_response' : 'NULL'},
+          ${has('cwd') ? 'cwd' : 'NULL'},
           ${has('last_user_message') ? 'last_user_message' : 'NULL'},
           ${has('last_assistant_message') ? 'last_assistant_message' : 'NULL'},
           ${has('prompt_number') ? 'prompt_number' : 'NULL'},
-          status,
-          retry_count,
+          CASE WHEN status = 'processing' THEN 'processing' ELSE 'pending' END,
           created_at_epoch,
-          ${has('failed_at_epoch') ? 'failed_at_epoch' : 'NULL'},
-          ${has('completed_at_epoch') ? 'completed_at_epoch' : 'NULL'},
-          NULL,
           ${has('agent_type') ? 'agent_type' : 'NULL'},
           ${has('agent_id') ? 'agent_id' : 'NULL'}
         FROM pending_messages
+        WHERE status IN ('pending', 'processing')
       `);
 
       this.db.run('DROP TABLE pending_messages');
@@ -903,7 +895,6 @@ export class MigrationRunner {
       this.db.run('CREATE INDEX IF NOT EXISTS idx_pending_messages_session        ON pending_messages(session_db_id)');
       this.db.run('CREATE INDEX IF NOT EXISTS idx_pending_messages_status         ON pending_messages(status)');
       this.db.run('CREATE INDEX IF NOT EXISTS idx_pending_messages_claude_session ON pending_messages(content_session_id)');
-      this.db.run('CREATE INDEX IF NOT EXISTS idx_pending_messages_worker_pid     ON pending_messages(worker_pid)');
 
       this.db.run(`
         DELETE FROM pending_messages
@@ -990,5 +981,13 @@ export class MigrationRunner {
   /** Migration 31: Allow 'complete' control messages in pending_messages */
   private allowCompleteMessageTypeInPendingMessages(): void {
     allowCompleteMessageType(this.db);
+  }
+
+  private createServerOwnedTables(): void {
+    ensureServerStorageSchema(this.db);
+    this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(
+      SERVER_STORAGE_SCHEMA_VERSION,
+      new Date().toISOString()
+    );
   }
 }

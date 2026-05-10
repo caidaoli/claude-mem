@@ -61,10 +61,13 @@ export class PendingMessageStore {
   private maxRetries: number;
   private workerPid: number;
   private getLiveWorkerPids: LiveWorkerPidsProvider;
+  private onMutate?: () => void;
 
   /**
    * @param db                  SQLite database
-   * @param maxRetries          Per-message retry ceiling for transient SDK failures (default 3)
+   * @param onMutateOrMaxRetries Either an `onMutate` callback (invoked after every queue
+   *                             mutation so subscribers can react to enqueue/claim/confirm)
+   *                             or a numeric `maxRetries` ceiling (default 3) for legacy callers.
    * @param workerPid           PID of the worker that owns this store; stamped into worker_pid on claim.
    *                            Defaults to process.pid so single-process deployments need no extra wiring.
    * @param getLiveWorkerPids   Provider for the set of all currently-live worker PIDs.
@@ -73,12 +76,17 @@ export class PendingMessageStore {
    */
   constructor(
     db: Database,
-    maxRetries: number = 3,
+    onMutateOrMaxRetries?: number | (() => void),
     workerPid: number = process.pid,
     getLiveWorkerPids?: LiveWorkerPidsProvider
   ) {
     this.db = db;
-    this.maxRetries = maxRetries;
+    if (typeof onMutateOrMaxRetries === 'function') {
+      this.onMutate = onMutateOrMaxRetries;
+      this.maxRetries = 3;
+    } else {
+      this.maxRetries = onMutateOrMaxRetries ?? 3;
+    }
     this.workerPid = workerPid;
     this.getLiveWorkerPids = getLiveWorkerPids ?? (() => [this.workerPid]);
   }
@@ -128,7 +136,11 @@ export class PendingMessageStore {
       message.agentId ?? null
     );
 
-    return result.lastInsertRowid as number;
+    if (result.changes > 0) {
+      this.onMutate?.();
+      return result.lastInsertRowid as number;
+    }
+    return 0;
   }
 
 /**
@@ -181,6 +193,7 @@ export class PendingMessageStore {
       logger.info('QUEUE', `CLAIMED | sessionDbId=${sessionDbId} | messageId=${claimed.id} | type=${claimed.message_type} | workerPid=${this.workerPid}`, {
         sessionId: sessionDbId
       });
+      this.onMutate?.();
     }
     return claimed;
   }
@@ -196,13 +209,14 @@ export class PendingMessageStore {
    * CRITICAL: Only call this AFTER the observation/summary has been stored to DB.
    * This prevents message loss on generator crash.
    */
-  confirmProcessed(messageId: number): boolean {
+  confirmProcessed(messageId: number): number {
     const stmt = this.db.prepare('DELETE FROM pending_messages WHERE id = ?');
     const result = stmt.run(messageId);
     if (result.changes > 0) {
       logger.debug('QUEUE', `CONFIRMED | messageId=${messageId} | deleted from queue`);
+      this.onMutate?.();
     }
-    return result.changes > 0;
+    return result.changes;
   }
 
   /**
@@ -370,6 +384,15 @@ export class PendingMessageStore {
       WHERE session_db_id = ? AND status IN ('pending', 'processing')
     `);
     const result = stmt.get(sessionDbId) as { count: number };
+    return result.count;
+  }
+
+  getTotalQueueDepth(): number {
+    const stmt = this.db.prepare(`
+      SELECT COUNT(*) as count FROM pending_messages
+      WHERE status IN ('pending', 'processing')
+    `);
+    const result = stmt.get() as { count: number };
     return result.count;
   }
 

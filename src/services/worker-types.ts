@@ -22,6 +22,7 @@ export interface ActiveSession {
   cumulativeInputTokens: number;   // Track input tokens for discovery cost
   cumulativeOutputTokens: number;  // Track output tokens for discovery cost
   earliestPendingTimestamp: number | null;  // Original timestamp of earliest pending message (for accurate observation timestamps)
+  claimedMessageIds: number[];
   conversationHistory: ConversationMessage[];  // Shared conversation history for provider switching
   currentProvider: 'claude' | 'gemini' | 'openrouter' | 'custom' | null;  // Track which provider is currently running
   consecutiveRestarts: number;  // DEPRECATED: use restartGuard. Kept for logging compat.

@@ -144,7 +144,7 @@ export async function processAgentResponse(
     // Plain-text skip responses are intentionally ignored. Re-queueing them
     // creates an observer loop where the same low-signal batch is retried
     // until the restart guard fires or the provider quota is exhausted.
-    sessionManager.clearPendingForSession(session.sessionDbId);
+    await sessionManager.confirmClaimedMessages(session.sessionDbId);
     session.earliestPendingTimestamp = null;
     return;
   }
@@ -156,7 +156,7 @@ export async function processAgentResponse(
     // Reset any claimed-but-undelivered messages back to pending so they don't
     // count as "in progress" and trigger a respawn loop while we wait for the
     // memory session id to appear. The next generator pass will re-claim them.
-    sessionManager.getPendingMessageStore().resetProcessingToPending(session.sessionDbId);
+    await sessionManager.resetProcessingToPending(session.sessionDbId);
     return;
   }
 
@@ -206,7 +206,7 @@ export async function processAgentResponse(
   // (<skip_summary/>) are an explicit bypass and still notify.
   if (summary && (summary.skipped || session.lastSummaryStored)) {
     const messageId = -1;
-    ingestSummary({
+    await ingestSummary({
       kind: 'parsed',
       sessionDbId: session.sessionDbId,
       messageId,
@@ -220,9 +220,10 @@ export async function processAgentResponse(
     });
   }
 
-  sessionManager.clearPendingForSession(session.sessionDbId);
+  await sessionManager.confirmClaimedMessages(session.sessionDbId);
   session.earliestPendingTimestamp = null;
   session.restartGuard?.recordSuccess();
+  worker?.broadcastProcessingStatus?.();
 
   void notifyTelegram({
     observations: labeledObservations,
@@ -294,6 +295,14 @@ async function syncAndBroadcastObservations(
   for (const obsId of uniqueObservationIds) {
     const observationIndex = result.observationIds.indexOf(obsId);
     const obs = observations[observationIndex];
+    if (!obs) {
+      logger.warn('DB', `${agentName} storage returned observation id without matching parsed observation`, {
+        sessionId: session.sessionDbId,
+        obsId,
+        observationIndex
+      });
+      continue;
+    }
     const chromaStart = Date.now();
 
     dbManager.getChromaSync()?.syncObservation(

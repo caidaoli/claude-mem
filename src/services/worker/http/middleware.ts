@@ -6,26 +6,16 @@ import { getPackageRoot } from '../../../shared/paths.js';
 import { logger } from '../../../utils/logger.js';
 
 export function createMiddleware(
-  summarizeRequestBody: (method: string, path: string, body: any) => string
+  summarizeRequestBody: (method: string, path: string, body: any) => string,
+  options: { includeCors?: boolean } = {}
 ): RequestHandler[] {
   const middlewares: RequestHandler[] = [];
 
-  middlewares.push(express.json({ limit: '5mb' }));
+  if (options.includeCors !== false) {
+    middlewares.push(createCorsMiddleware());
+  }
 
-  middlewares.push(cors({
-    origin: (origin, callback) => {
-      if (!origin ||
-          origin.startsWith('http://localhost:') ||
-          origin.startsWith('http://127.0.0.1:')) {
-        callback(null, true);
-      } else {
-        callback(new Error('CORS not allowed'));
-      }
-    },
-    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'X-Requested-With'],
-    credentials: false
-  }));
+  middlewares.push(express.json({ limit: '5mb' }));
 
   middlewares.push((req: Request, res: Response, next: NextFunction) => {
     // Skip logging for static assets, health checks, SSE stream, and polling endpoints
@@ -58,6 +48,23 @@ export function createMiddleware(
   middlewares.push(express.static(uiDir));
 
   return middlewares;
+}
+
+export function createCorsMiddleware(): RequestHandler {
+  return cors({
+    origin: (origin, callback) => {
+      if (!origin ||
+          origin.startsWith('http://localhost:') ||
+          origin.startsWith('http://127.0.0.1:')) {
+        callback(null, true);
+      } else {
+        callback(new Error('CORS not allowed'));
+      }
+    },
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    credentials: false
+  });
 }
 
 export function requireLocalhost(req: Request, res: Response, next: NextFunction): void {

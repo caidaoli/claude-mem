@@ -106,28 +106,29 @@ export class ViewerRoutes extends BaseRouteHandler {
       this.sseBroadcaster.removeClient(res);
     });
 
-    // Send initial_load event with project/source catalog
-    try {
-      const projectCatalog = this.dbManager.getSessionStore().getProjectCatalog();
-      this.sseBroadcaster.broadcast({
-        type: 'initial_load',
-        projects: projectCatalog.projects,
-        sources: projectCatalog.sources,
-        projectsBySource: projectCatalog.projectsBySource,
-        timestamp: Date.now()
-      });
+    void (async () => {
+      try {
+        const projectCatalog = this.dbManager.getSessionStore().getProjectCatalog();
+        this.sseBroadcaster.broadcast({
+          type: 'initial_load',
+          projects: projectCatalog.projects,
+          sources: projectCatalog.sources,
+          projectsBySource: projectCatalog.projectsBySource,
+          timestamp: Date.now()
+        });
 
-      // Send initial processing status (based on queue depth + active generators)
-      const isProcessing = this.sessionManager.isAnySessionProcessing();
-      const queueDepth = this.sessionManager.getTotalActiveWork(); // Includes queued + actively processing
-      this.sseBroadcaster.broadcast({
-        type: 'processing_status',
-        isProcessing,
-        queueDepth
-      });
-    } catch (error) {
-      // Log error but don't close connection - client will reconnect if needed
-      logger.warn('VIEWER', 'Error sending initial SSE events', { error: (error as Error).message });
-    }
+        const isProcessing = await this.sessionManager.isAnySessionProcessing();
+        const queueDepth = await this.sessionManager.getTotalActiveWork();
+        this.sseBroadcaster.broadcast({
+          type: 'processing_status',
+          isProcessing,
+          queueDepth
+        });
+      } catch (error) {
+        logger.warn('VIEWER', 'Error sending initial SSE events', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
   }
 }
