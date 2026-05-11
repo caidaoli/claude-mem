@@ -18,6 +18,23 @@ export interface ObservationQueueEngine {
   close(): Promise<void>;
 }
 
+// Phase 12 — `lanes` exposes per-queue counts (waiting/active/completed/
+// failed/delayed/stalled) so deploy probes can monitor saturation per lane.
+// `unavailable: true` means the sample failed; the health endpoint MUST NOT
+// 503 just because counts are stale.
+export interface ObservationQueueHealthLaneSnapshot {
+  kind: string;
+  name: string;
+  waiting: number;
+  active: number;
+  completed: number;
+  failed: number;
+  delayed: number;
+  stalled: number;
+  unavailable: boolean;
+  unavailableReason?: string;
+}
+
 export interface ObservationQueueHealth {
   engine: 'bullmq';
   redis: {
@@ -28,6 +45,7 @@ export interface ObservationQueueHealth {
     prefix: string;
     error?: string;
   };
+  lanes?: ObservationQueueHealthLaneSnapshot[];
 }
 
 export interface ObservationQueueInspection {
