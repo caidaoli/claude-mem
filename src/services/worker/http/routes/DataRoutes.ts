@@ -17,6 +17,7 @@ import { normalizePlatformSource } from '../../../../shared/platform-source.js';
 import { getObservationsByFilePath } from '../../../sqlite/observations/get.js';
 import { getFirstObservationCreatedAt } from '../../../sqlite/observations/recent.js';
 import { getUptimeSeconds } from '../../../../shared/uptime.js';
+import { startPendingSessionGenerators } from '../../pending-session-recovery.js';
 
 const integerArrayLike = z.preprocess((value) => {
   if (Array.isArray(value)) return value;
@@ -282,17 +283,11 @@ export class DataRoutes extends BaseRouteHandler {
     let sessionsStarted = 0;
 
     if (this.ensureGeneratorRunning) {
-      const pendingSessionIds = await this.sessionManager.getPendingMessageStore().getSessionsWithPendingMessages();
-
-      for (const sessionDbId of pendingSessionIds) {
-        const session = this.sessionManager.getSession(sessionDbId)
-          ?? this.sessionManager.initializeSession(sessionDbId);
-
-        if (!session.generatorPromise) {
-          this.ensureGeneratorRunning(sessionDbId, 'manual-processing');
-          sessionsStarted++;
-        }
-      }
+      sessionsStarted = await startPendingSessionGenerators(
+        this.sessionManager,
+        this.ensureGeneratorRunning,
+        'manual-processing',
+      );
     }
 
     const isProcessing = await this.sessionManager.isAnySessionProcessing();

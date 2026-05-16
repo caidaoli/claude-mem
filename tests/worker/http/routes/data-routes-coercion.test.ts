@@ -25,7 +25,7 @@ function createMockReqRes(body: any): { req: Partial<Request>; res: Partial<Resp
   };
 }
 
-function captureChain(mockApp: any, targetPath: string): (req: Request, res: Response) => void {
+function captureChain(mockApp: any, targetPath: string): (req: Request, res: Response) => void | Promise<void> {
   let middleware: (req: Request, res: Response, next: () => void) => void;
   let handler: (req: Request, res: Response) => void;
   mockApp.post = mock((path: string, ...rest: any[]) => {
@@ -46,7 +46,7 @@ function captureChain(mockApp: any, targetPath: string): (req: Request, res: Res
     middleware(req, res, () => {
       nextCalled = true;
     });
-    if (nextCalled) handler(req, res);
+    if (nextCalled) return handler(req, res);
   };
 }
 
@@ -149,7 +149,7 @@ describe('DataRoutes Type Coercion', () => {
   });
 
   describe('handleSetProcessing', () => {
-    it('initializes pending sessions and starts their generators', () => {
+    it('initializes pending sessions and starts their generators', async () => {
       const initializeSession = mock((sessionDbId: number) => ({
         sessionDbId,
         generatorPromise: null,
@@ -192,6 +192,7 @@ describe('DataRoutes Type Coercion', () => {
 
       const { req, res, jsonSpy } = createMockReqRes({});
       handler(req as Request, res as Response);
+      await new Promise(resolve => setTimeout(resolve, 0));
 
       expect(initializeSession).toHaveBeenCalledWith(125);
       expect(ensureGeneratorRunning).toHaveBeenCalledWith(125, 'manual-processing');

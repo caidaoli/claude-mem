@@ -18,6 +18,7 @@ import { sanitizeEnv } from '../supervisor/env-sanitizer.js';
 
 import { ensureWorkerStarted as ensureWorkerStartedShared, type WorkerStartResult } from './worker-spawner.js';
 import { handleGeneratorExit } from './worker/session/GeneratorExitHandler.js';
+import { startPendingSessionGenerators } from './worker/pending-session-recovery.js';
 
 export { isPluginDisabledInClaudeSettings } from '../shared/plugin-state.js';
 import { isPluginDisabledInClaudeSettings } from '../shared/plugin-state.js';
@@ -411,6 +412,8 @@ export class WorkerService implements WorkerRef {
       this.resolveInitialization();
       logger.info('SYSTEM', 'Core initialization complete (DB + search ready)');
 
+      await this.startPendingSessionRecovery();
+
       await this.startTranscriptWatcher(settings);
 
       if (this.chromaMcpManager) {
@@ -431,6 +434,18 @@ export class WorkerService implements WorkerRef {
       return;
     } catch (error) {
       logger.error('SYSTEM', 'Background initialization failed', {}, error instanceof Error ? error : undefined);
+    }
+  }
+
+  private async startPendingSessionRecovery(): Promise<void> {
+    const sessionsStarted = await startPendingSessionGenerators(
+      this.sessionManager,
+      (sessionDbId, source) => this.startSessionProcessor(this.sessionManager.getSession(sessionDbId), source),
+      'startup-pending-recovery',
+    );
+
+    if (sessionsStarted > 0) {
+      logger.info('SYSTEM', 'Started pending session generators on startup', { sessionsStarted });
     }
   }
 
