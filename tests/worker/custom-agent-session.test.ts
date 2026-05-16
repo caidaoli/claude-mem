@@ -130,6 +130,7 @@ describe('CustomAgent session behavior', () => {
 
     const sessionManager = {
       clearPendingForSession: () => {},
+      confirmClaimedMessages: () => Promise.resolve(),
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -187,6 +188,7 @@ describe('CustomAgent session behavior', () => {
 
     const sessionManager = {
       clearPendingForSession: () => {},
+      confirmClaimedMessages: () => Promise.resolve(),
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -230,6 +232,7 @@ describe('CustomAgent session behavior', () => {
 
     const sessionManager = {
       clearPendingForSession: () => {},
+      confirmClaimedMessages: () => Promise.resolve(),
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -273,6 +276,7 @@ describe('CustomAgent session behavior', () => {
 
     const sessionManager = {
       clearPendingForSession: () => {},
+      confirmClaimedMessages: () => Promise.resolve(),
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -289,6 +293,58 @@ describe('CustomAgent session behavior', () => {
 
     const requestBody = JSON.parse((global.fetch as any).mock.calls[0][1].body as string);
     expect(requestBody.reasoning_effort).toBe('low');
+  });
+
+  it('disables thinking for mimo models in OpenAI requests', async () => {
+    loadFromFileSpy.mockImplementation(() => ({
+      ...SettingsDefaultsManager.getAllDefaults(),
+      CLAUDE_MEM_CUSTOM_API_URL: 'https://custom.example.com',
+      CLAUDE_MEM_CUSTOM_API_KEY: 'test-key',
+      CLAUDE_MEM_CUSTOM_MODEL: 'mimo-v2.5',
+      CLAUDE_MEM_CUSTOM_PROTOCOL: 'openai',
+      CLAUDE_MEM_CUSTOM_STREAMING: 'false',
+      CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES: '0',
+      CLAUDE_MEM_CUSTOM_MAX_TOKENS: '0',
+      CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT: '0',
+      CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT: '0'
+    }));
+
+    const dbManager = {
+      getSessionStore: () => ({
+        getSessionById: () => ({ memory_session_id: 'mem-custom-1' }),
+        updateMemorySessionId: () => {},
+        ensureMemorySessionIdRegistered: () => {},
+        storeObservations: mock(() => ({
+          observationIds: [1],
+          summaryId: null,
+          createdAtEpoch: Date.now()
+        }))
+      }),
+      getChromaSync: () => ({
+        syncObservation: () => Promise.resolve(),
+        syncSummary: () => Promise.resolve()
+      })
+    } as unknown as DatabaseManager;
+
+    const sessionManager = {
+      clearPendingForSession: () => {},
+      confirmClaimedMessages: () => Promise.resolve(),
+      getMessageIterator: async function* () { yield* []; },
+      getPendingMessageStore: () => ({
+        confirmProcessed: () => {}
+      })
+    } as unknown as SessionManager;
+
+    global.fetch = mock(() => Promise.resolve(new Response(JSON.stringify({
+      choices: [{ message: { content: '{"type":"discovery","title":"ok","narrative":"n","files_read":[],"files_modified":[],"concepts":[]}' } }],
+      usage: { total_tokens: 12 }
+    }))));
+
+    const agent = new CustomAgent(dbManager, sessionManager);
+    await agent.startSession(createSession());
+
+    const requestBody = JSON.parse((global.fetch as any).mock.calls[0][1].body as string);
+    expect(requestBody.thinking).toEqual({ type: 'disabled' });
   });
 
   it('does not set reasoning effort for non-gpt models', async () => {
@@ -324,6 +380,7 @@ describe('CustomAgent session behavior', () => {
 
     const sessionManager = {
       clearPendingForSession: () => {},
+      confirmClaimedMessages: () => Promise.resolve(),
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -377,6 +434,7 @@ describe('CustomAgent session behavior', () => {
 
     const sessionManager = {
       clearPendingForSession: () => {},
+      confirmClaimedMessages: () => Promise.resolve(),
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -442,6 +500,7 @@ describe('CustomAgent session behavior', () => {
 
     const sessionManager = {
       clearPendingForSession: () => {},
+      confirmClaimedMessages: () => Promise.resolve(),
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -509,6 +568,7 @@ describe('CustomAgent session behavior', () => {
 
     const sessionManager = {
       clearPendingForSession: () => {},
+      confirmClaimedMessages: () => Promise.resolve(),
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -578,6 +638,7 @@ describe('CustomAgent session behavior', () => {
 
     const sessionManager = {
       clearPendingForSession: () => {},
+      confirmClaimedMessages: () => Promise.resolve(),
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -641,6 +702,7 @@ describe('CustomAgent session behavior', () => {
 
     const sessionManager = {
       clearPendingForSession: () => {},
+      confirmClaimedMessages: () => Promise.resolve(),
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -688,6 +750,7 @@ describe('CustomAgent session behavior', () => {
 
     const sessionManager = {
       clearPendingForSession: () => {},
+      confirmClaimedMessages: () => Promise.resolve(),
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -744,6 +807,7 @@ describe('CustomAgent session behavior', () => {
 
     const sessionManager = {
       clearPendingForSession: () => {},
+      confirmClaimedMessages: () => Promise.resolve(),
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -828,6 +892,7 @@ describe('CustomAgent session behavior', () => {
 
     const sessionManager = {
       clearPendingForSession: () => {},
+      confirmClaimedMessages: () => Promise.resolve(),
       getMessageIterator: async function* () {
         yield {
           _persistentId: 901,
@@ -873,6 +938,7 @@ describe('CustomAgent session behavior', () => {
   it('processes empty observation response to keep queue state consistent', async () => {
     const confirmProcessedMock = mock(() => {});
     const clearPendingForSessionMock = mock(() => {});
+    const confirmClaimedMessagesMock = mock(() => Promise.resolve());
     const mockStoreObservations = mock(() => ({
       observationIds: [],
       summaryId: null,
@@ -894,6 +960,7 @@ describe('CustomAgent session behavior', () => {
 
     const sessionManager = {
       clearPendingForSession: clearPendingForSessionMock,
+      confirmClaimedMessages: confirmClaimedMessagesMock,
       getMessageIterator: async function* () {
         yield {
           _persistentId: 333,
@@ -937,7 +1004,8 @@ describe('CustomAgent session behavior', () => {
     // Second call (empty observation) should produce empty observations array
     const secondCallArgs = mockStoreObservations.mock.calls[1];
     expect(secondCallArgs[2]).toEqual([]); // observations parameter is empty array
-    expect(clearPendingForSessionMock).toHaveBeenCalledWith(session.sessionDbId);
+    expect(clearPendingForSessionMock).not.toHaveBeenCalled();
+    expect(confirmClaimedMessagesMock).toHaveBeenCalledWith(session.sessionDbId);
     expect(confirmProcessedMock).not.toHaveBeenCalled();
     expect(session.processingMessageIds).toEqual([]);
     expect(session.earliestPendingTimestamp).toBeNull();
@@ -988,6 +1056,7 @@ describe('CustomAgent session behavior', () => {
 
     const sessionManager = {
       clearPendingForSession: () => {},
+      confirmClaimedMessages: () => Promise.resolve(),
       getMessageIterator: async function* () {
         yield {
           _persistentId: 902,
@@ -1053,6 +1122,7 @@ describe('CustomAgent session behavior', () => {
 
     const sessionManager = {
       clearPendingForSession: () => {},
+      confirmClaimedMessages: () => Promise.resolve(),
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -1089,6 +1159,7 @@ describe('CustomAgent session behavior', () => {
 
     const sessionManager = {
       clearPendingForSession: () => {},
+      confirmClaimedMessages: () => Promise.resolve(),
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -1145,6 +1216,7 @@ describe('CustomAgent session behavior', () => {
 
     const sessionManager = {
       clearPendingForSession: () => {},
+      confirmClaimedMessages: () => Promise.resolve(),
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -1214,6 +1286,7 @@ describe('CustomAgent session behavior', () => {
 
     const sessionManager = {
       clearPendingForSession: () => {},
+      confirmClaimedMessages: () => Promise.resolve(),
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},

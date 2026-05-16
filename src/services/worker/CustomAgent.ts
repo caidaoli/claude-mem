@@ -978,6 +978,10 @@ function buildOpenAIJsonRequestBody(
     body.reasoning_effort = 'low';
   }
 
+  if (model.trim().toLowerCase().startsWith('mimo')) {
+    body.thinking = { type: 'disabled' };
+  }
+
   if (streaming) {
     body.stream = true;
     body.stream_options = { include_usage: true };
