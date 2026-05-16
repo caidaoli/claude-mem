@@ -15,10 +15,40 @@ mock.module('../../src/shared/worker-utils.js', () => ({
 }));
 
 describe('TranscriptEventProcessor session_end', () => {
-  it('does not produce a summarize request from transcript session_end events', async () => {
+  it('queues a summary request from Codex transcript session_end events', async () => {
     workerCalls.length = 0;
     const { TranscriptEventProcessor } = await import('../../src/services/transcripts/processor.js');
     const processor = new TranscriptEventProcessor();
+
+    const schema = {
+      name: 'codex',
+      events: [
+        {
+          name: 'assistant-message',
+          match: { path: 'payload.type', equals: 'agent_message' },
+          action: 'assistant_message' as const,
+          fields: {
+            message: 'payload.message',
+          },
+        },
+        {
+          name: 'session-end',
+          match: { path: 'payload.type', equals: 'turn_completed' },
+          action: 'session_end' as const,
+        },
+      ],
+    };
+
+    await processor.processEntry(
+      { payload: { type: 'agent_message', message: 'done' } },
+      {
+        name: 'codex',
+        path: '~/.codex/sessions/**/*.jsonl',
+        schema: 'codex',
+      },
+      schema,
+      'codex-session-1'
+    );
 
     await processor.processEntry(
       { payload: { type: 'turn_completed' } },
@@ -27,26 +57,23 @@ describe('TranscriptEventProcessor session_end', () => {
         path: '~/.codex/sessions/**/*.jsonl',
         schema: 'codex',
       },
-      {
-        name: 'codex',
-        events: [
-          {
-            name: 'session-end',
-            match: { path: 'payload.type', equals: 'turn_completed' },
-            action: 'session_end',
-          },
-        ],
-      },
+      schema,
       'codex-session-1'
     );
 
-    expect(workerCalls.find(call => call.path === '/api/sessions/summarize')).toBeUndefined();
+    const summaryCall = workerCalls.find(call => call.path === '/api/sessions/summarize');
+    expect(summaryCall).toBeDefined();
+    expect(JSON.parse(String(summaryCall?.body))).toEqual({
+      contentSessionId: 'codex-session-1',
+      last_assistant_message: 'done',
+      platformSource: 'codex',
+    });
   });
 
-  it('keeps the default Codex transcript schema out of the summary producer path', async () => {
+  it('keeps the default Codex transcript schema in the summary producer path', async () => {
     const { SAMPLE_CONFIG } = await import('../../src/services/transcripts/config.js');
     const codexSchema = SAMPLE_CONFIG.schemas?.codex;
 
-    expect(codexSchema?.events.some(event => event.action === 'session_end')).toBe(false);
+    expect(codexSchema?.events.some(event => event.action === 'session_end')).toBe(true);
   });
 });

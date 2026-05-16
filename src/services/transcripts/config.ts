@@ -98,6 +98,11 @@ const CODEX_SAMPLE_SCHEMA: TranscriptSchema = {
           ]
         }
       }
+    },
+    {
+      name: 'session-end',
+      match: { path: 'payload.type', in: ['turn_aborted', 'turn_completed', 'task_complete'] },
+      action: 'session_end'
     }
   ]
 };
