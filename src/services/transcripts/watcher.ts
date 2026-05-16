@@ -9,12 +9,33 @@ import { TranscriptEventProcessor } from './processor.js';
 
 interface TailState {
   offset: number;
-  partial: string;
+}
+
+export interface TranscriptWatcherOptions {
+  reconciliationTickMs?: number;
+  activeReconcileIntervalMs?: number;
+  idleReconcileIntervalMs?: number;
+  activeWindowMs?: number;
+}
+
+const DEFAULT_RECONCILIATION_TICK_MS = 5_000;
+const DEFAULT_ACTIVE_RECONCILE_INTERVAL_MS = 5_000;
+const DEFAULT_IDLE_RECONCILE_INTERVAL_MS = 60_000;
+const DEFAULT_ACTIVE_WINDOW_MS = 5 * 60_000;
+
+interface ReconciliationPolicy {
+  activeReconcileIntervalMs: number;
+  idleReconcileIntervalMs: number;
+  activeWindowMs: number;
 }
 
 class FileTailer {
   private watcher: ReturnType<typeof fsWatch> | null = null;
   private tailState: TailState;
+  private reading = false;
+  private readAgain = false;
+  private lastActivityAt = 0;
+  private lastReconciledAt = 0;
 
   constructor(
     private filePath: string,
@@ -22,13 +43,13 @@ class FileTailer {
     private onLine: (line: string) => Promise<void>,
     private onOffset: (offset: number) => void
   ) {
-    this.tailState = { offset: initialOffset, partial: '' };
+    this.tailState = { offset: initialOffset };
   }
 
   start(): void {
-    this.readNewData().catch(() => undefined);
+    this.requestRead(false);
     this.watcher = fsWatch(this.filePath, { persistent: true }, () => {
-      this.readNewData().catch(() => undefined);
+      this.poke();
     });
   }
 
@@ -38,7 +59,52 @@ class FileTailer {
   }
 
   poke(): void {
-    this.readNewData().catch(() => undefined);
+    this.requestRead(true);
+  }
+
+  reconcile(now: number, policy: ReconciliationPolicy): void {
+    const isActive = this.lastActivityAt > 0 && now - this.lastActivityAt <= policy.activeWindowMs;
+    const intervalMs = isActive
+      ? policy.activeReconcileIntervalMs
+      : policy.idleReconcileIntervalMs;
+
+    if (intervalMs <= 0) return;
+    if (now - this.lastReconciledAt < intervalMs) return;
+
+    this.lastReconciledAt = now;
+    this.requestRead(false);
+  }
+
+  private requestRead(markActive: boolean): void {
+    if (markActive) {
+      this.lastActivityAt = Date.now();
+    }
+
+    if (this.reading) {
+      this.readAgain = true;
+      return;
+    }
+
+    this.reading = true;
+    this.readLoop().catch((error: unknown) => {
+      logger.warn('TRANSCRIPT', 'Transcript tailer read failed; will retry from last committed offset', {
+        file: this.filePath,
+        offset: this.tailState.offset,
+      }, error instanceof Error ? error : new Error(String(error)));
+    }).finally(() => {
+      this.reading = false;
+      if (this.readAgain) {
+        this.readAgain = false;
+        this.requestRead(false);
+      }
+    });
+  }
+
+  private async readLoop(): Promise<void> {
+    do {
+      this.readAgain = false;
+      await this.readNewData();
+    } while (this.readAgain);
   }
 
   private async readNewData(): Promise<void> {
@@ -54,12 +120,15 @@ class FileTailer {
 
     if (size < this.tailState.offset) {
       this.tailState.offset = 0;
+      this.onOffset(this.tailState.offset);
     }
 
-    if (size === this.tailState.offset) return;
+    if (size <= this.tailState.offset) return;
+
+    const startOffset = this.tailState.offset;
 
     const stream = createReadStream(this.filePath, {
-      start: this.tailState.offset,
+      start: startOffset,
       end: size - 1,
       encoding: 'utf8'
     });
@@ -68,18 +137,34 @@ class FileTailer {
     for await (const chunk of stream) {
       data += chunk as string;
     }
+    if (data.length > 0) {
+      this.lastActivityAt = Date.now();
+    }
 
-    this.tailState.offset = size;
-    this.onOffset(this.tailState.offset);
+    const lines = data.split('\n');
+    const completeLines = lines.slice(0, -1);
+    let committedOffset = startOffset;
 
-    const combined = this.tailState.partial + data;
-    const lines = combined.split('\n');
-    this.tailState.partial = lines.pop() ?? '';
-
-    for (const line of lines) {
+    for (const line of completeLines) {
+      const lineBytes = Buffer.byteLength(`${line}\n`, 'utf8');
       const trimmed = line.trim();
-      if (!trimmed) continue;
-      await this.onLine(trimmed);
+      if (trimmed) {
+        await this.onLine(trimmed);
+      }
+      committedOffset += lineBytes;
+      this.tailState.offset = committedOffset;
+      this.onOffset(committedOffset);
+    }
+
+    if (data.endsWith('\n') || completeLines.length > 0) return;
+
+    const trimmed = data.trim();
+    if (trimmed) {
+      logger.debug('TRANSCRIPT', 'Leaving partial transcript line uncommitted', {
+        file: this.filePath,
+        offset: this.tailState.offset,
+        bytesRead: Buffer.byteLength(data, 'utf8'),
+      });
     }
   }
 }
@@ -89,8 +174,13 @@ export class TranscriptWatcher {
   private tailers = new Map<string, FileTailer>();
   private state: TranscriptWatchState;
   private rootWatchers: Array<ReturnType<typeof fsWatch>> = [];
+  private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private config: TranscriptWatchConfig, private statePath: string) {
+  constructor(
+    private config: TranscriptWatchConfig,
+    private statePath: string,
+    private options: TranscriptWatcherOptions = {}
+  ) {
     this.state = loadWatchState(statePath);
   }
 
@@ -98,9 +188,14 @@ export class TranscriptWatcher {
     for (const watch of this.config.watches) {
       await this.setupWatch(watch);
     }
+    this.startReconciliationLoop();
   }
 
   stop(): void {
+    if (this.reconciliationTimer) {
+      clearInterval(this.reconciliationTimer);
+      this.reconciliationTimer = null;
+    }
     for (const tailer of this.tailers.values()) {
       tailer.close();
     }
@@ -109,6 +204,25 @@ export class TranscriptWatcher {
       watcher.close();
     }
     this.rootWatchers = [];
+  }
+
+  private startReconciliationLoop(): void {
+    const intervalMs = this.options.reconciliationTickMs ?? DEFAULT_RECONCILIATION_TICK_MS;
+    if (intervalMs <= 0 || this.reconciliationTimer) return;
+
+    const policy: ReconciliationPolicy = {
+      activeReconcileIntervalMs: this.options.activeReconcileIntervalMs ?? DEFAULT_ACTIVE_RECONCILE_INTERVAL_MS,
+      idleReconcileIntervalMs: this.options.idleReconcileIntervalMs ?? DEFAULT_IDLE_RECONCILE_INTERVAL_MS,
+      activeWindowMs: this.options.activeWindowMs ?? DEFAULT_ACTIVE_WINDOW_MS,
+    };
+
+    this.reconciliationTimer = setInterval(() => {
+      const now = Date.now();
+      for (const tailer of this.tailers.values()) {
+        tailer.reconcile(now, policy);
+      }
+    }, intervalMs);
+    this.reconciliationTimer.unref?.();
   }
 
   private async setupWatch(watch: WatchTarget): Promise<void> {
@@ -268,9 +382,9 @@ export class TranscriptWatcher {
     filePath: string,
     sessionIdOverride?: string | null
   ): Promise<void> {
+    let entry: unknown;
     try {
-      const entry = JSON.parse(line);
-      await this.processor.processEntry(entry, watch, schema, sessionIdOverride ?? undefined);
+      entry = JSON.parse(line);
     } catch (error: unknown) {
       if (error instanceof Error) {
         logger.debug('TRANSCRIPT', 'Failed to parse transcript line', {
@@ -284,6 +398,17 @@ export class TranscriptWatcher {
           error: String(error)
         });
       }
+      return;
+    }
+
+    try {
+      await this.processor.processEntry(entry, watch, schema, sessionIdOverride ?? undefined);
+    } catch (error: unknown) {
+      logger.warn('TRANSCRIPT', 'Failed to process transcript line; offset not committed', {
+        watch: watch.name,
+        file: basename(filePath),
+      }, error instanceof Error ? error : new Error(String(error)));
+      throw error;
     }
   }
 

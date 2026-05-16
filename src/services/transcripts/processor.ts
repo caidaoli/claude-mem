@@ -309,35 +309,10 @@ export class TranscriptEventProcessor {
   }
 
   private async handleSessionEnd(session: SessionState, watch: WatchTarget): Promise<void> {
-    await this.queueSummary(session);
     await this.updateContext(session, watch);
     session.pendingTools?.clear();
     const key = this.getSessionKey(watch, session.sessionId);
     this.sessions.delete(key);
-  }
-
-  private async queueSummary(session: SessionState): Promise<void> {
-    const workerReady = await ensureWorkerRunning();
-    if (!workerReady) return;
-
-    const lastAssistantMessage = session.lastAssistantMessage ?? '';
-    const requestBody = JSON.stringify({
-      contentSessionId: session.sessionId,
-      last_assistant_message: lastAssistantMessage,
-      platformSource: session.platformSource
-    });
-
-    try {
-      await workerHttpRequest('/api/sessions/summarize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: requestBody
-      });
-    } catch (error: unknown) {
-      logger.warn('TRANSCRIPT', 'Summary request failed', {
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
   }
 
   private async updateContext(session: SessionState, watch: WatchTarget): Promise<void> {
