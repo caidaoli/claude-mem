@@ -138,8 +138,17 @@ export class SettingsRoutes extends BaseRouteHandler {
 
     clearPortCache();
 
-    logger.info('WORKER', 'Settings updated');
-    res.json({ success: true, message: 'Settings updated successfully' });
+    logger.info('WORKER', 'Settings updated, exiting worker for restart');
+    flushResponseThen(
+      res,
+      {
+        success: true,
+        message: 'Settings updated. Worker is restarting; new values apply on next hook invocation.',
+      },
+      () => {
+        logger.info('WORKER', 'Exiting worker after settings update');
+      }
+    );
   });
 
   private handleGetMcpStatus = this.wrapHandler((req: Request, res: Response): void => {
