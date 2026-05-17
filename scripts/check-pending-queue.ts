@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-const DEFAULT_WORKER_PORT = 37777;
+const DEFAULT_WORKER_PORT = 37701;
 
 function resolveWorkerPort(): number {
   const raw = process.env.CLAUDE_MEM_WORKER_PORT;
