@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 
 const { execSync } = require('child_process');
-const { existsSync, readFileSync } = require('fs');
+const { existsSync, readFileSync, rmSync, writeFileSync } = require('fs');
 const path = require('path');
 const os = require('os');
 
 const INSTALLED_PATH = path.join(os.homedir(), '.claude', 'plugins', 'marketplaces', 'thedotmack');
 const CACHE_BASE_PATH = path.join(os.homedir(), '.claude', 'plugins', 'cache', 'thedotmack', 'claude-mem');
+const INSTALL_MARKER_EXCLUDES = '--exclude=.install-version --exclude=.cli-installed';
+const MARKETPLACE_PLUGIN_RUNTIME_EXCLUDES =
+  '--exclude=plugin/node_modules --exclude=plugin/package-lock.json --exclude=plugin/bun.lock ' +
+  '--exclude=plugin/.install-version --exclude=plugin/.cli-installed';
 
 // Reject obviously invalid ports before they reach http.request, which would
 // throw with a confusing error like "RangeError: Port should be > 0 and < 65536".
@@ -76,6 +80,40 @@ function getPluginVersion() {
   }
 }
 
+function probeVersion(command) {
+  try {
+    return execSync(command, {
+      stdio: ['ignore', 'pipe', 'ignore'],
+      encoding: 'utf-8',
+    }).trim();
+  } catch {
+    return '';
+  }
+}
+
+function writeInstallMarker(targetDir, version) {
+  rmSync(path.join(targetDir, '.cli-installed'), { force: true });
+  const marker = {
+    version,
+    bun: probeVersion('bun --version'),
+    uv: probeVersion('uv --version'),
+    installedAt: new Date().toISOString(),
+  };
+  writeFileSync(path.join(targetDir, '.install-version'), JSON.stringify(marker));
+}
+
+function cleanPluginRuntime(targetDir) {
+  for (const entry of ['package-lock.json', '.install-version', '.cli-installed']) {
+    rmSync(path.join(targetDir, entry), { recursive: true, force: true });
+  }
+}
+
+function installPluginRuntime(targetDir, label) {
+  cleanPluginRuntime(targetDir);
+  console.log(`Running bun install in ${label}...`);
+  execSync('bun install', { cwd: targetDir, stdio: 'inherit' });
+}
+
 function detectInstalledVersion(buildVersion) {
   const dataDir = process.env.CLAUDE_MEM_DATA_DIR || path.join(os.homedir(), '.claude-mem');
   const settingsPath = path.join(dataDir, 'settings.json');
@@ -137,8 +175,12 @@ try {
 
   // --include=plugin/*** must come before gitignoreExcludes because .gitignore
   // lists "plugin" (it's a build artifact), but marketplace needs it for hooks/scripts
+  // Install markers are machine-local state, not source assets. Keep them out
+  // before the broad plugin include, then write fresh markers after dependency install.
+  // Runtime installs are target-local too: Codex copies ./plugin as the plugin
+  // root, so stale source node_modules/package-lock files must never be copied.
   execSync(
-    `rsync -av --delete --exclude=.git --exclude=/.mcp.json --exclude=bun.lock --exclude=package-lock.json --exclude=scripts/package.json --exclude=scripts/node_modules --include=plugin/*** ${gitignoreExcludes} ./ ~/.claude/plugins/marketplaces/thedotmack/`,
+    `rsync -av --delete --exclude=.git --exclude=/.mcp.json --exclude=bun.lock --exclude=package-lock.json --exclude=scripts/package.json --exclude=scripts/node_modules ${MARKETPLACE_PLUGIN_RUNTIME_EXCLUDES} --include=plugin/*** ${gitignoreExcludes} ./ ~/.claude/plugins/marketplaces/thedotmack/`,
     { stdio: 'inherit' }
   );
 
@@ -149,29 +191,28 @@ try {
   );
 
   const version = getPluginVersion();
+  const MARKETPLACE_PLUGIN_PATH = path.join(INSTALLED_PATH, 'plugin');
+  installPluginRuntime(MARKETPLACE_PLUGIN_PATH, 'marketplace plugin');
+  writeInstallMarker(MARKETPLACE_PLUGIN_PATH, version);
+
   const CACHE_VERSION_PATH = path.join(CACHE_BASE_PATH, version);
 
-  const pluginDir = path.join(rootDir, 'plugin');
-  const pluginGitignoreExcludes = getGitignoreExcludes(pluginDir);
-
-  console.log(`Syncing to cache folder (version ${version})...`);
+  console.log(`Syncing installed marketplace plugin to cache folder (version ${version})...`);
   execSync(
-    `rsync -av --delete --exclude=.git ${pluginGitignoreExcludes} plugin/ "${CACHE_VERSION_PATH}/"`,
+    `rsync -av --delete ${INSTALL_MARKER_EXCLUDES} "${MARKETPLACE_PLUGIN_PATH}/" "${CACHE_VERSION_PATH}/"`,
     { stdio: 'inherit' }
   );
 
-  console.log(`Running bun install in cache folder (version ${version})...`);
-  execSync(`bun install`, { cwd: CACHE_VERSION_PATH, stdio: 'inherit' });
+  writeInstallMarker(CACHE_VERSION_PATH, version);
 
   if (installedMismatch && installedMismatch.installedVersion !== version) {
     const INSTALLED_CACHE_PATH = path.join(CACHE_BASE_PATH, installedMismatch.installedVersion);
     console.log(`Mirroring to installed-version cache (${installedMismatch.installedVersion}) for hot reload...`);
     execSync(
-      `rsync -av --delete --exclude=.git ${pluginGitignoreExcludes} plugin/ "${INSTALLED_CACHE_PATH}/"`,
+      `rsync -av --delete ${INSTALL_MARKER_EXCLUDES} "${MARKETPLACE_PLUGIN_PATH}/" "${INSTALLED_CACHE_PATH}/"`,
       { stdio: 'inherit' }
     );
-    console.log(`Running bun install in installed-version cache (${installedMismatch.installedVersion})...`);
-    execSync(`bun install`, { cwd: INSTALLED_CACHE_PATH, stdio: 'inherit' });
+    writeInstallMarker(INSTALLED_CACHE_PATH, version);
   }
 
   console.log('\x1b[32m%s\x1b[0m', 'Sync complete!');

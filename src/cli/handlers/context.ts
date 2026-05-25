@@ -55,19 +55,20 @@ export const contextHandler: EventHandler = {
         : hint;
     }
 
+    const platform = input.platform;
+    const shouldShowTerminalOutput = showTerminalOutput && platform !== 'codex';
+
     let coloredTimeline = '';
-    if (showTerminalOutput) {
+    if (shouldShowTerminalOutput) {
       const colorResult = await executeWithWorkerFallback<string>(colorApiPath, 'GET');
       if (!isWorkerFallback(colorResult) && typeof colorResult === 'string') {
         coloredTimeline = colorResult.trim();
       }
     }
 
-    const platform = input.platform;
-
     const displayContent = coloredTimeline || (platform === 'gemini-cli' || platform === 'gemini' ? additionalContext : '');
 
-    const systemMessage = showTerminalOutput && displayContent
+    const systemMessage = shouldShowTerminalOutput && displayContent
       ? `${displayContent}\n\nView Observations Live @ http://localhost:${port}`
       : undefined;
 

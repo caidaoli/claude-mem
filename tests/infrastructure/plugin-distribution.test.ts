@@ -90,6 +90,21 @@ describe('Plugin Distribution - Codex Marketplace', () => {
     expect(command).toContain('plugins/cache/thedotmack/claude-mem');
     expect(command).toContain('claude-mem: mcp server not found');
   });
+
+  it('marks the Codex SessionStart worker start command as a Codex hook', () => {
+    const codexHooks = readJson('plugin/hooks/codex-hooks.json');
+    const sessionStartCommands = (codexHooks.hooks.SessionStart ?? []).flatMap((matcher: any) =>
+      (matcher.hooks ?? [])
+        .filter((hook: any) => hook.type === 'command')
+        .map((hook: any) => String(hook.command ?? ''))
+    );
+    const startCommand = sessionStartCommands.find((command: string) =>
+      command.includes('worker-service.cjs" start')
+    );
+
+    expect(startCommand).toBeDefined();
+    expect(startCommand).toContain('CLAUDE_MEM_CODEX_HOOK=1 node');
+  });
 });
 
 describe('Plugin Distribution - hooks.json Integrity', () => {
@@ -191,6 +206,26 @@ describe('Plugin Distribution - Build Script Verification', () => {
     expect(content).toContain('plugin/skills/mem-search/SKILL.md');
     expect(content).toContain('plugin/hooks/hooks.json');
     expect(content).toContain('plugin/.claude-plugin/plugin.json');
+  });
+
+  it('sync-marketplace should not copy stale local install markers', () => {
+    const syncScriptPath = path.join(projectRoot, 'scripts/sync-marketplace.cjs');
+    const content = readFileSync(syncScriptPath, 'utf-8');
+
+    expect(content).toContain('--exclude=plugin/.install-version');
+    expect(content).toContain('--exclude=plugin/.cli-installed');
+    expect(content).toContain('--exclude=plugin/node_modules');
+    expect(content).toContain('--exclude=plugin/package-lock.json');
+    expect(content).toContain('--exclude=plugin/bun.lock');
+    expect(content).toContain('--exclude=.install-version --exclude=.cli-installed');
+    expect(content).toContain("rmSync(path.join(targetDir, entry), { recursive: true, force: true })");
+    expect(content).toContain("rmSync(path.join(targetDir, '.cli-installed'), { force: true })");
+    expect(content).toContain("installPluginRuntime(MARKETPLACE_PLUGIN_PATH, 'marketplace plugin')");
+    expect(content).toContain('"${MARKETPLACE_PLUGIN_PATH}/" "${CACHE_VERSION_PATH}/"');
+    expect(content).toContain('"${MARKETPLACE_PLUGIN_PATH}/" "${INSTALLED_CACHE_PATH}/"');
+    expect(content).toContain('writeInstallMarker(MARKETPLACE_PLUGIN_PATH, version)');
+    expect(content).toContain('writeInstallMarker(CACHE_VERSION_PATH, version)');
+    expect(content).toContain('writeInstallMarker(INSTALLED_CACHE_PATH, version)');
   });
 });
 

@@ -207,7 +207,35 @@ describe('Codex CLI Compatibility (#744)', () => {
         },
       }) as any;
 
-      expect(output).toEqual({ continue: true, suppressOutput: true });
+      expect(output).toEqual({ continue: true });
+    });
+
+    it('strips suppressOutput from Codex output because Codex CLI rejects it', async () => {
+      const { codexAdapter } = await import('../src/cli/adapters/codex.js');
+
+      const stopOutput = codexAdapter.formatOutput({
+        continue: true,
+        suppressOutput: true,
+      }) as Record<string, unknown>;
+      expect(stopOutput).not.toHaveProperty('suppressOutput');
+      expect(stopOutput).toEqual({ continue: true });
+
+      const postToolOutput = codexAdapter.formatOutput({
+        continue: true,
+        suppressOutput: true,
+        hookSpecificOutput: {
+          hookEventName: 'PostToolUse',
+          additionalContext: 'ctx',
+        },
+      }) as Record<string, unknown>;
+      expect(postToolOutput).not.toHaveProperty('suppressOutput');
+      expect(postToolOutput).toEqual({
+        continue: true,
+        hookSpecificOutput: {
+          hookEventName: 'PostToolUse',
+          additionalContext: 'ctx',
+        },
+      });
     });
   });
 
@@ -478,5 +506,14 @@ describe('hookCommand - stderr suppression', () => {
     expect(hookCommandSource).toContain("process.stderr.write = originalStderrWrite");
     expect(hookCommandSource).not.toContain("console.error(`[claude-mem]");
     expect(hookCommandSource).not.toContain("console.error(`Hook error:");
+  });
+
+  it('should route non-blocking skip output through the platform adapter', async () => {
+    const hookCommandSource = await Bun.file(
+      new URL('../src/cli/hook-command.ts', import.meta.url).pathname
+    ).text();
+
+    expect(hookCommandSource).toContain('writeHookOutput(adapter, { continue: true, suppressOutput: true })');
+    expect(hookCommandSource).not.toContain('JSON.stringify({ continue: true, suppressOutput: true })');
   });
 });

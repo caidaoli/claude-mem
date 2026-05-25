@@ -6,10 +6,11 @@ import { buildStatusOutput, StatusOutput } from '../../src/services/worker-servi
 
 const WORKER_SCRIPT = path.join(__dirname, '../../plugin/scripts/worker-service.cjs');
 
-function runWorkerStart(): { stdout: string; exitCode: number } {
+function runWorkerStart(env: Record<string, string> = {}): { stdout: string; exitCode: number } {
   const result = spawnSync('bun', [WORKER_SCRIPT, 'start'], {
     encoding: 'utf-8',
-    timeout: 60000
+    timeout: 60000,
+    env: { ...process.env, ...env }
   });
   return { stdout: result.stdout?.trim() || '', exitCode: result.status || 0 };
 }
@@ -200,6 +201,18 @@ describe('worker-json-status', () => {
         } else if (parsed.status === 'error') {
           expect(typeof parsed.message).toBe('string');
         }
+      });
+
+      it('should be silent when invoked as a Codex hook setup command', () => {
+        if (!existsSync(WORKER_SCRIPT)) {
+          console.log('Skipping CLI test - worker script not built');
+          return;
+        }
+
+        const { stdout, exitCode } = runWorkerStart({ CLAUDE_MEM_CODEX_HOOK: '1' });
+
+        expect(exitCode).toBe(0);
+        expect(stdout).toBe('');
       });
     });
 
