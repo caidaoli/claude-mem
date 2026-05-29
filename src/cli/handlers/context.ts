@@ -11,9 +11,40 @@ import { logger } from '../../utils/logger.js';
 import { loadFromFileOnce } from '../../shared/hook-settings.js';
 import { readStaleMarker } from '../../shared/oauth-token.js';
 
+function buildCodexCompactContext(staleReason: string | undefined): string {
+  const compactContext = [
+    '# claude-mem',
+    'claude-mem is available for this project.',
+    'Recent memory is compact on Codex because SessionStart hook output is visible.',
+    'Search history with the mem-search skill and fetch details with get_observations([IDs]) when prior work matters.',
+  ].join('\n');
+
+  if (!staleReason) {
+    return compactContext;
+  }
+
+  return [
+    `[claude-mem] Claude Desktop OAuth token is stale: ${staleReason}`,
+    'Please re-login via Claude Desktop to refresh the token.',
+    '',
+    compactContext,
+  ].join('\n');
+}
+
 export const contextHandler: EventHandler = {
   async execute(input: NormalizedHookInput): Promise<HookResult> {
     const cwd = input.cwd ?? process.cwd();
+    const platform = input.platform;
+
+    if (platform === 'codex') {
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'SessionStart',
+          additionalContext: buildCodexCompactContext(readStaleMarker()),
+        },
+      };
+    }
+
     const context = getProjectContext(cwd);
     const port = getWorkerPort();
 
@@ -55,7 +86,6 @@ export const contextHandler: EventHandler = {
         : hint;
     }
 
-    const platform = input.platform;
     const shouldShowTerminalOutput = showTerminalOutput && platform !== 'codex';
 
     let coloredTimeline = '';
