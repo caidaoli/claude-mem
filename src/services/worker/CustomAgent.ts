@@ -315,7 +315,7 @@ function buildGeminiGenerationConfig(model: string, jsonMode: boolean = false): 
   }
 
   // Minimal thinking speeds up Gemini 3 responses
-  if (model.startsWith('gemini-3-flash')) {
+  if (model.startsWith('gemini-3')) {
     config.thinkingConfig = {
       thinkingLevel: 'minimal',
     };
@@ -976,6 +976,12 @@ function buildOpenAIJsonRequestBody(
 
   if (model.startsWith('gpt-')) {
     body.reasoning_effort = 'low';
+  }
+
+  if (model.startsWith('gemini-3')) {
+    body.thinkingConfig = {
+      thinkingLevel: 'minimal',
+    };
   }
 
   if (model.trim().toLowerCase().startsWith('mimo')) {
