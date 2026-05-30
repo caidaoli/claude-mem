@@ -58,18 +58,37 @@ export async function performGracefulShutdown(config: GracefulShutdownConfig): P
 }
 
 async function closeHttpServer(server: http.Server): Promise<void> {
-  server.closeAllConnections();
+  try {
+    server.closeAllConnections();
+  } catch (error) {
+    if (!isServerAlreadyClosed(error)) {
+      throw error;
+    }
+  }
 
   if (process.platform === 'win32') {
     await new Promise(r => setTimeout(r, 500));
   }
 
   await new Promise<void>((resolve, reject) => {
-    server.close(err => err ? reject(err) : resolve());
+    server.close(err => {
+      if (!err || isServerAlreadyClosed(err)) {
+        resolve();
+        return;
+      }
+      reject(err);
+    });
   });
 
   if (process.platform === 'win32') {
     await new Promise(r => setTimeout(r, 500));
     logger.info('SYSTEM', 'Waited for Windows port cleanup');
   }
+}
+
+function isServerAlreadyClosed(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === 'ERR_SERVER_NOT_RUNNING' || /server is not running/i.test(error.message);
 }
