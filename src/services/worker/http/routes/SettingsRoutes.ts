@@ -26,9 +26,16 @@ const switchBranchSchema = z.object({
 
 const updateBranchSchema = z.object({}).passthrough();
 
+export interface WorkerRestartOptions {
+  port?: number;
+}
+
+export type WorkerRestartHandler = (options?: WorkerRestartOptions) => void | Promise<void>;
+
 export class SettingsRoutes extends BaseRouteHandler {
   constructor(
-    private settingsManager: SettingsManager
+    private settingsManager: SettingsManager,
+    private restartWorker: WorkerRestartHandler
   ) {
     super();
   }
@@ -137,16 +144,18 @@ export class SettingsRoutes extends BaseRouteHandler {
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
 
     clearPortCache();
+    const restartOptions = this.getRestartOptions(settings);
 
-    logger.info('WORKER', 'Settings updated, exiting worker for restart');
+    logger.info('WORKER', 'Settings updated, scheduling worker restart');
     flushResponseThen(
       res,
       {
         success: true,
         message: 'Settings updated. Worker is restarting; new values apply on next hook invocation.',
       },
-      () => {
-        logger.info('WORKER', 'Exiting worker after settings update');
+      async () => {
+        logger.info('WORKER', 'Restarting worker after settings update');
+        await this.restartWorker(restartOptions);
       }
     );
   });
@@ -185,8 +194,9 @@ export class SettingsRoutes extends BaseRouteHandler {
     const result = await switchBranch(branch);
 
     if (result.success) {
-      flushResponseThen(res, result, () => {
+      flushResponseThen(res, result, async () => {
         logger.info('WORKER', 'Restarting worker after branch switch');
+        await this.restartWorker();
       });
     } else {
       res.json(result);
@@ -199,8 +209,9 @@ export class SettingsRoutes extends BaseRouteHandler {
     const result = await pullUpdates();
 
     if (result.success) {
-      flushResponseThen(res, result, () => {
+      flushResponseThen(res, result, async () => {
         logger.info('WORKER', 'Restarting worker after branch update');
+        await this.restartWorker();
       });
     } else {
       res.json(result);
@@ -373,6 +384,16 @@ export class SettingsRoutes extends BaseRouteHandler {
     }
 
     return { valid: true };
+  }
+
+  private getRestartOptions(settings: Record<string, unknown>): WorkerRestartOptions {
+    const rawPort = settings.CLAUDE_MEM_WORKER_PORT;
+    if (rawPort === undefined || rawPort === null || rawPort === '') {
+      return {};
+    }
+
+    const port = parseInt(String(rawPort), 10);
+    return Number.isInteger(port) ? { port } : {};
   }
 
   private isMcpEnabled(): boolean {

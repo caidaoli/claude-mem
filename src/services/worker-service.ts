@@ -90,7 +90,7 @@ import { ViewerRoutes } from './worker/http/routes/ViewerRoutes.js';
 import { SessionRoutes } from './worker/http/routes/SessionRoutes.js';
 import { DataRoutes } from './worker/http/routes/DataRoutes.js';
 import { SearchRoutes } from './worker/http/routes/SearchRoutes.js';
-import { SettingsRoutes } from './worker/http/routes/SettingsRoutes.js';
+import { SettingsRoutes, type WorkerRestartOptions } from './worker/http/routes/SettingsRoutes.js';
 import { LogsRoutes } from './worker/http/routes/LogsRoutes.js';
 import { MemoryRoutes } from './worker/http/routes/MemoryRoutes.js';
 import { CorpusRoutes } from './worker/http/routes/CorpusRoutes.js';
@@ -192,7 +192,7 @@ export class WorkerService implements WorkerRef {
       getInitializationComplete: () => this.initializationCompleteFlag,
       getMcpReady: () => this.mcpReady,
       onShutdown: () => this.shutdown(),
-      onRestart: () => this.shutdown(),
+      onRestart: () => this.restart(),
       workerPath: __filename,
       getAiStatus: () => {
         let provider = 'claude';
@@ -276,7 +276,7 @@ export class WorkerService implements WorkerRef {
       this.startTime,
       (sessionDbId, source) => sessionRoutes.ensureGeneratorRunning(sessionDbId, source),
     ));
-    this.server.registerRoutes(new SettingsRoutes(this.settingsManager));
+    this.server.registerRoutes(new SettingsRoutes(this.settingsManager, options => this.restart(options)));
     this.server.registerRoutes(new LogsRoutes());
     this.server.registerRoutes(new MemoryRoutes(this.dbManager, 'claude-mem'));
     this.server.registerRoutes(new ServerV1Routes({
@@ -537,6 +537,36 @@ export class WorkerService implements WorkerRef {
       dbManager: this.dbManager,
       chromaMcpManager: this.chromaMcpManager || undefined
     });
+  }
+
+  private async restart(options: WorkerRestartOptions = {}): Promise<void> {
+    if (this.isShuttingDown) {
+      logger.warn('SYSTEM', 'Restart requested while shutdown is already in progress');
+      return;
+    }
+
+    this.isShuttingDown = true;
+    const port = options.port ?? getWorkerPort();
+
+    try {
+      await this.shutdown();
+    } catch (error) {
+      logger.error(
+        'SYSTEM',
+        'Worker shutdown failed during restart',
+        { port },
+        error instanceof Error ? error : new Error(String(error))
+      );
+      return;
+    }
+
+    const pid = spawnDaemon(__filename, port);
+    if (pid === undefined) {
+      logger.error('SYSTEM', 'Failed to spawn worker daemon during restart', { port });
+      return;
+    }
+
+    logger.info('SYSTEM', 'Worker restart spawned', { pid, port });
   }
 
   broadcastProcessingStatus(): void {
