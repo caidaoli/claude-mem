@@ -149,17 +149,13 @@ describe('DataRoutes Type Coercion', () => {
   });
 
   describe('handleSetProcessing', () => {
-    it('initializes pending sessions and starts their generators', async () => {
-      const initializeSession = mock((sessionDbId: number) => ({
-        sessionDbId,
-        generatorPromise: null,
-      }));
+    it('reports current processing status without starting generators', async () => {
+      // Generator (re)start is now driven by SessionCompletionHandler on generator
+      // exit, not by this endpoint — the handler is a pure status read (upstream
+      // v13.4.0). It must NOT init sessions or spin up generators.
+      const initializeSession = mock(() => undefined);
       const ensureGeneratorRunning = mock(() => {});
       const sessionManager = {
-        getPendingMessageStore: () => ({
-          getSessionsWithPendingMessages: () => [125],
-        }),
-        getSession: () => undefined,
         initializeSession,
         isAnySessionProcessing: () => true,
         getTotalQueueDepth: () => 41,
@@ -194,13 +190,13 @@ describe('DataRoutes Type Coercion', () => {
       handler(req as Request, res as Response);
       await new Promise(resolve => setTimeout(resolve, 0));
 
-      expect(initializeSession).toHaveBeenCalledWith(125);
-      expect(ensureGeneratorRunning).toHaveBeenCalledWith(125, 'manual-processing');
+      expect(initializeSession).not.toHaveBeenCalled();
+      expect(ensureGeneratorRunning).not.toHaveBeenCalled();
       expect(jsonSpy).toHaveBeenCalledWith(expect.objectContaining({
         status: 'ok',
+        isProcessing: true,
         queueDepth: 41,
         activeSessions: 1,
-        sessionsStarted: 1,
       }));
     });
   });

@@ -62,18 +62,4 @@ describe('SessionManager project refresh', () => {
     sessionManager.queueSummarize(sessionDbId, 'summary');
     expect(sessionManager.getSession(sessionDbId)?.project).toBe(refreshedProject);
   });
-
-  it('refreshes stale empty project before queueing complete', () => {
-    const sessionDbId = seedStaleSessionWithBackfilledProject();
-
-    // In-memory schema in this unit test fixture doesn't include message_type='complete'.
-    // Stub pending store so we can validate SessionManager refresh behavior in isolation.
-    (sessionManager as any).pendingStore = {
-      enqueue: () => 1,
-      getPendingCount: () => 1
-    };
-
-    sessionManager.queueComplete(sessionDbId);
-    expect(sessionManager.getSession(sessionDbId)?.project).toBe(refreshedProject);
-  });
 });

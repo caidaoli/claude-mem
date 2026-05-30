@@ -15,6 +15,7 @@ export interface ObservationConcept {
 
 export interface ModePrompts {
   system_identity: string;
+  language_instruction?: string;  // Optional localization directive (fork: CustomAgent JSON prompts)
   spatial_awareness: string;
   observer_role: string;         
   recording_focus: string;       

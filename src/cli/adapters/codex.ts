@@ -46,8 +46,7 @@ function cloneToolInput(toolInput: unknown): unknown {
 function buildBaseOutput(result: HookResult): Record<string, unknown> {
   const output: Record<string, unknown> = {};
   if (result.continue !== undefined) output.continue = result.continue;
-  // Codex rejects `suppressOutput` in hook stdout. It is a Claude Code field,
-  // even though shared hook handlers set it on their internal HookResult.
+  if (result.suppressOutput !== undefined) output.suppressOutput = result.suppressOutput;
   if (result.systemMessage) output.systemMessage = result.systemMessage;
   if (result.decision === 'block') output.decision = 'block';
   if (result.reason) output.reason = result.reason;

@@ -1,6 +1,5 @@
 
 import type { Response } from 'express';
-import type { RestartGuard } from './worker/RestartGuard.js';
 
 export interface ConversationMessage {
   role: 'user' | 'assistant';
@@ -25,13 +24,17 @@ export interface ActiveSession {
   claimedMessageIds: number[];
   conversationHistory: ConversationMessage[];  // Shared conversation history for provider switching
   currentProvider: 'claude' | 'gemini' | 'openrouter' | 'custom' | null;  // Track which provider is currently running
-  consecutiveRestarts: number;  // DEPRECATED: use restartGuard. Kept for logging compat.
-  consecutiveEmptyResponses: number;  // Track consecutive AI empty responses to detect stuck sessions
-  restartGuard?: RestartGuard;
+  consecutiveRestarts: number;
+  /**
+   * Consecutive non-XML (idle/prose/poisoned) observer outputs. Reset to 0 on a
+   * valid parse. When it reaches the recovery threshold the SDK session is
+   * killed and respawned so a poisoned session can't wedge the pipeline at zero
+   * (plan-11, #2485).
+   */
+  consecutiveInvalidOutputs: number;
   forceInit?: boolean;  // Force fresh SDK session (skip resume)
   idleTimedOut?: boolean;  // Set when session exits due to idle timeout (prevents restart loop)
-  completionRequested?: boolean;  // Set when session-complete control message is processed
-  lastGeneratorActivity: number;  // Timestamp of last generator progress (for stale detection, Issue #1099)
+  lastGeneratorActivity: number;
   // Tier routing: model override per session based on queue complexity
   modelOverride?: string;
   lastSummaryStored?: boolean;
@@ -42,7 +45,7 @@ export interface ActiveSession {
 }
 
 export interface PendingMessage {
-  type: 'observation' | 'summarize' | 'complete';
+  type: 'observation' | 'summarize';
   tool_name?: string;
   tool_input?: any;
   tool_response?: any;

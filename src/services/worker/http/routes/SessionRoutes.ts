@@ -131,8 +131,7 @@ export class SessionRoutes extends BaseRouteHandler {
       provider === 'gemini' ? 'Gemini' :
       'Claude SDK';
 
-    const pendingStore = this.sessionManager.getPendingMessageStore();
-    const actualQueueDepth = await pendingStore.getPendingCount(session.sessionDbId);
+    const actualQueueDepth = this.sessionManager.getMessageBuffer().getPendingCount(session.sessionDbId);
 
     logger.info('SESSION', `Generator auto-starting (${source}) using ${agentName}`, {
       sessionId: session.sessionDbId,
@@ -155,7 +154,7 @@ export class SessionRoutes extends BaseRouteHandler {
         const errorMsg = error instanceof Error ? error.message : String(error);
 
         if (errorMsg.includes('code 143') || errorMsg.includes('signal SIGTERM')) {
-          logger.warn('SESSION', 'Generator killed by external signal — aborting session to prevent respawn', {
+          logger.warn('SESSION', 'Generator killed by external signal', {
             sessionId: session.sessionDbId,
             provider,
             error: errorMsg
@@ -164,26 +163,14 @@ export class SessionRoutes extends BaseRouteHandler {
           return;
         }
 
+        // No retry: the generator failed, the in-RAM batch is dropped, and the
+        // transcript is the recovery path. The next observation ingest will
+        // start a fresh generator via ensureGeneratorRunning.
         logger.error('SESSION', `Generator failed`, {
           sessionId: session.sessionDbId,
           provider: provider,
           error: errorMsg
         }, error);
-
-        try {
-          const reset = await this.sessionManager.resetProcessingToPending(session.sessionDbId);
-          if (reset > 0) {
-            logger.warn('SESSION', `Reset processing messages after generator error`, {
-              sessionId: session.sessionDbId,
-              reset
-            });
-          }
-        } catch (dbError) {
-          const normalizedDbError = dbError instanceof Error ? dbError : new Error(String(dbError));
-          logger.error('HTTP', 'Failed to reset processing messages after generator error', {
-            sessionId: session.sessionDbId
-          }, normalizedDbError);
-        }
       })
       .finally(async () => {
         const reason = session.abortReason ?? null;
@@ -191,12 +178,6 @@ export class SessionRoutes extends BaseRouteHandler {
         await handleGeneratorExit(session, reason, {
           sessionManager: this.sessionManager,
           completionHandler: this.completionHandler,
-          restartGenerator: (s, restartSource) => {
-            void (async () => {
-              await this.applyTierRouting(s);
-              await this.startGeneratorWithProvider(s, this.getSelectedProvider(), restartSource);
-            })();
-          },
         });
       });
   }
@@ -313,38 +294,14 @@ export class SessionRoutes extends BaseRouteHandler {
       return;
     }
 
-    const wasCompleted = store.isSessionCompleted(sessionDbId);
-
     const cleanedLastAssistantMessage = last_assistant_message
       ? stripMemoryTagsFromPrompt(String(last_assistant_message))
       : last_assistant_message;
 
-    // Summarize is allowed even for completed sessions: stop-hook can race complete→summarize.
-    // If we're already completed, re-queue summarize + a completion control message so the
-    // session can finalize deterministically without resurrecting observations.
-    // NOT calling markSessionActive(): late-summarize must not re-open the gate for new observations.
-    if (wasCompleted) {
-      logger.info('SESSION', 'Late summarize for completed session (re-queueing completion)', {
-        contentSessionId,
-        sessionDbId
-      });
-
-      const pendingStore = this.sessionManager.getPendingMessageStore();
-      await pendingStore.clearPendingComplete(sessionDbId);
-
-      await this.sessionManager.queueSummarize(sessionDbId, cleanedLastAssistantMessage);
-      await this.sessionManager.queueComplete(sessionDbId);
-
-      this.ensureGeneratorRunning(sessionDbId, 'summarize-late');
-
-      // Broadcast summarize queued event
-      this.eventBroadcaster.broadcastSummarizeQueued();
-
-      res.json({ status: 'queued' });
-      return;
-    }
-
-    // Queue summarize (normal path)
+    // Queue summarize. Completed-session finalization is generator-exit-driven via
+    // SessionCompletionHandler (upstream architecture), so no completion control
+    // message is queued here. Late summarize after completion is harmless: finalizeSession
+    // is idempotent (skips when status is already 'completed').
     await this.sessionManager.queueSummarize(sessionDbId, cleanedLastAssistantMessage);
 
     await this.ensureGeneratorRunning(sessionDbId, 'summarize');
@@ -370,8 +327,7 @@ export class SessionRoutes extends BaseRouteHandler {
       return;
     }
 
-    const pendingStore = this.sessionManager.getPendingMessageStore();
-    const queueLength = await pendingStore.getPendingCount(sessionDbId);
+    const queueLength = this.sessionManager.getMessageBuffer().getPendingCount(sessionDbId);
 
     res.json({
       status: 'active',
@@ -425,15 +381,8 @@ export class SessionRoutes extends BaseRouteHandler {
 
     const sessionDbId = store.createSDKSession(contentSessionId, project, prompt, customTitle, platformSource);
 
-    // Session lifecycle: init always re-activates the session and cancels any stale completion request.
+    // Session lifecycle: init re-activates the session row.
     store.markSessionActive(sessionDbId);
-    const clearedComplete = this.sessionManager.getPendingMessageStore().clearPendingComplete(sessionDbId);
-    if (clearedComplete > 0) {
-      logger.info('SESSION', 'Cleared stale completion control message(s) on init', {
-        sessionId: sessionDbId,
-        cleared: clearedComplete
-      });
-    }
 
     // Verify session creation with DB lookup
     const dbSession = store.getSessionById(sessionDbId);
@@ -553,8 +502,7 @@ export class SessionRoutes extends BaseRouteHandler {
 
     session.modelOverride = undefined;
 
-    const pendingStore = this.sessionManager.getPendingMessageStore();
-    const pending = await pendingStore.peekPendingTypes(session.sessionDbId);
+    const pending = this.sessionManager.getMessageBuffer().peekTypes(session.sessionDbId);
 
     if (pending.length === 0) {
       session.modelOverride = undefined;

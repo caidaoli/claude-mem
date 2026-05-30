@@ -1,4 +1,8 @@
-import { describe, expect, it, mock } from 'bun:test';
+import { afterAll, describe, expect, it, mock } from 'bun:test';
+
+import * as realWorkerUtils from '../../src/shared/worker-utils.js';
+
+const realWorkerUtilsSnapshot = { ...realWorkerUtils };
 
 const workerCalls: Array<{ path: string; body?: unknown }> = [];
 
@@ -13,6 +17,10 @@ mock.module('../../src/shared/worker-utils.js', () => ({
     return Promise.resolve(new Response('{"ok":true}', { status: 200 }));
   },
 }));
+
+afterAll(() => {
+  mock.module('../../src/shared/worker-utils.js', () => realWorkerUtilsSnapshot);
+});
 
 describe('TranscriptEventProcessor session_end', () => {
   it('queues a summary request from Codex transcript session_end events', async () => {
@@ -71,9 +79,8 @@ describe('TranscriptEventProcessor session_end', () => {
   });
 
   it('keeps the default Codex transcript schema in the summary producer path', async () => {
-    const { SAMPLE_CONFIG } = await import('../../src/services/transcripts/config.js');
-    const codexSchema = SAMPLE_CONFIG.schemas?.codex;
+    const { CODEX_SAMPLE_SCHEMA } = await import('../../src/services/transcripts/config.js');
 
-    expect(codexSchema?.events.some(event => event.action === 'session_end')).toBe(true);
+    expect(CODEX_SAMPLE_SCHEMA.events.some(event => event.action === 'session_end')).toBe(true);
   });
 });

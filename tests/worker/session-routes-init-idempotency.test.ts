@@ -1,5 +1,4 @@
 import { describe, it, expect, mock } from 'bun:test';
-import express from 'express';
 
 import { SessionRoutes } from '../../src/services/worker/http/routes/SessionRoutes.js';
 
@@ -18,103 +17,87 @@ function createMinimalEventBroadcaster() {
   } as any;
 }
 
-describe('SessionRoutes init idempotency', () => {
-  it('does not start generator when /sessions/:id/init is called while running', async () => {
-    const session = {
-      sessionDbId: 1,
-      contentSessionId: 'cid-1',
-      memorySessionId: null,
-      project: 'p',
-      userPrompt: 'u',
-      pendingMessages: [],
-      abortController: new AbortController(),
-      generatorPromise: Promise.resolve(),
-      lastPromptNumber: 1,
-      startTime: Date.now(),
-      cumulativeInputTokens: 0,
-      cumulativeOutputTokens: 0,
-      earliestPendingTimestamp: null,
-      conversationHistory: [],
-      currentProvider: 'custom'
-    } as any;
+// ensureGeneratorRunning is the single guard that owns generator-restart
+// idempotency (upstream v13.4.0 moved lifecycle here): when a session already
+// has a live generatorPromise, a second call must NOT spin up another generator.
+// Exercising the guard directly is more faithful than the old path-based
+// /sessions/:id/init HTTP route, which no longer exists.
+function buildRoutes() {
+  // One spy shared across every provider so the assertion holds regardless of
+  // which provider the ambient env selects in getSelectedProvider().
+  const startSessionSpy = mock(() => new Promise<void>(() => {})); // stays pending: .finally never fires mid-test
 
-    const sessionManager = {
-      initializeSession: mock(() => session),
-      getSession: mock(() => session),
-      queueObservation: mock(() => {}),
-      queueSummarize: mock(() => {}),
-      getPendingMessageStore: mock(() => ({
-        markSessionMessagesFailed: () => 0,
-        getPendingCount: () => 0,
-      })),
-      deleteSession: mock(async () => {})
-    } as any;
+  let session: any;
+  const sessionManager = {
+    getSession: mock(() => session),
+    getMessageBuffer: () => ({
+      peekTypes: () => [],
+      getPendingCount: () => 0,
+    }),
+  } as any;
 
-    const sessionStore = {
-      getLatestUserPrompt: mock(() => null),
-    } as any;
+  const dbManager = {
+    getSessionStore: () => ({}),
+    getSessionById: () => ({ project: 'p' }),
+  } as any;
 
-    const dbManager = {
-      getSessionStore: () => sessionStore,
-      getSessionById: () => ({ project: 'p' }),
-      getChromaSync: () => ({ syncUserPrompt: async () => {} }),
-    } as any;
+  const agent = { startSession: startSessionSpy } as any;
+  const completionHandler = { finalizeSession: mock(async () => {}) } as any;
 
-    const startSessionSpy = mock(async () => {});
+  const routes = new SessionRoutes(
+    sessionManager,
+    dbManager,
+    agent, // sdk
+    agent, // gemini
+    agent, // openrouter
+    agent, // custom
+    createMinimalEventBroadcaster(),
+    createMinimalWorkerService(),
+    completionHandler
+  );
 
-    const sdkAgent = { startSession: startSessionSpy } as any;
-    const geminiAgent = { startSession: startSessionSpy } as any;
-    const openRouterAgent = { startSession: startSessionSpy } as any;
-    const customAgent = { startSession: startSessionSpy } as any;
+  const makeSession = (overrides: Record<string, unknown> = {}) => ({
+    sessionDbId: 1,
+    contentSessionId: 'cid-1',
+    memorySessionId: null,
+    project: 'p',
+    userPrompt: 'u',
+    lastPromptNumber: 1,
+    startTime: Date.now(),
+    conversationHistory: [],
+    abortController: new AbortController(),
+    generatorPromise: null,
+    currentProvider: undefined,
+    ...overrides,
+  });
 
-    const routes = new SessionRoutes(
-      sessionManager,
-      dbManager,
-      sdkAgent,
-      geminiAgent,
-      openRouterAgent,
-      customAgent,
-      createMinimalEventBroadcaster(),
-      createMinimalWorkerService()
-    );
+  return { routes, startSessionSpy, setSession: (s: any) => { session = s; }, makeSession };
+}
 
-    const app = express();
-    app.use(express.json());
-    routes.setupRoutes(app);
+describe('SessionRoutes generator idempotency', () => {
+  it('does not start a second generator when one is already running', async () => {
+    const { routes, startSessionSpy, setSession, makeSession } = buildRoutes();
+    // generatorPromise already live → guard must short-circuit.
+    setSession(makeSession({ generatorPromise: Promise.resolve(), currentProvider: 'custom' }));
 
-    // Same session init twice while generator is already running.
-    const body = {
-      userPrompt: 'hello',
-      promptNumber: 2,
-    };
+    await routes.ensureGeneratorRunning(1, 'init');
+    await routes.ensureGeneratorRunning(1, 'init');
 
-    const server = app.listen(0);
-    const address = server.address();
-    if (!address || typeof address === 'string') throw new Error('failed to bind test server');
-    const base = `http://127.0.0.1:${address.port}`;
+    expect(startSessionSpy.mock.calls.length).toBe(0);
+  });
 
-    try {
-      const r1 = await fetch(`${base}/sessions/1/init`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      expect(r1.status).toBe(200);
+  it('starts exactly one generator when the session is idle', async () => {
+    const { routes, startSessionSpy, setSession, makeSession } = buildRoutes();
+    const session = makeSession({ generatorPromise: null });
+    setSession(session);
 
-      const r2 = await fetch(`${base}/sessions/1/init`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      expect(r2.status).toBe(200);
+    await routes.ensureGeneratorRunning(1, 'init');
 
-      // Generator is already running, duplicate init must not restart it.
-      expect(startSessionSpy.mock.calls.length).toBe(0);
-      expect(sessionManager.initializeSession.mock.calls.length).toBe(2);
-    } finally {
-      await new Promise<void>((resolve, reject) => {
-        server.close(err => err ? reject(err) : resolve());
-      });
-    }
+    expect(startSessionSpy.mock.calls.length).toBe(1);
+    expect(session.generatorPromise).not.toBeNull();
+
+    // Second call now sees a live generatorPromise → no restart.
+    await routes.ensureGeneratorRunning(1, 'init');
+    expect(startSessionSpy.mock.calls.length).toBe(1);
   });
 });

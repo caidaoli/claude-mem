@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach, mock } from 'bun:test';
+import { afterAll, describe, it, expect, beforeEach, mock } from 'bun:test';
+import * as realModeManager from '../../../src/services/domain/ModeManager.js';
+
+const realModeManagerSnapshot = { ...realModeManager };
 
 mock.module('../../../src/services/domain/ModeManager.js', () => ({
   ModeManager: {
@@ -39,6 +42,10 @@ mock.module('../../../src/services/domain/ModeManager.js', () => ({
     }),
   },
 }));
+
+afterAll(() => {
+  mock.module('../../../src/services/domain/ModeManager.js', () => realModeManagerSnapshot);
+});
 
 import { ResultFormatter } from '../../../src/services/worker/search/ResultFormatter.js';
 import type { ObservationSearchResult, SessionSummarySearchResult, UserPromptSearchResult, SearchResults } from '../../../src/services/worker/search/types.js';

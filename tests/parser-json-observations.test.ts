@@ -1,5 +1,8 @@
-import { describe, it, expect, mock, spyOn, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, mock, spyOn, beforeEach, afterEach, afterAll } from 'bun:test';
 import { logger } from '../src/utils/logger.js';
+import * as realModeManager from '../src/services/domain/ModeManager.js';
+
+const realModeManagerSnapshot = { ...realModeManager };
 
 // parseObservationsJson depends on ModeManager for valid observation types.
 // Mock it to keep tests fast and deterministic.
@@ -15,6 +18,10 @@ mock.module('../src/services/domain/ModeManager.js', () => ({
     }),
   },
 }));
+
+afterAll(() => {
+  mock.module('../src/services/domain/ModeManager.js', () => realModeManagerSnapshot);
+});
 
 import { parseObservationsJson } from '../src/sdk/parser.js';
 

@@ -15,6 +15,7 @@ export class ModeManager {
     
     const possiblePaths = [
       join(packageRoot, 'modes'),           // Production (plugin/modes)
+      join(packageRoot, 'plugin', 'modes'), // Development from repo-root entrypoints
       join(packageRoot, '..', 'plugin', 'modes'), // Development (src/../plugin/modes)
     ];
 

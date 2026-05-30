@@ -31,7 +31,7 @@ export interface ObservationSSEPayload {
 export interface SummarySSEPayload {
   id: number;
   session_id: string;
-  memory_session_id: string;
+  memory_session_id: string | null;
   platform_source: string;
   request: string | null;
   investigated: string | null;
@@ -52,8 +52,6 @@ export interface StorageResult {
   observationIds: number[];
   summaryId: number | null;
   createdAtEpoch: number;
-  /** Actual epoch used for the summary (may differ when adjusted to maintain invariant) */
-  summaryCreatedAtEpoch: number | null;
 }
 
 export interface ResponseProcessingContext {

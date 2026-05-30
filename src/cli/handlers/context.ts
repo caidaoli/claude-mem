@@ -1,4 +1,9 @@
-
+// IO discipline (see src/shared/hook-io.ts):
+// - hookSpecificOutput.additionalContext → MODEL_CONTEXT (model consumes; via stdout JSON)
+// - systemMessage                        → USER_HINT (user-visible; via stdout JSON systemMessage)
+// This handler is PURE: it returns a HookResult and MUST NOT call
+// process.stderr.write / process.stdout.write / console.* / process.exit.
+// logger.* calls are DIAGNOSTIC and route through hook-io's stderr path.
 import type { EventHandler, NormalizedHookInput, HookResult } from '../types.js';
 import {
   executeWithWorkerFallback,
@@ -11,40 +16,9 @@ import { logger } from '../../utils/logger.js';
 import { loadFromFileOnce } from '../../shared/hook-settings.js';
 import { readStaleMarker } from '../../shared/oauth-token.js';
 
-function buildCodexCompactContext(staleReason: string | undefined): string {
-  const compactContext = [
-    '# claude-mem',
-    'claude-mem is available for this project.',
-    'Recent memory is compact on Codex because SessionStart hook output is visible.',
-    'Search history with the mem-search skill and fetch details with get_observations([IDs]) when prior work matters.',
-  ].join('\n');
-
-  if (!staleReason) {
-    return compactContext;
-  }
-
-  return [
-    `[claude-mem] Claude Desktop OAuth token is stale: ${staleReason}`,
-    'Please re-login via Claude Desktop to refresh the token.',
-    '',
-    compactContext,
-  ].join('\n');
-}
-
 export const contextHandler: EventHandler = {
   async execute(input: NormalizedHookInput): Promise<HookResult> {
     const cwd = input.cwd ?? process.cwd();
-    const platform = input.platform;
-
-    if (platform === 'codex') {
-      return {
-        hookSpecificOutput: {
-          hookEventName: 'SessionStart',
-          additionalContext: buildCodexCompactContext(readStaleMarker()),
-        },
-      };
-    }
-
     const context = getProjectContext(cwd);
     const port = getWorkerPort();
 
@@ -86,19 +60,19 @@ export const contextHandler: EventHandler = {
         : hint;
     }
 
-    const shouldShowTerminalOutput = showTerminalOutput && platform !== 'codex';
-
     let coloredTimeline = '';
-    if (shouldShowTerminalOutput) {
+    if (showTerminalOutput) {
       const colorResult = await executeWithWorkerFallback<string>(colorApiPath, 'GET');
       if (!isWorkerFallback(colorResult) && typeof colorResult === 'string') {
         coloredTimeline = colorResult.trim();
       }
     }
 
+    const platform = input.platform;
+
     const displayContent = coloredTimeline || (platform === 'gemini-cli' || platform === 'gemini' ? additionalContext : '');
 
-    const systemMessage = shouldShowTerminalOutput && displayContent
+    const systemMessage = showTerminalOutput && displayContent
       ? `${displayContent}\n\nView Observations Live @ http://localhost:${port}`
       : undefined;
 

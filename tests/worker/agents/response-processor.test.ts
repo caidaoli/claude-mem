@@ -9,38 +9,6 @@ mock.module('../../../src/shared/worker-utils.js', () => ({
   getWorkerPort: () => 37777,
 }));
 
-// Mock paths for settings
-mock.module('../../../src/shared/paths.js', () => ({
-  USER_SETTINGS_PATH: '/mock/path/settings.json',
-}));
-
-// Track if updateFolderClaudeMdFiles is called
-let updateFolderClaudeMdFilesCalled = false;
-let updateFolderClaudeMdFilesArgs: any[] = [];
-
-mock.module('../../../src/utils/claude-md-utils.js', () => ({
-  updateFolderClaudeMdFiles: (...args: any[]) => {
-    updateFolderClaudeMdFilesCalled = true;
-    updateFolderClaudeMdFilesArgs = args;
-    return Promise.resolve();
-  },
-}));
-
-// Track settings mock state - default is disabled
-let mockSettingsEnabled = false;
-
-mock.module('../../../src/shared/SettingsDefaultsManager.js', () => ({
-  SettingsDefaultsManager: {
-    loadFromFile: () => ({
-      CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED: mockSettingsEnabled ? 'true' : 'false',
-    }),
-    getAllDefaults: () => ({
-      CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED: 'false',
-    }),
-  },
-}));
-
-// Mock the ModeManager
 mock.module('../../../src/services/domain/ModeManager.js', () => ({
   ModeManager: {
     getInstance: () => ({
@@ -78,12 +46,6 @@ describe('ResponseProcessor', () => {
   let mockWorker: WorkerRef;
 
   beforeEach(() => {
-    // Reset feature flag tracking
-    updateFolderClaudeMdFilesCalled = false;
-    updateFolderClaudeMdFilesArgs = [];
-    mockSettingsEnabled = false;  // Default to disabled
-
-    // Spy on logger to suppress output
     loggerSpies = [
       spyOn(logger, 'info').mockImplementation(() => {}),
       spyOn(logger, 'debug').mockImplementation(() => {}),
@@ -91,14 +53,9 @@ describe('ResponseProcessor', () => {
       spyOn(logger, 'error').mockImplementation(() => {}),
     ];
 
-    mockStoreObservations = mock((
-      _memorySessionId: string,
-      _project: string,
-      observations: unknown[],
-      summary: unknown | null
-    ) => ({
-      observationIds: observations.map((_, index) => index + 1),
-      summaryId: summary ? 1 : null,
+    mockStoreObservations = mock(() => ({
+      observationIds: [1, 2],
+      summaryId: 1,
       createdAtEpoch: 1700000000000,
     } as StorageResult));
 
@@ -118,14 +75,12 @@ describe('ResponseProcessor', () => {
     } as unknown as DatabaseManager;
 
     mockSessionManager = {
-      clearPendingForSession: mock(() => {}),
       getMessageIterator: async function* () {
         yield* [];
       },
       getPendingMessageStore: () => ({
         markProcessed: mock(() => {}),
         confirmProcessed: mock(() => {}),  // CLAIM-CONFIRM pattern: confirm after successful storage
-        resetProcessingToPending: mock(() => 0),
         cleanupProcessed: mock(() => 0),
         resetStuckMessages: mock(() => 0),
       }),
@@ -249,80 +204,9 @@ describe('ResponseProcessor', () => {
       expect(observations[0].type).toBe('discovery');
       expect(observations[1].type).toBe('bugfix');
     });
-
-    it('should discard vacuous observation when it only reports no new changes', async () => {
-      const session = createMockSession();
-      const responseText = `
-        <observation>
-          <type>discovery</type>
-          <title>持续观察go测试</title>
-          <subtitle>无新增执行或变更</subtitle>
-          <narrative>尚未接收到额外的工具执行信息，因此现阶段观察记录继续保持之前的测试和环境读取结果。</narrative>
-          <facts>
-            <fact>当前未监测到新的工具调用或代码变更</fact>
-            <fact>最近操作依旧围绕运行测试和审查main/.env内容</fact>
-          </facts>
-          <concepts><concept>what-changed</concept></concepts>
-          <files_read></files_read>
-          <files_modified></files_modified>
-        </observation>
-      `;
-
-      await processAgentResponse(
-        responseText,
-        session,
-        mockDbManager,
-        mockSessionManager,
-        mockWorker,
-        100,
-        null,
-        'TestAgent'
-      );
-
-      const [, , observations] = mockStoreObservations.mock.calls[0];
-      expect(observations).toHaveLength(0);
-    });
   });
 
-  describe('non-XML observer responses (fail-fast — plan 03 phase 2)', () => {
-    it('treats empty JSON object from Custom observation mode as a valid skip', async () => {
-      mockStoreObservations = mock(() => ({
-        observationIds: [],
-        summaryId: null,
-        createdAtEpoch: 1700000000000,
-      } as StorageResult));
-
-      const confirmClaimedMessages = mock(() => Promise.resolve(0));
-      mockSessionManager = {
-        getMessageIterator: async function* () { yield* []; },
-        getPendingMessageStore: () => ({ confirmProcessed: mock(() => {}) }),
-        confirmClaimedMessages,
-      } as unknown as SessionManager;
-
-      const session = createMockSession();
-
-      await processAgentResponse(
-        '{}',
-        session,
-        mockDbManager,
-        mockSessionManager,
-        mockWorker,
-        23,
-        null,
-        'Custom',
-        undefined,
-        undefined,
-        {
-          parseJsonObservation: true,
-          observationText: '{}',
-        }
-      );
-
-      expect(mockStoreObservations).toHaveBeenCalledTimes(1);
-      expect(confirmClaimedMessages).toHaveBeenCalledWith(session.sessionDbId);
-      expect(logger.warn).not.toHaveBeenCalled();
-    });
-
+  describe('non-XML observer responses', () => {
     it('warns and clears pending work when the observer returns non-XML prose', async () => {
       const confirmClaimedMessages = mock(() => Promise.resolve(0));
       mockSessionManager = {
@@ -347,8 +231,8 @@ describe('ResponseProcessor', () => {
 
       expect(logger.warn).toHaveBeenCalledWith(
         'PARSER',
-        expect.stringMatching(/^TestAgent returned non-XML response;/),
-        expect.objectContaining({ sessionId: 1, preview: responseText })
+        expect.stringMatching(/^TestAgent returned non-XML prose response/),
+        expect.objectContaining({ sessionId: 1, outputClass: 'prose' })
       );
       expect(confirmClaimedMessages).toHaveBeenCalledWith(1);
       expect(session.earliestPendingTimestamp).toBeNull();
@@ -475,14 +359,7 @@ describe('ResponseProcessor', () => {
       expect(memorySessionId).toBe('memory-session-456');
       expect(project).toBe('test-project');
       expect(observations).toHaveLength(1);
-      expect(summary).toEqual({
-        request: 'Test request',
-        investigated: 'Test investigated',
-        learned: 'Test learned',
-        completed: 'Test completed',
-        next_steps: 'Test next steps',
-        notes: null,
-      });
+      expect(summary).toBeNull();
       expect(promptNumber).toBe(5);
       expect(tokens).toBe(100);
       expect(timestamp).toBe(1700000000000);
@@ -665,17 +542,8 @@ describe('ResponseProcessor', () => {
       expect(session.earliestPendingTimestamp).toBeNull();
     });
 
-    it('should clear pending messages after processing', async () => {
+    it('should call broadcastProcessingStatus after processing', async () => {
       const session = createMockSession();
-      const clearPendingForSession = mock(() => {});
-      mockSessionManager = {
-        clearPendingForSession,
-        getMessageIterator: async function* () { yield* []; },
-        getPendingMessageStore: () => ({
-          confirmProcessed: mock(() => {}),
-          resetProcessingToPending: mock(() => 0),
-        }),
-      } as unknown as SessionManager;
       const responseText = `
         <observation>
           <type>discovery</type>
@@ -709,7 +577,7 @@ describe('ResponseProcessor', () => {
         'TestAgent'
       );
 
-      expect(clearPendingForSession).toHaveBeenCalledWith(session.sessionDbId);
+      expect(mockBroadcastProcessingStatus).toHaveBeenCalled();
     });
   });
 
@@ -728,49 +596,6 @@ describe('ResponseProcessor', () => {
           <files_modified></files_modified>
         </observation>
       `;
-
-      mockStoreObservations = mock(() => ({
-        observationIds: [1],
-        summaryId: null,
-        createdAtEpoch: 1700000000000,
-      }));
-      (mockDbManager.getSessionStore as any) = () => ({
-        storeObservations: mockStoreObservations,
-        ensureMemorySessionIdRegistered: mock(() => {}),
-        getSessionById: mock(() => ({ memory_session_id: 'memory-session-456' })),
-      });
-
-      await processAgentResponse(
-        responseText,
-        session,
-        mockDbManager,
-        mockSessionManager,
-        mockWorker,
-        100,
-        null,
-        'TestAgent'
-      );
-
-      expect(session.conversationHistory).toHaveLength(1);
-      expect(session.conversationHistory[0].role).toBe('assistant');
-      expect(session.conversationHistory[0].content).toBe(responseText);
-    });
-
-    it('should not duplicate assistant response when already appended', async () => {
-      const responseText = `
-        <observation>
-          <type>discovery</type>
-          <title>Test</title>
-          <facts></facts>
-          <concepts></concepts>
-          <files_read></files_read>
-          <files_modified></files_modified>
-        </observation>
-      `;
-
-      const session = createMockSession({
-        conversationHistory: [{ role: 'assistant', content: responseText }],
-      });
 
       mockStoreObservations = mock(() => ({
         observationIds: [1],
@@ -829,133 +654,6 @@ describe('ResponseProcessor', () => {
 
       expect(resetProcessingToPending).toHaveBeenCalledWith(1);
       expect(mockStoreObservations).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED feature flag', () => {
-    it('should NOT call updateFolderClaudeMdFiles when feature is disabled (default)', async () => {
-      const session = createMockSession();
-      const responseText = `
-        <observation>
-          <type>discovery</type>
-          <title>Test observation</title>
-          <narrative>Test narrative</narrative>
-          <facts></facts>
-          <concepts></concepts>
-          <files_read><file>src/test.ts</file></files_read>
-          <files_modified><file>src/modified.ts</file></files_modified>
-        </observation>
-      `;
-
-      mockStoreObservations = mock(() => ({
-        observationIds: [1],
-        summaryId: null,
-        createdAtEpoch: 1700000000000,
-      }));
-      (mockDbManager.getSessionStore as any) = () => ({
-        storeObservations: mockStoreObservations,
-        ensureMemorySessionIdRegistered: mock(() => {}),
-      });
-
-      // Feature disabled by default (mockSettingsEnabled = false in beforeEach)
-      await processAgentResponse(
-        responseText,
-        session,
-        mockDbManager,
-        mockSessionManager,
-        mockWorker,
-        100,
-        null,
-        'TestAgent'
-      );
-
-      // updateFolderClaudeMdFiles should NOT be called when feature is disabled
-      expect(updateFolderClaudeMdFilesCalled).toBe(false);
-    });
-
-    it('should call updateFolderClaudeMdFiles when feature is enabled', async () => {
-      const session = createMockSession();
-      const responseText = `
-        <observation>
-          <type>discovery</type>
-          <title>Test observation</title>
-          <narrative>Test narrative</narrative>
-          <facts></facts>
-          <concepts></concepts>
-          <files_read><file>src/test.ts</file></files_read>
-          <files_modified><file>src/modified.ts</file></files_modified>
-        </observation>
-      `;
-
-      mockStoreObservations = mock(() => ({
-        observationIds: [1],
-        summaryId: null,
-        createdAtEpoch: 1700000000000,
-      }));
-      (mockDbManager.getSessionStore as any) = () => ({
-        storeObservations: mockStoreObservations,
-        ensureMemorySessionIdRegistered: mock(() => {}),
-      });
-
-      // Enable the feature
-      mockSettingsEnabled = true;
-
-      await processAgentResponse(
-        responseText,
-        session,
-        mockDbManager,
-        mockSessionManager,
-        mockWorker,
-        100,
-        null,
-        'TestAgent'
-      );
-
-      // updateFolderClaudeMdFiles SHOULD be called when feature is enabled
-      expect(updateFolderClaudeMdFilesCalled).toBe(true);
-      expect(updateFolderClaudeMdFilesArgs[1]).toBe('test-project');
-    });
-
-    it('should NOT call updateFolderClaudeMdFiles when enabled but no file paths', async () => {
-      const session = createMockSession();
-      const responseText = `
-        <observation>
-          <type>discovery</type>
-          <title>Test observation</title>
-          <narrative>Test narrative</narrative>
-          <facts></facts>
-          <concepts></concepts>
-          <files_read></files_read>
-          <files_modified></files_modified>
-        </observation>
-      `;
-
-      mockStoreObservations = mock(() => ({
-        observationIds: [1],
-        summaryId: null,
-        createdAtEpoch: 1700000000000,
-      }));
-      (mockDbManager.getSessionStore as any) = () => ({
-        storeObservations: mockStoreObservations,
-        ensureMemorySessionIdRegistered: mock(() => {}),
-      });
-
-      // Enable the feature
-      mockSettingsEnabled = true;
-
-      await processAgentResponse(
-        responseText,
-        session,
-        mockDbManager,
-        mockSessionManager,
-        mockWorker,
-        100,
-        null,
-        'TestAgent'
-      );
-
-      // updateFolderClaudeMdFiles should NOT be called - no file paths
-      expect(updateFolderClaudeMdFilesCalled).toBe(false);
     });
   });
 

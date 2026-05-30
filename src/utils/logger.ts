@@ -2,6 +2,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { paths } from '../shared/paths.js';
+import { emitDiagnostic } from '../shared/hook-io.js';
 
 export enum LogLevel {
   DEBUG = 0,
@@ -25,6 +26,7 @@ export type Component =
   | 'DEDUP'
   | 'ENV'
   | 'FOLDER_INDEX'
+  | 'GIT'
   | 'HOOK'
   | 'HTTP'
   | 'IMPORT'
@@ -46,6 +48,7 @@ export type Component =
   | 'SYSTEM'
   | 'TELEGRAM'
   | 'TRANSCRIPT'
+  | 'VIEWER'
   | 'WINDSURF'
   | 'WORKER';
 
@@ -268,10 +271,14 @@ class Logger {
       try {
         appendFileSync(this.logFilePath, logLine + '\n', 'utf8');
       } catch (error: unknown) {
-        process.stderr.write(`[LOGGER] Failed to write to log file: ${error instanceof Error ? error.message : String(error)}\n`);
+        // DIAGNOSTIC: route through hook-io so the message bypasses the Phase 2
+        // hook stderr buffer (#2292). Outside the hook context emitDiagnostic
+        // writes straight to real stderr, so non-hook callers are unaffected.
+        emitDiagnostic(`[LOGGER] Failed to write to log file: ${error instanceof Error ? error.message : String(error)}\n`);
       }
     } else {
-      process.stderr.write(logLine + '\n');
+      // DIAGNOSTIC: see note above.
+      emitDiagnostic(logLine + '\n');
     }
   }
 

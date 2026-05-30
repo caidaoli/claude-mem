@@ -1,4 +1,7 @@
-import { describe, it, expect, mock, beforeEach } from 'bun:test';
+import { afterAll, describe, it, expect, mock, beforeEach } from 'bun:test';
+import * as realModeManager from '../../../src/services/domain/ModeManager.js';
+
+const realModeManagerSnapshot = { ...realModeManager };
 
 mock.module('../../../src/services/domain/ModeManager.js', () => ({
   ModeManager: {
@@ -25,6 +28,10 @@ mock.module('../../../src/services/domain/ModeManager.js', () => ({
     }),
   },
 }));
+
+afterAll(() => {
+  mock.module('../../../src/services/domain/ModeManager.js', () => realModeManagerSnapshot);
+});
 
 import {
   renderAgentHeader,

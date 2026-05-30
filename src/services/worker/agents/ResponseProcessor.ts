@@ -1,7 +1,8 @@
 
 import { logger } from '../../../utils/logger.js';
-import { parseObservations, parseObservationsJson, parseSummary, parseSummaryJson, type ParsedObservation, type ParsedSummary } from '../../../sdk/parser.js';
-import { SUMMARY_MODE_MARKER } from '../../../sdk/prompts.js';
+import { parseAgentXml, parseObservationsJson, parseSummaryJson, type ParsedObservation, type ParsedSummary, type ParseResult } from '../../../sdk/parser.js';
+import { classifyObserverOutput, previewOutput } from '../../../sdk/output-classifier.js';
+import { verifyCommitHashesInText } from '../../../sdk/commit-verification.js';
 import { ingestSummary } from '../http/shared.js';
 import { updateCursorContextForProject } from '../../integrations/CursorHooksInstaller.js';
 import { notifyTelegram } from '../../integrations/TelegramNotifier.js';
@@ -16,41 +17,27 @@ import type { WorkerRef, StorageResult } from './types.js';
 import { broadcastObservation, broadcastSummary } from './ObservationBroadcaster.js';
 
 /**
- * Options for processAgentResponse
+ * Consecutive non-XML observer outputs tolerated before we kill and respawn the
+ * SDK session (plan-11, #2485). Idle and prose both count; poisoned triggers an
+ * immediate respawn regardless of the count.
+ */
+export const INVALID_OUTPUT_RESPAWN_THRESHOLD = 3;
+
+/**
+ * Options for processAgentResponse. JSON mode is used by CustomAgent / Gemini
+ * (responseMimeType) where observations and summary arrive out-of-band.
  */
 export interface ProcessAgentResponseOptions {
-  /** If true, parse summary as JSON instead of XML (for Gemini with responseMimeType) */
+  /** If true, parse summary as JSON instead of XML. */
   parseJsonSummary?: boolean;
-  /** Separate summary text to parse (when using JSON format, summary comes from different API call) */
+  /** Separate summary text to parse (when the summary comes from a different API call). */
   summaryText?: string;
-  /** If true, parse observations as JSON instead of XML (for CustomAgent with responseMimeType) */
+  /** If true, parse observations as JSON instead of XML. */
   parseJsonObservation?: boolean;
-  /** Separate observation text to parse (when using JSON format) */
+  /** Separate observation text to parse (when using JSON format). */
   observationText?: string;
 }
 
-/**
- * Process agent response text (parse XML, save to database, sync to Chroma, broadcast SSE)
- *
- * This is the unified response processor that handles:
- * 1. Adding response to conversation history (for provider interop)
- * 2. Parsing observations and summaries from XML
- * 3. Atomic database transaction to store observations + summary
- * 4. Async Chroma sync (fire-and-forget, failures are non-critical)
- * 5. SSE broadcast to web UI clients
- * 6. Session cleanup
- *
- * @param text - Response text from the agent
- * @param session - Active session being processed
- * @param dbManager - Database manager for storage operations
- * @param sessionManager - Session manager for message tracking
- * @param worker - Worker reference for SSE broadcasting (optional)
- * @param discoveryTokens - Token cost delta for this response
- * @param originalTimestamp - Original epoch when message was queued (for accurate timestamps)
- * @param agentName - Name of the agent for logging (e.g., 'SDK', 'Gemini', 'OpenRouter')
- * @param projectRoot - Project root path for folder CLAUDE.md updates
- * @param options - Additional options for parsing behavior
- */
 export async function processAgentResponse(
   text: string,
   session: ActiveSession,
@@ -66,81 +53,65 @@ export async function processAgentResponse(
 ): Promise<void> {
   session.lastGeneratorActivity = Date.now();
 
-  // Add assistant response to shared conversation history for provider interop.
-  // Dedup guard: upstream agents (GeminiAgent/OpenRouterAgent) may pre-append the
-  // assistant response before calling processAgentResponse. Since those are upstream
-  // implementations we don't control, guard against duplicates here.
   if (text) {
-    const lastMessage = session.conversationHistory[session.conversationHistory.length - 1];
-    const alreadyAppended = lastMessage?.role === 'assistant' && lastMessage.content === text;
-    if (!alreadyAppended) {
-      session.conversationHistory.push({ role: 'assistant', content: text });
-    }
+    session.conversationHistory.push({ role: 'assistant', content: text });
   }
 
   const parseAsJsonObservation = options?.parseJsonObservation === true;
   const parseAsJsonSummary = options?.parseJsonSummary === true;
   const usesJsonParsing = parseAsJsonObservation || parseAsJsonSummary;
 
-  // Parse observations - JSON or XML based on options
-  let observations: ParsedObservation[];
-  if (parseAsJsonObservation && options?.observationText !== undefined) {
-    // JSON observations: explicitly provided (CustomAgent)
-    observations = parseObservationsJson(options.observationText, session.contentSessionId);
+  // JSON-mode providers (CustomAgent / Gemini with responseMimeType) deliver
+  // observations and summary out-of-band. An empty payload is a valid skip
+  // sentinel per the JSON contract, so a JSON parse is always "valid" — the
+  // non-XML poison/respawn path below is XML-only.
+  let parsed: ParseResult;
+  if (usesJsonParsing) {
+    const jsonObservations = parseAsJsonObservation && options?.observationText !== undefined
+      ? parseObservationsJson(options.observationText, session.contentSessionId)
+      : [];
+    const jsonSummary = parseAsJsonSummary && options?.summaryText
+      ? parseSummaryJson(options.summaryText, session.sessionDbId)
+      : null;
+    parsed = { valid: true, observations: jsonObservations, summary: jsonSummary };
   } else {
-    // XML observations: parse from main response text
-    observations = parseObservations(text, session.contentSessionId);
+    parsed = parseAgentXml(text, session.contentSessionId);
   }
 
-  // Filter vacuous observations (AI generated "nothing to report" instead of skipping)
-  const preFilterCount = observations.length;
-  observations = observations.filter(obs => !isVacuousObservation(obs));
-  if (observations.length < preFilterCount) {
-    logger.info('PARSER', `Discarded ${preFilterCount - observations.length} vacuous observation(s)`, {
-      sessionId: session.sessionDbId
-    });
-  }
+  if (!parsed.valid) {
+    // Classify the non-XML output so a dropped batch is VISIBLE, not silent
+    // (plan-11, #2485). Attach a preview for diagnostics.
+    const outputClass = classifyObserverOutput(text);
+    const preview = previewOutput(text);
 
-  // Detect whether the most recent prompt was a summary request (#1633 fix).
-  // Enables observation-to-summary coercion when XML parsing is used.
-  const lastHistoryEntry = session.conversationHistory.at(-1);
-  const lastUserMessage = lastHistoryEntry?.role === 'user'
-    ? lastHistoryEntry
-    : session.conversationHistory.findLast(m => m.role === 'user') ?? null;
-  const summaryExpected = lastUserMessage?.content?.includes(SUMMARY_MODE_MARKER) ?? false;
+    session.consecutiveInvalidOutputs = (session.consecutiveInvalidOutputs ?? 0) + 1;
 
-  // Parse summary - only if explicitly requested or text contains summary markers
-  let summary: ParsedSummary | null = null;
-  if (parseAsJsonSummary && options?.summaryText) {
-    // JSON summary: explicitly provided
-    summary = parseSummaryJson(options.summaryText, session.sessionDbId);
-  } else if (text.includes('<summary>') || text.includes('<skip_summary') || summaryExpected) {
-    // XML summary: parse if markers present, or when summary was requested (for coercion)
-    summary = parseSummary(text, session.sessionDbId, summaryExpected);
-  }
-
-  // Detect non-XML responses (auth errors, rate limits, garbled output).
-  // JSON-mode providers use an empty object/array/no-payload as a valid skip
-  // sentinel, so the XML fail-fast path must not override that contract.
-  // When the response contains no parseable XML and produced no observations,
-  // drop the queued batch — re-queueing low-signal text creates an observer
-  // loop where the same batch is retried until the restart guard fires or
-  // the provider quota is exhausted (upstream v12.6.4: drain invalid observer
-  // responses; supersedes #1874 mark-as-failed).
-  const isNonXmlResponse = (
-    !usesJsonParsing &&
-    text.trim() &&
-    observations.length === 0 &&
-    !summary &&
-    !/<observation>|<summary>|<skip_summary\b/.test(text)
-  );
-
-  if (isNonXmlResponse) {
-    const preview = text.length > 200 ? `${text.slice(0, 200)}...` : text;
-    logger.warn('PARSER', `${agentName} returned non-XML/empty response — ignoring queued batch`, {
+    logger.warn('PARSER', `${agentName} returned non-XML ${outputClass} response — ignoring queued batch`, {
       sessionId: session.sessionDbId,
+      outputClass,
       preview,
+      consecutiveInvalidOutputs: session.consecutiveInvalidOutputs,
     });
+
+    // Recover from poison (plan-11, #2485): a poisoned closure string means the
+    // SDK session is wedged and will keep emitting garbage — respawn immediately.
+    // For idle/prose, only respawn after N consecutive invalid outputs so we
+    // don't churn the session on benign single-batch misses.
+    const mustRespawn =
+      outputClass === 'poisoned' ||
+      session.consecutiveInvalidOutputs >= INVALID_OUTPUT_RESPAWN_THRESHOLD;
+
+    if (mustRespawn) {
+      logger.error('SESSION', `${agentName} session poisoned — killing and respawning, pending messages preserved`, {
+        sessionId: session.sessionDbId,
+        outputClass,
+        consecutiveInvalidOutputs: session.consecutiveInvalidOutputs,
+        threshold: INVALID_OUTPUT_RESPAWN_THRESHOLD,
+      });
+      await sessionManager.respawnPoisonedSession(session.sessionDbId);
+      return;
+    }
+
     // Plain-text skip responses are intentionally ignored. Re-queueing them
     // creates an observer loop where the same low-signal batch is retried
     // until the restart guard fires or the provider quota is exhausted.
@@ -148,6 +119,10 @@ export async function processAgentResponse(
     session.earliestPendingTimestamp = null;
     return;
   }
+
+  // Valid parse — clear the invalid-output counter so transient misses don't
+  // accumulate toward a respawn across a healthy session.
+  session.consecutiveInvalidOutputs = 0;
 
   if (!session.memorySessionId) {
     logger.warn('SDK', 'memorySessionId not yet captured; deferring storage until next round', {
@@ -160,11 +135,41 @@ export async function processAgentResponse(
     return;
   }
 
-  // Convert nullable fields to empty strings for storeSummary (if summary exists)
+  const { observations, summary } = parsed;
   const summaryForStore = normalizeSummaryForStorage(summary);
 
+  // Verify before persist (plan-11, #2574): the summarizer can fabricate a
+  // nonexistent commit hash while keeping files_modified accurate, poisoning
+  // future context injection. Cross-check any emitted commit hash against
+  // ground truth via `git cat-file -e` in the session's repo and strip
+  // fabricated hashes from the persisted text. projectRoot carries the cwd of
+  // the most recently observed tool-use.
+  if (summaryForStore) {
+    const { fabricated } = verifyCommitHashesInText(
+      [
+        summaryForStore.request,
+        summaryForStore.investigated,
+        summaryForStore.learned,
+        summaryForStore.completed,
+        summaryForStore.next_steps,
+        summaryForStore.notes,
+      ],
+      projectRoot,
+      session.contentSessionId
+    );
+
+    if (fabricated.length > 0) {
+      logger.warn('PARSER', `${agentName} summary referenced fabricated commit hash(es); flagging before persist`, {
+        sessionId: session.sessionDbId,
+        fabricated,
+        cwd: projectRoot ?? '(none)',
+      });
+      stripFabricatedHashesFromSummary(summaryForStore, fabricated);
+    }
+  }
+
   const sessionStore = dbManager.getSessionStore();
-  sessionStore.ensureMemorySessionIdRegistered(session.sessionDbId, session.memorySessionId);
+  sessionStore.ensureMemorySessionIdRegistered(session.sessionDbId, session.memorySessionId, getWorkerPort());
 
   logger.info('DB', `STORING | sessionDbId=${session.sessionDbId} | memorySessionId=${session.memorySessionId} | obsCount=${observations.length} | hasSummary=${!!summaryForStore}`, {
     sessionId: session.sessionDbId,
@@ -201,28 +206,18 @@ export async function processAgentResponse(
 
   session.lastSummaryStored = result.summaryId !== null;
 
-  // Gate ingestSummary({kind:'parsed'}) on real persistence so the event bus
-  // only fires for summaries that actually landed in the DB. Skipped summaries
-  // (<skip_summary/>) are an explicit bypass and still notify.
   if (summary && (summary.skipped || session.lastSummaryStored)) {
-    const messageId = -1;
     await ingestSummary({
       kind: 'parsed',
       sessionDbId: session.sessionDbId,
-      messageId,
+      messageId: -1,
       contentSessionId: session.contentSessionId,
       parsed: summary,
-    });
-  } else if (summary) {
-    logger.warn('DB', 'summary parsed but no row persisted; suppressing summaryStoredEvent', {
-      sessionId: session.sessionDbId,
-      memorySessionId: session.memorySessionId,
     });
   }
 
   await sessionManager.confirmClaimedMessages(session.sessionDbId);
   session.earliestPendingTimestamp = null;
-  session.restartGuard?.recordSuccess();
   worker?.broadcastProcessingStatus?.();
 
   void notifyTelegram({
@@ -274,6 +269,39 @@ function normalizeSummaryForStorage(summary: ParsedSummary | null): {
     next_steps: summary.next_steps || '',
     notes: summary.notes
   };
+}
+
+type StorableSummary = {
+  request: string;
+  investigated: string;
+  learned: string;
+  completed: string;
+  next_steps: string;
+  notes: string | null;
+};
+
+/**
+ * Replace each fabricated commit hash in the summary's text fields with a
+ * `[unverified commit]` marker so the false claim is neither persisted nor
+ * silently dropped — it is flagged in place (plan-11, #2574). Mutates in place.
+ */
+function stripFabricatedHashesFromSummary(summary: StorableSummary, fabricated: string[]): void {
+  if (fabricated.length === 0) return;
+  const replace = (value: string | null): string | null => {
+    if (!value) return value;
+    let next = value;
+    for (const hash of fabricated) {
+      // Word-boundary replace, case-insensitive: hashes were lowercased on extraction.
+      next = next.replace(new RegExp(`\\b${hash}\\b`, 'gi'), '[unverified commit]');
+    }
+    return next;
+  };
+  summary.request = replace(summary.request) ?? '';
+  summary.investigated = replace(summary.investigated) ?? '';
+  summary.learned = replace(summary.learned) ?? '';
+  summary.completed = replace(summary.completed) ?? '';
+  summary.next_steps = replace(summary.next_steps) ?? '';
+  summary.notes = replace(summary.notes);
 }
 
 async function syncAndBroadcastObservations(
@@ -395,7 +423,7 @@ async function syncAndBroadcastSummary(
     session.project,
     summaryForStore,
     session.lastPromptNumber,
-    result.summaryCreatedAtEpoch ?? result.createdAtEpoch,
+    result.createdAtEpoch,
     discoveryTokens
   ).then(() => {
     const chromaDuration = Date.now() - chromaStart;
@@ -413,8 +441,8 @@ async function syncAndBroadcastSummary(
 
   broadcastSummary(worker, {
     id: result.summaryId,
+    memory_session_id: session.memorySessionId,
     session_id: session.contentSessionId,
-    memory_session_id: session.memorySessionId!,
     platform_source: session.platformSource,
     request: summaryForStore!.request,
     investigated: summaryForStore!.investigated,
@@ -424,90 +452,10 @@ async function syncAndBroadcastSummary(
     notes: summaryForStore!.notes,
     project: session.project,
     prompt_number: session.lastPromptNumber,
-    created_at_epoch: result.summaryCreatedAtEpoch ?? result.createdAtEpoch
+    created_at_epoch: result.createdAtEpoch
   });
 
   updateCursorContextForProject(session.project, getWorkerPort()).catch(error => {
     logger.warn('CURSOR', 'Context update failed (non-critical)', { project: session.project }, error as Error);
   });
-}
-
-/**
- * Detect vacuous observations that should have been skipped by the AI.
- *
- * An observation is vacuous when it carries zero concrete data AND its
- * title/narrative explicitly says "nothing happened".  This catches the
- * case where the AI ignores skip_guidance and emits a placeholder
- * observation instead of producing no output.
- *
- * Conservative: requires BOTH empty data and matching text patterns,
- * so legitimate discoveries with real facts/files are never discarded.
- */
-const VACUOUS_PATTERNS = [
-  /无新增/,
-  /无新观察/,
-  /无新的/,
-  /无观察/,
-  /尚未记录/,
-  /尚未收到/,
-  /尚未执行/,
-  /尚无可记录/,
-  /没有新的/,
-  /没有变更/,
-  /暂无/,
-  /暂未观察/,
-  /等待更多/,
-  /等待进一步/,
-  /无后续/,
-  /未捕获/,
-  /未捕捉/,
-  /未观测/,
-  /未观察到/,
-  /未产生/,
-  /无法生成/,
-  /未收到/,
-  /未提供/,
-  /no new observation/i,
-  /no observation/i,
-  /nothing to report/i,
-  /no updates/i,
-  /no changes/i,
-  /waiting for/i,
-  /no activity/i,
-];
-
-/**
- * Heuristic: facts contain concrete artifacts (file paths, code identifiers,
- * URLs, version numbers, error codes) that indicate real work product.
- * Pure natural-language commentary without artifacts is not concrete.
- */
-const CONCRETE_FACT_PATTERNS = [
-  /[/\\][\w.-]+\.\w{1,5}/,    // file paths  (foo/bar.ts, src\utils.js)
-  /\b\w+\.\w+\(/,             // function calls (foo.bar()
-  /\b(?:v?\d+\.\d+)/,         // version numbers (v1.2, 3.0)
-  /\bhttps?:\/\//,             // URLs
-  /\b(?:0x[\da-f]+|err(?:or)?[- ]?\d+)/i, // hex/error codes
-  /`[^`]+`/,                   // inline code references
-  /\b[A-Z_]{2,}\b/,           // CONSTANT_CASE identifiers
-];
-
-function isVacuousObservation(obs: ParsedObservation): boolean {
-  // Files always indicate real work
-  if (obs.files_read.length > 0 || obs.files_modified.length > 0) {
-    return false;
-  }
-  const text = `${obs.title || ''} ${obs.subtitle || ''} ${obs.narrative || ''}`;
-  if (!VACUOUS_PATTERNS.some(p => p.test(text))) {
-    return false;
-  }
-  // Title/narrative matched vacuous pattern.
-  // If no facts, clearly vacuous.
-  if (obs.facts.length === 0) {
-    return true;
-  }
-  // Facts exist: only keep the observation if facts contain concrete
-  // artifacts (paths, identifiers, URLs, etc.).  Pure prose restating
-  // "nothing happened" in different words is still vacuous.
-  const factsText = obs.facts.join(' ');
-  return !CONCRETE_FACT_PATTERNS.some(p => p.test(factsText));
 }

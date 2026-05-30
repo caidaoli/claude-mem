@@ -320,9 +320,10 @@ export class TranscriptEventProcessor {
     const workerReady = await ensureWorkerRunning();
     if (!workerReady) return;
 
+    const lastAssistantMessage = session.lastAssistantMessage ?? '';
     const requestBody = JSON.stringify({
       contentSessionId: session.sessionId,
-      last_assistant_message: session.lastAssistantMessage ?? '',
+      last_assistant_message: lastAssistantMessage,
       platformSource: session.platformSource
     });
 
