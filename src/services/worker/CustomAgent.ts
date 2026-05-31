@@ -982,7 +982,6 @@ function buildOpenAIJsonRequestBody(
 ): Record<string, unknown> {
   const body: Record<string, unknown> = {
     model,
-    messages,
     temperature: 0.3,
     max_tokens: 4096,
     response_format: { type: 'json_object' },
@@ -1011,6 +1010,8 @@ function buildOpenAIJsonRequestBody(
     body.prompt_cache_key = sessionId.trim();
   }
 
+  body.messages = messages;
+
   return body;
 }
 
@@ -1018,6 +1019,19 @@ function buildBearerJsonHeaders(apiKey: string, sessionId?: string): Record<stri
   const headers: Record<string, string> = {
     'Authorization': `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
+  };
+
+  if (sessionId && sessionId.trim()) {
+    headers.Session_id = sessionId.trim();
+  }
+
+  return headers;
+}
+
+function buildGeminiJsonHeaders(apiKey: string, sessionId?: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'x-goog-api-key': apiKey,
   };
 
   if (sessionId && sessionId.trim()) {
@@ -1670,9 +1684,9 @@ export class CustomAgent {
 
     if (config.protocol === 'gemini') {
       if (config.streaming) {
-        return this.queryGeminiJsonMultiTurnStream(truncatedHistory, config, abortSignal);
+        return this.queryGeminiJsonMultiTurnStream(truncatedHistory, config, abortSignal, sessionIdHeader);
       }
-      return this.queryGeminiJsonMultiTurn(truncatedHistory, config, abortSignal);
+      return this.queryGeminiJsonMultiTurn(truncatedHistory, config, abortSignal, sessionIdHeader);
     } else if (config.protocol === 'codex') {
       if (config.streaming) {
         return this.queryCodexJsonMultiTurnStream(truncatedHistory, config, abortSignal, sessionIdHeader);
@@ -1692,7 +1706,8 @@ export class CustomAgent {
   private async queryGeminiJsonMultiTurnStream(
     history: ConversationMessage[],
     config: CustomAgentConfig,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    sessionIdHeader?: string
   ): Promise<{ content: string; tokensUsed?: number }> {
     const contents = this.toGeminiContents(history);
     const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
@@ -1706,13 +1721,10 @@ export class CustomAgent {
 
     const result = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': config.apiKey,
-      },
+      headers: buildGeminiJsonHeaders(config.apiKey, sessionIdHeader),
       body: JSON.stringify({
-        contents,
         generationConfig: buildGeminiGenerationConfig(config.model, true),
+        contents,
       }),
     }, config, 3, abortSignal, parseGeminiSseStreamFromResponse);
 
@@ -1736,7 +1748,8 @@ export class CustomAgent {
   private async queryGeminiJsonMultiTurn(
     history: ConversationMessage[],
     config: CustomAgentConfig,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    sessionIdHeader?: string
   ): Promise<{ content: string; tokensUsed?: number }> {
     const contents = this.toGeminiContents(history);
     const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
@@ -1750,13 +1763,10 @@ export class CustomAgent {
 
     const result = await fetchWithTimeoutAndRetry(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': config.apiKey,
-      },
+      headers: buildGeminiJsonHeaders(config.apiKey, sessionIdHeader),
       body: JSON.stringify({
-        contents,
         generationConfig: buildGeminiGenerationConfig(config.model, true),
+        contents,
       }),
     }, config, 3, abortSignal, readResponseBodyText);
 
