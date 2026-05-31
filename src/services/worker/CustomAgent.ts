@@ -300,6 +300,20 @@ function extractResponseText(parts: Array<{ text?: string; thought?: boolean; th
   return nonThinkingParts.map(p => p.text).join('');
 }
 
+function getModelIdTail(model: string): string {
+  const normalized = model.trim().toLowerCase().replace(/^models\//, '');
+  const segments = normalized.split('/').filter(Boolean);
+  return segments.at(-1) ?? normalized;
+}
+
+function isGemini3Model(model: string): boolean {
+  return getModelIdTail(model).startsWith('gemini-3');
+}
+
+function isGemini25FlashModel(model: string): boolean {
+  return getModelIdTail(model).startsWith('gemini-2.5-flash');
+}
+
 /**
  * Build Gemini generation config with optional JSON mode
  * For Gemini 3 models, thinkingLevel: 'minimal' speeds up responses.
@@ -315,11 +329,11 @@ function buildGeminiGenerationConfig(model: string, jsonMode: boolean = false): 
   }
 
   // Minimal thinking speeds up Gemini 3 responses
-  if (model.startsWith('gemini-3')) {
+  if (isGemini3Model(model)) {
     config.thinkingConfig = {
       thinkingLevel: 'minimal',
     };
-  } else if (model.startsWith('gemini-2.5-flash')) {
+  } else if (isGemini25FlashModel(model)) {
     config.thinkingConfig = {
       thinkingBudget: 0,
     };
@@ -978,7 +992,7 @@ function buildOpenAIJsonRequestBody(
     body.reasoning_effort = 'low';
   }
 
-  if (model.startsWith('gemini-3')) {
+  if (isGemini3Model(model)) {
     body.thinkingConfig = {
       thinkingLevel: 'minimal',
     };
