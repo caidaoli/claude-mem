@@ -1,19 +1,27 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { writeFileSync, mkdirSync, rmSync, existsSync } from 'fs';
+import express from 'express';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { readLastLines } from '../../src/services/worker/http/routes/LogsRoutes.js';
+import { LogsRoutes, readLastLines } from '../../src/services/worker/http/routes/LogsRoutes.js';
 
 describe('readLastLines (#1203 OOM fix)', () => {
   const testDir = join(tmpdir(), `claude-mem-logs-test-${Date.now()}`);
   const testFile = join(testDir, 'test.log');
+  const originalDataDir = process.env.CLAUDE_MEM_DATA_DIR;
 
   beforeEach(() => {
     mkdirSync(testDir, { recursive: true });
   });
 
   afterEach(() => {
+    if (originalDataDir === undefined) {
+      delete process.env.CLAUDE_MEM_DATA_DIR;
+    } else {
+      process.env.CLAUDE_MEM_DATA_DIR = originalDataDir;
+    }
+
     if (existsSync(testDir)) {
       rmSync(testDir, { recursive: true, force: true });
     }
@@ -110,6 +118,38 @@ describe('readLastLines (#1203 OOM fix)', () => {
     expect(resultLines.length).toBe(5);
     for (const l of resultLines) {
       expect(l).toBe('A'.repeat(100));
+    }
+  });
+
+  it('should clear logs when POST has no body', async () => {
+    process.env.CLAUDE_MEM_DATA_DIR = testDir;
+    const logsDir = join(testDir, 'logs');
+    mkdirSync(logsDir, { recursive: true });
+    const date = new Date().toISOString().split('T')[0];
+    writeFileSync(join(logsDir, `claude-mem-${date}.log`), 'line1\nline2\n', 'utf-8');
+
+    const app = express();
+    app.use(express.json());
+    new LogsRoutes().setupRoutes(app);
+    const server = app.listen(0, '127.0.0.1');
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      server.close();
+      throw new Error('test server did not bind to a TCP port');
+    }
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/logs/clear`, {
+        method: 'POST',
+      });
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.success).toBe(true);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close(error => error ? reject(error) : resolve());
+      });
     }
   });
 });
