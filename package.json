@@ -141,6 +141,7 @@
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "shell-quote": "^1.8.3",
+    "tiktoken": "^1.0.22",
     "yaml": "^2.8.4",
     "zod": "^4.4.3",
     "zod-to-json-schema": "^3.25.2"

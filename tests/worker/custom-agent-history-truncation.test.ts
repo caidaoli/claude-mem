@@ -4,6 +4,13 @@ import { CustomAgent } from '../../src/services/worker/CustomAgent.js';
 import type { ConversationMessage } from '../../src/services/worker-types.js';
 
 describe('CustomAgent history truncation', () => {
+  it('estimates token counts with tiktoken instead of character division', () => {
+    const agent = new CustomAgent({} as any, {} as any);
+    const estimateTokens = (agent as any).estimateTokens.bind(agent) as (text: string) => number;
+
+    expect(estimateTokens('hello world')).toBe(2);
+  });
+
   it('keeps most recent messages when truncating by message count', () => {
     const agent = new CustomAgent({} as any, {} as any);
     const truncateHistory = (agent as any).truncateHistory.bind(agent) as (
@@ -85,11 +92,11 @@ describe('CustomAgent history truncation', () => {
       { role: 'assistant', content: 'A2' },
     ];
 
-    // Token limit of 1 excludes even LATEST_USER (~3 tokens), fallback kicks in.
+    // Token limit of 1 excludes even LATEST_USER, fallback kicks in.
     // Fallback must trim oversized user content so we never bypass configured limits.
     const truncated = truncateHistory(history, { maxContextMessages: 10, maxTokens: 1 });
 
-    expect(truncated).toEqual([{ role: 'user', content: 'LATE' }]);
+    expect(truncated).toEqual([{ role: 'user', content: 'LATEST' }]);
   });
 
   it('returns history unchanged when within limits', () => {

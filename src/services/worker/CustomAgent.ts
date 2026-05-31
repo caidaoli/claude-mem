@@ -29,9 +29,24 @@ import {
   isAbortError,
   type WorkerRef
 } from './agents/index.js';
+import { get_encoding } from 'tiktoken';
 
 // Context window management constants
-const CHARS_PER_TOKEN_ESTIMATE = 4;  // Conservative estimate: 1 token = 4 chars
+const tokenEncoder = get_encoding('o200k_base');
+const textDecoder = new TextDecoder();
+
+function estimateTokenCount(text: string): number {
+  return tokenEncoder.encode_ordinary(text).length;
+}
+
+function truncateToTokenLimit(text: string, maxTokens: number): string {
+  const tokens = tokenEncoder.encode_ordinary(text);
+  if (tokens.length <= maxTokens) {
+    return text;
+  }
+
+  return textDecoder.decode(tokenEncoder.decode(tokens.slice(0, Math.max(1, maxTokens))));
+}
 
 // Protocol types
 export type CustomProtocol = 'openai' | 'gemini' | 'codex';
@@ -1394,10 +1409,10 @@ export class CustomAgent {
   }
 
   /**
-   * Estimate token count from text (conservative estimate)
+   * Estimate token count from text with tiktoken.
    */
   private estimateTokens(text: string): number {
-    return Math.ceil(text.length / CHARS_PER_TOKEN_ESTIMATE);
+    return estimateTokenCount(text);
   }
 
   /**
@@ -1421,8 +1436,7 @@ export class CustomAgent {
       };
     }
 
-    const maxChars = Math.max(1, Math.floor(maxTokens * CHARS_PER_TOKEN_ESTIMATE));
-    const truncatedContent = originalContent.slice(0, maxChars);
+    const truncatedContent = truncateToTokenLimit(originalContent, maxTokens);
     const fallbackTokens = this.estimateTokens(truncatedContent);
 
     return {
