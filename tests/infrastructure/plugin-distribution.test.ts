@@ -198,6 +198,15 @@ describe('Plugin Distribution - Build Script Verification', () => {
     expect(content).toContain('plugin/hooks/hooks.json');
     expect(content).toContain('plugin/.claude-plugin/plugin.json');
   });
+
+  it('worker runtime keeps tiktoken external so its wasm ships with plugin dependencies', () => {
+    const pluginPackage = readJson('plugin/package.json');
+    const workerServicePath = path.join(projectRoot, 'plugin/scripts/worker-service.cjs');
+    const workerService = readFileSync(workerServicePath, 'utf-8');
+
+    expect(pluginPackage.dependencies?.tiktoken).toBeDefined();
+    expect(workerService).not.toContain('Missing tiktoken_bg.wasm');
+  });
 });
 
 describe('Plugin Distribution - Setup Hook (#1547)', () => {

@@ -252,6 +252,7 @@ async function buildHooks() {
         '@derekstride/tree-sitter-sql': '^0.3.11',
         '@tree-sitter-grammars/tree-sitter-markdown': '^0.3.2',
         'shell-quote': '^1.8.3',
+        'tiktoken': '^1.0.22',
       },
       overrides: {
         'tree-sitter': '^0.25.0'
@@ -297,6 +298,9 @@ async function buildHooks() {
         'ollama',
         '@chroma-core/default-embed',
         'onnxruntime-node',
+        // tiktoken ships a wasm sidecar. Bundling the JS loader without the
+        // wasm file makes Bun throw `Missing tiktoken_bg.wasm` at hook startup.
+        'tiktoken',
         // better-auth (~3.7MB) is only reachable through BetterAuthRoutes' request-time
         // dynamic import('better-auth/node') / import('./auth.js'). esbuild otherwise
         // inlines that dynamic-import target into the worker bundle, dragging in the full
