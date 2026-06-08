@@ -1,15 +1,25 @@
 import { SessionStore } from '../../sqlite/SessionStore.js';
 import { logger } from '../../../utils/logger.js';
 
+export type PromptPrivacyDecision =
+  | { allow: true; prompt: string }
+  | { allow: false; reason: 'private' };
+
 export class PrivacyCheckValidator {
   /**
-   * Check if user prompt is public (not entirely private)
+   * Decide whether an observation/summary may be generated for a given prompt.
    *
-   * @param store - SessionStore instance
-   * @param contentSessionId - Claude session ID
-   * @param promptNumber - Prompt number within session (0 = no prompts saved yet)
-   * @param operationType - Type of operation being validated ('observation' or 'summarize')
-   * @returns User prompt text if public, null if private
+   * Distinguishes two cases the old boolean check conflated (#2794):
+   *  - The `user_prompts` row is ABSENT (getUserPrompt → null): session-init
+   *    never persisted the prompt for this session (e.g. the UserPromptSubmit
+   *    hook raced worker boot, #2795). This is NOT a privacy signal — treating
+   *    it as "private" silently freezes EVERY observation for the session.
+   *    Allow ingestion and emit a visible warn.
+   *  - The row is PRESENT but empty after privacy stripping (''/whitespace):
+   *    the user genuinely redacted the turn → suppress.
+   *
+   * promptNumber=0 means no prompt rows have been saved yet. That is the same
+   * timing class as an absent row: allow ingestion, do not treat it as private.
    */
   static checkUserPromptPrivacy(
     store: SessionStore,
@@ -18,31 +28,37 @@ export class PrivacyCheckValidator {
     operationType: 'observation' | 'summarize',
     sessionDbId: number,
     additionalContext?: Record<string, any>
-  ): string | null {
-    // promptNumber=0 means no user prompts have been saved yet for this session.
-    // This happens when PostToolUse hooks arrive before session-init (UserPromptSubmit)
-    // completes. This is a timing issue, not a privacy signal — allow the operation
-    // through since there's no prompt to check privacy against.
+  ): PromptPrivacyDecision {
     if (promptNumber === 0) {
       logger.debug('HOOK', `Allowing ${operationType} - session not yet initialized (no user prompts)`, {
         sessionId: sessionDbId,
+        contentSessionId,
         promptNumber,
-        ...additionalContext
+        ...additionalContext,
       });
-      return '[pending-init]';
+      return { allow: true, prompt: '' };
     }
 
     const userPrompt = store.getUserPrompt(contentSessionId, promptNumber);
 
-    if (!userPrompt || userPrompt.trim() === '') {
+    if (userPrompt === null) {
+      logger.warn(
+        'HOOK',
+        `${operationType}: no user_prompts row for prompt #${promptNumber} — ingesting anyway (session-init likely raced worker boot; see #2794/#2795)`,
+        { sessionId: sessionDbId, contentSessionId, promptNumber, ...additionalContext }
+      );
+      return { allow: true, prompt: '' };
+    }
+
+    if (userPrompt.trim() === '') {
       logger.debug('HOOK', `Skipping ${operationType} - user prompt was entirely private`, {
         sessionId: sessionDbId,
         promptNumber,
-        ...additionalContext
+        ...additionalContext,
       });
-      return null;
+      return { allow: false, reason: 'private' };
     }
 
-    return userPrompt;
+    return { allow: true, prompt: userPrompt };
   }
 }

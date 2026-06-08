@@ -2,10 +2,11 @@ import { afterAll, describe, expect, it, mock } from 'bun:test';
 import type http from 'http';
 import * as realSupervisor from '../../src/supervisor/index.js';
 
+const realSupervisorSnapshot = { ...realSupervisor };
 const supervisorStop = mock(async () => {});
 
 mock.module('../../src/supervisor/index.js', () => ({
-  ...realSupervisor,
+  ...realSupervisorSnapshot,
   getSupervisor: () => ({
     stop: supervisorStop,
   }),
@@ -15,7 +16,7 @@ const { performGracefulShutdown } = await import('../../src/services/infrastruct
 
 describe('performGracefulShutdown idempotency', () => {
   afterAll(() => {
-    mock.module('../../src/supervisor/index.js', () => realSupervisor);
+    mock.module('../../src/supervisor/index.js', () => realSupervisorSnapshot);
   });
 
   it('treats an already-closed HTTP server as closed and continues shutdown', async () => {
