@@ -149,6 +149,9 @@
     "zod": "^4.4.3",
     "zod-to-json-schema": "^3.25.2"
   },
+  "overrides": {
+    "iconv-lite": "^0.7.2"
+  },
   "devDependencies": {
     "@derekstride/tree-sitter-sql": "^0.3.11",
     "@tree-sitter-grammars/tree-sitter-lua": "^0.4.1",
