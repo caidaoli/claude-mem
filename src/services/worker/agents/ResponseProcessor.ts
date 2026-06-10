@@ -15,6 +15,7 @@ import type { DatabaseManager } from '../DatabaseManager.js';
 import type { SessionManager } from '../SessionManager.js';
 import type { WorkerRef, StorageResult } from './types.js';
 import { broadcastObservation, broadcastSummary } from './ObservationBroadcaster.js';
+import { captureEvent } from '../../telemetry/telemetry.js';
 
 /**
  * Consecutive non-XML observer outputs tolerated before we kill and respawn the
@@ -51,6 +52,7 @@ export async function processAgentResponse(
   modelId?: string,
   options?: ProcessAgentResponseOptions
 ): Promise<void> {
+  const processingStartedAt = Date.now();
   session.lastGeneratorActivity = Date.now();
 
   if (text) {
@@ -205,6 +207,12 @@ export async function processAgentResponse(
   });
 
   session.lastSummaryStored = result.summaryId !== null;
+  captureEvent('session_compressed', {
+    outcome: 'ok',
+    duration_ms: Date.now() - processingStartedAt,
+    count: result.observationIds.length,
+    has_summary: session.lastSummaryStored,
+  });
 
   if (summary && (summary.skipped || session.lastSummaryStored)) {
     await ingestSummary({

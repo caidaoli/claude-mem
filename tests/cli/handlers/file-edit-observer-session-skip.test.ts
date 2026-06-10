@@ -1,9 +1,6 @@
-import { afterEach, afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { join } from 'path';
 import { tmpdir } from 'os';
-
-// bun's mock.module is process-global. Snapshot and restore these modules so
-// this focused hook test does not leak partial settings/worker mocks.
 import * as realSettingsDefaultsManager from '../../../src/shared/SettingsDefaultsManager.js';
 import * as realHookSettings from '../../../src/shared/hook-settings.js';
 import * as realWorkerUtils from '../../../src/shared/worker-utils.js';

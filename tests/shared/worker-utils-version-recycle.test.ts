@@ -1,8 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach, afterAll, mock } from 'bun:test';
-
-// bun's mock.module is process-global and mock.restore() does not undo it.
-// Restore the real modules after this file so full-suite runs do not poison
-// infrastructure/supervisor tests that execute later in the same process.
 import * as realInfrastructure from '../../src/services/infrastructure/index.js';
 import * as realSupervisor from '../../src/supervisor/index.js';
 
@@ -31,10 +27,9 @@ mock.module('../../src/supervisor/index.js', () => ({
   validateWorkerPidFile: () => 'alive',
 }));
 
-afterAll(() => {
-  mock.module('../../src/services/infrastructure/index.js', () => realInfrastructureSnapshot);
-  mock.module('../../src/supervisor/index.js', () => realSupervisorSnapshot);
-});
+async function importWorkerUtilsFresh() {
+  return import(`../../src/shared/worker-utils.js?worker-utils-version-recycle=${Date.now()}-${Math.random()}`);
+}
 
 function installFetchMock(): void {
   fetchLog.length = 0;
@@ -66,10 +61,15 @@ describe('ensureWorkerRunning — stale-worker recycle on version mismatch', () 
     mock.restore();
   });
 
+  afterAll(() => {
+    mock.module('../../src/services/infrastructure/index.js', () => realInfrastructureSnapshot);
+    mock.module('../../src/supervisor/index.js', () => realSupervisorSnapshot);
+  });
+
   it('POSTs /api/admin/restart when the running worker version differs', async () => {
     versionMatchResult = { matches: false, pluginVersion: '13.4.0', workerVersion: '13.3.0' };
 
-    const { ensureWorkerRunning } = await import('../../src/shared/worker-utils.js');
+    const { ensureWorkerRunning } = await importWorkerUtilsFresh();
     await ensureWorkerRunning();
 
     const restartCalls = fetchLog.filter(
@@ -81,7 +81,7 @@ describe('ensureWorkerRunning — stale-worker recycle on version mismatch', () 
   it('does NOT restart when versions match', async () => {
     versionMatchResult = { matches: true, pluginVersion: '13.4.0', workerVersion: '13.4.0' };
 
-    const { ensureWorkerRunning } = await import('../../src/shared/worker-utils.js');
+    const { ensureWorkerRunning } = await importWorkerUtilsFresh();
     await ensureWorkerRunning();
 
     const restartCalls = fetchLog.filter(c => c.url.includes('/api/admin/restart'));
