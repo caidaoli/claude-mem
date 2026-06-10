@@ -8,9 +8,14 @@
 export const ALLOWED_PROPERTY_KEYS: Set<string> = new Set([
   'version',
   'os',
+  // os_version is the kernel release string (e.g. "10.0.22631"), is_wsl a
+  // boolean — platform facts for diagnosing install→worker funnel dropoff.
+  'os_version',
+  'is_wsl',
   'arch',
   'runtime',
   'runtime_version',
+  'node_version',
   'duration_ms',
   'outcome',
   'error_category',
@@ -27,6 +32,35 @@ export const ALLOWED_PROPERTY_KEYS: Set<string> = new Set([
   'count',
   'has_summary',
   'is_update',
+  // Install funnel shape — install_method is a package-manager enum parsed
+  // from npm_config_user_agent, the *_version keys are tool version strings.
+  'install_method',
+  'interactive',
+  'bun_version',
+  'uv_version',
+  'claude_code_version',
+  // context_injected depth/economics — integers, booleans, and our own enums.
+  'observation_count',
+  'session_count',
+  'timeline_depth_days',
+  'has_session_summary',
+  'obs_type_bugfix',
+  'obs_type_discovery',
+  'obs_type_decision',
+  'obs_type_refactor',
+  'obs_type_other',
+  'tokens_injected',
+  'tokens_saved_vs_naive',
+  'mode',
+  'search_strategy',
+  // session_compressed depth — model id, our trigger names, real token usage.
+  'observation_type',
+  'hook',
+  'compression_ms',
+  'tokens_input',
+  'tokens_output',
+  'compression_ratio',
+  'model',
 ]);
 
 const MAX_STRING_LENGTH = 200;

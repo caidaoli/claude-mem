@@ -54,6 +54,57 @@ describe('scrubProperties', () => {
     });
   });
 
+  it('keeps the platform/toolchain keys with primitive values', () => {
+    const result = scrubProperties({
+      os_version: '10.0.22631',
+      is_wsl: false,
+      node_version: '22.14.0',
+      interactive: true,
+      install_method: 'npm',
+      bun_version: '1.3.9',
+      uv_version: '0.7.2',
+      claude_code_version: '2.0.14',
+    });
+
+    expect(result).toEqual({
+      os_version: '10.0.22631',
+      is_wsl: false,
+      node_version: '22.14.0',
+      interactive: true,
+      install_method: 'npm',
+      bun_version: '1.3.9',
+      uv_version: '0.7.2',
+      claude_code_version: '2.0.14',
+    });
+  });
+
+  it('keeps the depth/economics keys with primitive values', () => {
+    const result = scrubProperties({
+      observation_count: 50,
+      session_count: 12,
+      timeline_depth_days: 90,
+      has_session_summary: true,
+      obs_type_bugfix: 3,
+      obs_type_other: 1,
+      tokens_injected: 17914,
+      tokens_saved_vs_naive: 144379,
+      mode: 'code',
+      search_strategy: 'timeline',
+      observation_type: 'bugfix',
+      hook: 'ingest',
+      compression_ms: 2140,
+      tokens_input: 5800,
+      tokens_output: 420,
+      compression_ratio: 13.81,
+      model: 'claude-haiku-4-5',
+    });
+
+    expect(Object.keys(result)).toHaveLength(17);
+    expect(result.tokens_saved_vs_naive).toBe(144379);
+    expect(result.hook).toBe('ingest');
+    expect(result.model).toBe('claude-haiku-4-5');
+  });
+
   it('drops unknown keys silently', () => {
     const result = scrubProperties({
       version: '1.0.0',

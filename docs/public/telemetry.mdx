@@ -29,9 +29,12 @@ Every event property passes through a strict whitelist scrubber — any key not 
 | `distinct_id` | `7f3c…` (random UUID) | Anonymous install ID — not derived from you or your machine |
 | `version` | `13.4.2` | claude-mem version |
 | `os` | `darwin` | Operating system platform |
+| `os_version` | `10.0.22631` | OS kernel release string — distinguishes e.g. Windows 10 from 11 |
+| `is_wsl` | `false` | Whether running under Windows Subsystem for Linux |
 | `arch` | `arm64` | CPU architecture |
 | `runtime` | `bun` | `bun` or `node` |
 | `runtime_version` | `1.2.0` | Runtime version string |
+| `node_version` | `22.14.0` | Node.js version string |
 | `duration_ms` | `1843` | How long an operation took |
 | `outcome` | `ok` | Coarse result: ok / error / partial |
 | `error_category` | `provider_error` | Coarse error bucket — never an error message |
@@ -45,17 +48,34 @@ Every event property passes through a strict whitelist scrubber — any key not 
 | `count` | `7` | Integer volume, e.g. observations stored in one compression |
 | `has_summary` | `true` | Whether a compression also produced a session summary |
 | `is_update` | `false` | Whether an install ran over an existing installation |
+| `interactive` | `true` | Whether the installer ran in an interactive terminal |
+| `install_method` | `npm` | Which package manager launched the CLI: npm / bun / pnpm / yarn |
+| `bun_version` / `uv_version` | `1.3.9` / `0.7.2` | Toolchain versions detected during install |
+| `claude_code_version` | `2.0.14` | Claude Code CLI version, if detectable |
+| `mode` | `code` | Active claude-mem mode id (our mode list) |
+| `model` | `claude-haiku-4-5` | Model id used for compression |
+| `hook` | `ingest` | What triggered a compression: init / ingest / summarize |
+| `observation_type`, `obs_type_*` | `bugfix`, `3` | Observation type buckets (bugfix / discovery / decision / refactor / other) — counts only |
+| `compression_ms` | `2140` | Latency of the compression model call |
+| `tokens_input` / `tokens_output` | `5800` / `420` | Real token usage reported by the model API for one compression |
+| `compression_ratio` | `13.8` | tokens_input ÷ tokens_output |
+| `observation_count`, `session_count` | `50`, `12` | How many observations/sessions fed one context injection |
+| `timeline_depth_days` | `90` | Age in days of the oldest injected observation |
+| `has_session_summary` | `true` | Whether a session summary was part of the injection |
+| `tokens_injected` | `17914` | Estimated tokens of injected context |
+| `tokens_saved_vs_naive` | `144379` | Estimated tokens saved vs re-discovering that work |
+| `search_strategy` | `timeline` | Which retrieval strategy built the injection (our enum) |
 
 ### Events
 
 | Event | When | Extra properties |
 |---|---|---|
-| `install_completed` | `npx claude-mem install` finishes | `ide`, `provider`, `runtime_mode`, `is_update`, `outcome`, `duration_ms` |
-| `install_failed` | The installer aborts | `error_category` (our error-taxonomy id) |
+| `install_completed` | `npx claude-mem install` finishes | `ide`, `provider`, `runtime_mode`, `is_update`, `outcome`, `duration_ms`, `interactive`, `install_method`, `bun_version`, `uv_version`, `claude_code_version` |
+| `install_failed` | The installer aborts | `error_category` (our error-taxonomy id), `interactive`, `install_method`, `claude_code_version` |
 | `uninstall_completed` | `npx claude-mem uninstall` finishes | — |
 | `worker_started` | The background worker starts, plus one heartbeat per 24h of uptime | `trigger` (start / heartbeat), `duration_ms` |
-| `session_compressed` | A session compression stores observations, or the compression generator fails | `outcome`, `duration_ms`, `count`, `has_summary`; on failure `provider`, `error_category` |
-| `context_injected` | Stored memory is injected into a new session | `outcome`, `duration_ms` |
+| `session_compressed` | A session compression stores observations, or the compression generator fails | `outcome`, `duration_ms`, `count`, `has_summary`, `provider`, `model`, `ide`, `hook`, `compression_ms`, `observation_type`, `obs_type_*`, `tokens_input`, `tokens_output`, `compression_ratio`; on failure `error_category` |
+| `context_injected` | Stored memory is injected into a new session | `outcome`, `duration_ms`, `mode`, `provider`, `search_strategy`, `observation_count`, `session_count`, `timeline_depth_days`, `has_session_summary`, `obs_type_*`, `tokens_injected`, `tokens_saved_vs_naive` |
 | `search_performed` | A memory search runs (never the query text) | `endpoint`, `outcome`, `duration_ms` |
 | `error_occurred` | The worker returns an HTTP 5xx | `error_category` |
 

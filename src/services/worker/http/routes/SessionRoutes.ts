@@ -143,6 +143,9 @@ export class SessionRoutes extends BaseRouteHandler {
 
     session.currentProvider = provider;
     session.lastGeneratorActivity = Date.now();
+    // Providers refine this per-prompt ('init'|'ingest'|'summarize'); this is
+    // the fallback when a generator dies before dispatching its first prompt.
+    session.lastGeneratorSource = source;
 
     const myController = session.abortController;
 
@@ -177,6 +180,8 @@ export class SessionRoutes extends BaseRouteHandler {
           outcome: 'error',
           provider,
           error_category: 'provider_error',
+          hook: session.lastGeneratorSource,
+          ide: session.platformSource,
         });
       })
       .finally(async () => {

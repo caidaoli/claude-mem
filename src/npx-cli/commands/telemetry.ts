@@ -23,9 +23,12 @@ const DOCS_URL = 'https://docs.claude-mem.ai/telemetry';
 const COLLECTED_FIELDS = [
   'version          claude-mem version (e.g. 13.4.2)',
   'os               platform (darwin / linux / win32)',
+  'os_version       OS kernel release (e.g. 10.0.22631)',
+  'is_wsl           whether running under WSL',
   'arch             CPU architecture (arm64 / x64)',
   'runtime          bun or node',
   'runtime_version  runtime version string',
+  'node_version     Node.js version string',
   'duration_ms      how long an operation took',
   'outcome          ok / error / partial',
   'error_category   coarse error bucket (never a message)',
@@ -39,6 +42,20 @@ const COLLECTED_FIELDS = [
   'count            integer volume (e.g. observations stored)',
   'has_summary      whether a compression produced a summary',
   'is_update        whether an install was an update',
+  'interactive      whether the installer ran in a TTY',
+  'install_method   npm / bun / pnpm / yarn (launcher of the CLI)',
+  'bun_version / uv_version / claude_code_version',
+  '                 toolchain versions detected during install',
+  'mode             active claude-mem mode id',
+  'model            model id used for compression',
+  'hook             compression trigger (init / ingest / summarize)',
+  'observation_type / obs_type_*   observation type buckets (counts only)',
+  'compression_ms / tokens_input / tokens_output / compression_ratio',
+  '                 latency + real token usage of one compression call',
+  'observation_count / session_count / timeline_depth_days / has_session_summary',
+  '                 depth of one context injection',
+  'tokens_injected / tokens_saved_vs_naive / search_strategy',
+  '                 token economics of one context injection',
 ];
 
 const EVENT_NAMES = [
