@@ -12,8 +12,6 @@ const MARKETPLACE_PLUGIN_RUNTIME_EXCLUDES =
   '--exclude=plugin/node_modules --exclude=plugin/package-lock.json --exclude=plugin/bun.lock ' +
   '--exclude=plugin/.install-version --exclude=plugin/.cli-installed';
 
-// Reject obviously invalid ports before they reach http.request, which would
-// throw with a confusing error like "RangeError: Port should be > 0 and < 65536".
 function parseWorkerPort(value) {
   const port = Number.parseInt(String(value ?? ''), 10);
   return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : null;
@@ -168,6 +166,7 @@ if (installedMismatch) {
   console.log('');
 }
 
+
 console.log('Syncing to marketplace...');
 try {
   const rootDir = path.join(__dirname, '..');
@@ -214,6 +213,7 @@ try {
     );
     writeInstallMarker(INSTALLED_CACHE_PATH, version);
   }
+
 
   console.log('\x1b[32m%s\x1b[0m', 'Sync complete!');
 
