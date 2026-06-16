@@ -2,7 +2,11 @@ import { describe, it, expect } from 'bun:test';
 import { spawnSync } from 'child_process';
 import { existsSync } from 'fs';
 import path from 'path';
-import { buildStatusOutput, StatusOutput } from '../../src/services/worker-service.js';
+import {
+  buildCodexSessionStartNoopOutput,
+  buildStatusOutput,
+  StatusOutput,
+} from '../../src/services/worker-service.js';
 
 const WORKER_SCRIPT = path.join(__dirname, '../../plugin/scripts/worker-service.cjs');
 
@@ -165,6 +169,16 @@ describe('worker-json-status', () => {
     });
   });
 
+  describe('buildCodexSessionStartNoopOutput', () => {
+    it('returns a Codex SessionStart JSON envelope with no model context', () => {
+      expect(buildCodexSessionStartNoopOutput()).toEqual({
+        hookSpecificOutput: {
+          hookEventName: 'SessionStart',
+        },
+      });
+    });
+  });
+
   describe('start command JSON output', () => {
     describe('when worker already healthy', () => {
       it('should output valid JSON with status: ready', () => {
@@ -203,7 +217,7 @@ describe('worker-json-status', () => {
         }
       });
 
-      it('should be silent when invoked as a Codex hook setup command', () => {
+      it('should output Codex SessionStart JSON when invoked as a Codex hook setup command', () => {
         if (!existsSync(WORKER_SCRIPT)) {
           console.log('Skipping CLI test - worker script not built');
           return;
@@ -212,7 +226,11 @@ describe('worker-json-status', () => {
         const { stdout, exitCode } = runWorkerStart({ CLAUDE_MEM_CODEX_HOOK: '1' });
 
         expect(exitCode).toBe(0);
-        expect(stdout).toBe('');
+        expect(JSON.parse(stdout)).toEqual({
+          hookSpecificOutput: {
+            hookEventName: 'SessionStart',
+          },
+        });
       });
     });
 

@@ -207,6 +207,25 @@ describe('Codex CLI Compatibility (#744)', () => {
       expect(output).not.toHaveProperty('suppressOutput');
     });
 
+    it('drops systemMessage because Codex renders it as user-visible warning noise', async () => {
+      const { codexAdapter } = await import('../src/cli/adapters/codex.js');
+      const output = codexAdapter.formatOutput({
+        hookSpecificOutput: {
+          hookEventName: 'SessionStart',
+          additionalContext: 'recent context',
+        },
+        systemMessage: 'recent context',
+      }) as any;
+
+      expect(output).toEqual({
+        hookSpecificOutput: {
+          hookEventName: 'SessionStart',
+          additionalContext: 'recent context',
+        },
+      });
+      expect(output).not.toHaveProperty('systemMessage');
+    });
+
     it('does not emit hookSpecificOutput for Stop outputs', async () => {
       const { codexAdapter } = await import('../src/cli/adapters/codex.js');
       const output = codexAdapter.formatOutput({

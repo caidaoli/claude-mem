@@ -6,9 +6,10 @@ import { tmpdir } from 'os';
 
 const VERSION_CHECK_SCRIPT = join(import.meta.dir, '..', 'plugin', 'scripts', 'version-check.js');
 
-function runVersionCheck(root: string) {
+function runVersionCheck(root: string, envOverrides: Record<string, string> = {}) {
   const env = { ...process.env, CLAUDE_PLUGIN_ROOT: root };
   delete env.CLAUDE_MEM_CODEX_HOOK;
+  Object.assign(env, envOverrides);
 
   return spawnSync('node', [VERSION_CHECK_SCRIPT], {
     encoding: 'utf-8',
@@ -65,5 +66,17 @@ describe('plugin/scripts/version-check.js install marker compatibility', () => {
     expect(result.stderr).toContain(
       'claude-mem: upgraded to v12.4.4 - run: npx claude-mem@latest install',
     );
+  });
+
+  it('does not inject missing-runtime diagnostics into Codex model context', () => {
+    const result = runVersionCheck(tempDir, { CLAUDE_MEM_CODEX_HOOK: '1' });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(JSON.parse(result.stdout)).toEqual({
+      hookSpecificOutput: {
+        hookEventName: 'SessionStart',
+      },
+    });
   });
 });

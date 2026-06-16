@@ -148,7 +148,6 @@ function emitUpgradeHint(message) {
     console.log(JSON.stringify({
       hookSpecificOutput: {
         hookEventName: 'SessionStart',
-        additionalContext: message,
       },
     }));
   } else {

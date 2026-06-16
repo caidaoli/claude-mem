@@ -123,6 +123,14 @@ export function buildStatusOutput(status: 'ready' | 'error', message?: string): 
   };
 }
 
+export function buildCodexSessionStartNoopOutput(): Record<string, unknown> {
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'SessionStart',
+    },
+  };
+}
+
 // Closed enum for worker_stopped telemetry — definition (and its
 // scrub.ts/telemetry.mdx sync requirements) moved to worker-shutdown.ts, the
 // import-safe shutdown seam. Re-exported here for existing importers.
@@ -1010,6 +1018,7 @@ async function main() {
 
   function exitWithStatus(status: 'ready' | 'error', message?: string): never {
     if (process.env.CLAUDE_MEM_CODEX_HOOK === '1') {
+      console.log(JSON.stringify(buildCodexSessionStartNoopOutput()));
       process.exit(0);
     }
     const output = buildStatusOutput(status, message);
