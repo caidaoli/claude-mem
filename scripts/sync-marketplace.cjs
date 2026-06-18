@@ -4,9 +4,11 @@ const { execSync } = require('child_process');
 const { existsSync, readFileSync, rmSync, writeFileSync } = require('fs');
 const path = require('path');
 const os = require('os');
+const { syncClaudePluginRegistry } = require('./lib/claude-plugin-registry.cjs');
 
-const INSTALLED_PATH = path.join(os.homedir(), '.claude', 'plugins', 'marketplaces', 'thedotmack');
-const CACHE_BASE_PATH = path.join(os.homedir(), '.claude', 'plugins', 'cache', 'thedotmack', 'claude-mem');
+const CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+const INSTALLED_PATH = path.join(CLAUDE_CONFIG_DIR, 'plugins', 'marketplaces', 'thedotmack');
+const CACHE_BASE_PATH = path.join(CLAUDE_CONFIG_DIR, 'plugins', 'cache', 'thedotmack', 'claude-mem');
 const INSTALL_MARKER_EXCLUDES = '--exclude=.install-version --exclude=.cli-installed';
 const MARKETPLACE_PLUGIN_RUNTIME_EXCLUDES =
   '--exclude=plugin/node_modules --exclude=plugin/package-lock.json --exclude=plugin/bun.lock ' +
@@ -157,12 +159,11 @@ if (installedMismatch) {
   console.log(`  Installed:  ${installedMismatch.installedVersion}`);
   if (installedMismatch.installedPath) console.log(`  Worker path: ${installedMismatch.installedPath}`);
   console.log('');
-  console.log('Claude Code is pinned to the installed version, so the worker loads from');
-  console.log(`its cache dir. Mirroring this build into the installed-version cache so the`);
-  console.log('worker restart picks up new code without a Claude Code session restart.');
+  console.log('Claude Code can keep pointing at its installed cache dir. Mirroring this');
+  console.log('build into the installed-version cache and updating the plugin registry so');
+  console.log('new sessions resolve the current version.');
   console.log('');
-  console.log('\x1b[36m%s\x1b[0m', `For a formal version bump, run \`claude plugin update thedotmack/claude-mem\``);
-  console.log('\x1b[36m%s\x1b[0m', `and restart Claude Code so it loads the ${getPluginVersion()} cache dir.`);
+  console.log('\x1b[36m%s\x1b[0m', 'Restart Claude Code to refresh already-running plugin state.');
   console.log('');
 }
 
@@ -203,6 +204,11 @@ try {
   );
 
   writeInstallMarker(CACHE_VERSION_PATH, version);
+  const registryResult = syncClaudePluginRegistry({
+    claudeConfigDir: CLAUDE_CONFIG_DIR,
+    version,
+  });
+  console.log(`Updated Claude plugin registry: claude-mem@thedotmack -> ${registryResult.cachePath}`);
 
   if (installedMismatch && installedMismatch.installedVersion !== version) {
     const INSTALLED_CACHE_PATH = path.join(CACHE_BASE_PATH, installedMismatch.installedVersion);

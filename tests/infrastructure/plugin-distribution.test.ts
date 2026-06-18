@@ -4,10 +4,12 @@ import { tmpdir } from 'os';
 import { spawnSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import { buildShellCommand } from '../../src/build/hook-shell-template.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, '../..');
+const require = createRequire(import.meta.url);
 
 function readJson(relativePath: string): any {
   return JSON.parse(readFileSync(path.join(projectRoot, relativePath), 'utf-8'));
@@ -206,6 +208,111 @@ describe('Plugin Distribution - Build Script Verification', () => {
 
     expect(pluginPackage.dependencies?.tiktoken).toBeDefined();
     expect(workerService).not.toContain('Missing tiktoken_bg.wasm');
+  });
+
+  it('build-and-sync refreshes Codex plugin cache after marketplace sync', () => {
+    const packageJson = readJson('package.json');
+    const buildAndSync = String(packageJson.scripts?.['build-and-sync'] ?? '');
+
+    expect(packageJson.scripts?.['sync-codex-plugin']).toBe('node scripts/sync-codex-plugin.cjs');
+    expect(buildAndSync).toContain('npm run sync-marketplace');
+    expect(buildAndSync).toContain('npm run sync-codex-plugin');
+    expect(buildAndSync).toContain('worker:restart');
+    expect(buildAndSync.indexOf('npm run sync-marketplace')).toBeLessThan(
+      buildAndSync.indexOf('npm run sync-codex-plugin')
+    );
+    expect(buildAndSync.indexOf('npm run sync-codex-plugin')).toBeLessThan(
+      buildAndSync.indexOf('worker:restart')
+    );
+  });
+
+  it('Codex plugin sync helper skips cleanly when Codex CLI is unavailable', () => {
+    const helperPath = path.join(projectRoot, 'scripts/sync-codex-plugin.cjs');
+    const emptyPath = mkdtempSync(path.join(tmpdir(), 'claude-mem-empty-path-'));
+
+    try {
+      const result = spawnSync(process.execPath, [helperPath], {
+        cwd: projectRoot,
+        encoding: 'utf-8',
+        env: {
+          ...process.env,
+          PATH: emptyPath,
+        },
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('Codex CLI not found');
+    } finally {
+      rmSync(emptyPath, { recursive: true, force: true });
+    }
+  });
+
+  it('Claude plugin registry sync points installed claude-mem at the current cache version', () => {
+    const helperPath = path.join(projectRoot, 'scripts/lib/claude-plugin-registry.cjs');
+    const { syncClaudePluginRegistry } = require(helperPath);
+    const claudeConfigDir = mkdtempSync(path.join(tmpdir(), 'claude-mem-claude-registry-'));
+    const pluginsDir = path.join(claudeConfigDir, 'plugins');
+    const installedPath = path.join(pluginsDir, 'installed_plugins.json');
+    const knownMarketplacesPath = path.join(pluginsDir, 'known_marketplaces.json');
+    const previousInstalledAt = '2026-06-15T12:00:00.000Z';
+    const now = '2026-06-18T05:32:00.000Z';
+
+    try {
+      mkdirSync(pluginsDir, { recursive: true });
+      writeFileSync(installedPath, JSON.stringify({
+        version: 2,
+        plugins: {
+          'claude-mem@thedotmack': [
+            {
+              scope: 'user',
+              installPath: path.join(pluginsDir, 'cache/thedotmack/claude-mem/13.6.1'),
+              version: '13.6.1',
+              installedAt: previousInstalledAt,
+              lastUpdated: previousInstalledAt,
+            },
+          ],
+          'other@marketplace': [
+            {
+              scope: 'user',
+              installPath: '/tmp/other',
+              version: '1.0.0',
+            },
+          ],
+        },
+      }));
+      writeFileSync(knownMarketplacesPath, JSON.stringify({
+        existing: {
+          source: { source: 'github', repo: 'example/existing' },
+        },
+      }));
+
+      syncClaudePluginRegistry({ claudeConfigDir, version: '13.6.2', now });
+
+      const installed = JSON.parse(readFileSync(installedPath, 'utf-8'));
+      expect(installed.plugins['claude-mem@thedotmack']).toEqual([
+        {
+          scope: 'user',
+          installPath: path.join(pluginsDir, 'cache/thedotmack/claude-mem/13.6.2'),
+          version: '13.6.2',
+          installedAt: previousInstalledAt,
+          lastUpdated: now,
+        },
+      ]);
+      expect(installed.plugins['other@marketplace'][0].installPath).toBe('/tmp/other');
+
+      const knownMarketplaces = JSON.parse(readFileSync(knownMarketplacesPath, 'utf-8'));
+      expect(knownMarketplaces.thedotmack).toMatchObject({
+        source: {
+          source: 'github',
+          repo: 'thedotmack/claude-mem',
+        },
+        installLocation: path.join(pluginsDir, 'marketplaces/thedotmack'),
+        autoUpdate: true,
+      });
+      expect(knownMarketplaces.existing.source.repo).toBe('example/existing');
+    } finally {
+      rmSync(claudeConfigDir, { recursive: true, force: true });
+    }
   });
 });
 
