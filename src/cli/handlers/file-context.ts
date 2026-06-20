@@ -6,10 +6,11 @@ import type { EventHandler, NormalizedHookInput, HookResult } from '../types.js'
 import { executeWithWorkerFallback, isWorkerFallback } from '../../shared/worker-utils.js';
 import { logger } from '../../utils/logger.js';
 import { parseJsonArray } from '../../shared/timeline-formatting.js';
-import { statSync } from 'fs';
+import { mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'fs';
 import path from 'path';
 import { shouldTrackProject } from '../../shared/should-track-project.js';
 import { getProjectContext } from '../../utils/project-name.js';
+import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
 
 const FILE_READ_GATE_MIN_BYTES = 1_500;
 
@@ -17,6 +18,8 @@ const FETCH_LOOKAHEAD_LIMIT = 40;
 
 const DISPLAY_LIMIT = 15;
 const MAX_FILE_CONTEXT_PATHS = 10;
+const FILE_CONTEXT_INJECTION_TTL_MS = 10 * 60 * 1000;
+const FILE_CONTEXT_INJECTION_MAX_ENTRIES = 2_000;
 
 const TYPE_ICONS: Record<string, string> = {
   decision: '\u2696\uFE0F',
@@ -49,6 +52,78 @@ interface ObservationRow {
   created_at_epoch: number;
   files_read: string | null;
   files_modified: string | null;
+}
+
+interface FileContextInjectionState {
+  entries?: Record<string, number>;
+}
+
+function getFileContextInjectionStatePath(): string {
+  return path.join(SettingsDefaultsManager.get('CLAUDE_MEM_DATA_DIR'), 'state', 'file-context-injections.json');
+}
+
+function canonicalFilePath(input: NormalizedHookInput, filePath: string): string {
+  const cwd = input.cwd || process.cwd();
+  const absolutePath = path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath);
+  try {
+    return realpathSync(absolutePath).split(path.sep).join('/');
+  } catch {
+    return absolutePath.split(path.sep).join('/');
+  }
+}
+
+function injectionKey(input: NormalizedHookInput, filePath: string): string | null {
+  if (!input.turnId) return null;
+  return JSON.stringify([input.sessionId, input.turnId, canonicalFilePath(input, filePath)]);
+}
+
+function pruneInjectionEntries(entries: Record<string, number>, now: number): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(entries)
+      .filter(([, timestamp]) => Number.isFinite(timestamp) && now - timestamp <= FILE_CONTEXT_INJECTION_TTL_MS)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, FILE_CONTEXT_INJECTION_MAX_ENTRIES)
+  );
+}
+
+function readInjectionEntries(now = Date.now()): Record<string, number> {
+  try {
+    const raw = readFileSync(getFileContextInjectionStatePath(), 'utf-8');
+    const parsed = JSON.parse(raw) as FileContextInjectionState;
+    return pruneInjectionEntries(parsed.entries ?? {}, now);
+  } catch {
+    return {};
+  }
+}
+
+function writeInjectionEntries(entries: Record<string, number>): void {
+  const statePath = getFileContextInjectionStatePath();
+  const stateDir = path.dirname(statePath);
+  const tmpPath = `${statePath}.${process.pid}.tmp`;
+  try {
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(tmpPath, JSON.stringify({ entries }), 'utf-8');
+    renameSync(tmpPath, statePath);
+  } catch (error) {
+    logger.debug('HOOK', 'Failed to persist file-context injection state', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function wasFileContextInjected(input: NormalizedHookInput, filePath: string): boolean {
+  const key = injectionKey(input, filePath);
+  if (!key) return false;
+  return readInjectionEntries()[key] !== undefined;
+}
+
+function markFileContextInjected(input: NormalizedHookInput, filePath: string): void {
+  const key = injectionKey(input, filePath);
+  if (!key) return;
+  const now = Date.now();
+  const entries = readInjectionEntries(now);
+  entries[key] = now;
+  writeInjectionEntries(pruneInjectionEntries(entries, now));
 }
 
 function deduplicateObservations(
@@ -154,18 +229,40 @@ export const fileContextHandler: EventHandler = {
       return { continue: true, suppressOutput: true };
     }
 
+    const seenCandidateKeys = new Set<string>();
+    const freshCandidatePaths = candidatePaths.filter(candidatePath => {
+      const key = injectionKey(input, candidatePath);
+      if (key) {
+        if (seenCandidateKeys.has(key) || wasFileContextInjected(input, candidatePath)) {
+          return false;
+        }
+        seenCandidateKeys.add(key);
+      }
+      return true;
+    });
+
+    if (freshCandidatePaths.length === 0) {
+      return { continue: true, suppressOutput: true };
+    }
+
     const timelineResults = await Promise.allSettled(
-      candidatePaths.map(candidatePath => buildFileContextTimeline(input, candidatePath))
+      freshCandidatePaths.map(async candidatePath => ({
+        filePath: candidatePath,
+        timeline: await buildFileContextTimeline(input, candidatePath),
+      }))
     );
     const timelines: string[] = [];
 
     timelineResults.forEach((result, index) => {
       if (result.status === 'fulfilled') {
-        if (result.value) timelines.push(result.value);
+        if (result.value.timeline) {
+          timelines.push(result.value.timeline);
+          markFileContextInjected(input, result.value.filePath);
+        }
         return;
       }
       logger.debug('HOOK', 'File context timeline lookup failed, skipping path', {
-        filePath: candidatePaths[index],
+        filePath: freshCandidatePaths[index],
         error: result.reason instanceof Error ? result.reason.message : String(result.reason),
       });
     });

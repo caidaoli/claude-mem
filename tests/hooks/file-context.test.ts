@@ -19,11 +19,12 @@ const realSettingsSnapshot = { ...realSettingsDefaultsManager };
 const realWorkerUtilsSnapshot = { ...realWorkerUtils };
 const realProjectNameSnapshot = { ...realProjectName };
 const realProjectFilterSnapshot = { ...realProjectFilter };
+let testDataDir = '';
 
 mock.module('../../src/shared/SettingsDefaultsManager.js', () => ({
   SettingsDefaultsManager: {
     get: (key: string) => {
-      if (key === 'CLAUDE_MEM_DATA_DIR') return join(homedir(), '.claude-mem');
+      if (key === 'CLAUDE_MEM_DATA_DIR') return testDataDir || join(homedir(), '.claude-mem');
       return '';
     },
     getInt: () => 0,
@@ -83,6 +84,7 @@ function makeObservationsResponse(observations: Array<{ id: number; created_at_e
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'file-context-test-'));
+  testDataDir = join(tmpDir, 'data');
   testFile = join(tmpDir, 'test.md');
   writeFileSync(testFile, PADDING);
 
@@ -101,6 +103,7 @@ afterEach(() => {
     fetchSpy = null;
   }
   try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  testDataDir = '';
 });
 
 afterAll(() => {
@@ -229,6 +232,34 @@ describe('fileContextHandler — #2094 (no Read mutation)', () => {
     expect(ctx).toContain('Main file context');
     expect(ctx).toContain('Other file context');
     expect(ctx).toContain('\n\n---\n\n');
+  });
+
+  it('injects file context once for the same session turn and normalized path', async () => {
+    const future = Date.now() + 60_000;
+    fetchSpy = spyOn(globalThis, 'fetch').mockResolvedValue(
+      makeObservationsResponse([{ id: 1, created_at_epoch: future, title: 'Main file context' }])
+    );
+
+    const first = await fileContextHandler.execute({
+      sessionId: 'sess',
+      turnId: 'turn-1',
+      cwd: tmpDir,
+      toolName: 'Bash',
+      toolInput: { filePaths: [testFile] },
+    });
+
+    const second = await fileContextHandler.execute({
+      sessionId: 'sess',
+      turnId: 'turn-1',
+      cwd: tmpDir,
+      toolName: 'Bash',
+      toolInput: { filePaths: ['test.md'] },
+    });
+
+    expect(first.hookSpecificOutput!.additionalContext).toContain('Main file context');
+    expect(second.continue).toBe(true);
+    expect(second.hookSpecificOutput).toBeUndefined();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it('keeps successful timelines when one file lookup fails', async () => {
