@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { useI18n } from '../i18n';
 
 interface WelcomeCardProps {
   onDismiss: () => void;
@@ -29,14 +30,14 @@ export function setStoredWelcomeDismissed(dismissed: boolean): void {
   }
 }
 
-function DismissButton({ onClick }: { onClick: () => void }) {
+function DismissButton({ onClick, t }: { onClick: () => void; t: any }) {
   return (
     <button
       type="button"
       className="welcome-modal-dismiss"
       onClick={onClick}
-      aria-label="Close welcome"
-      title="Close (Esc)"
+      aria-label={t.welcome.closeWelcome}
+      title={t.welcome.closeEsc}
     >
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -134,32 +135,33 @@ function RecallIllustration() {
 interface Feature {
   kind: string;
   illustration: React.ReactNode;
-  title: string;
-  description: string;
+  titleKey: 'liveFeed' | 'tuneIt' | 'recallIt';
+  descKey: 'liveFeedDesc' | 'tuneItDesc' | 'recallItDesc';
 }
 
 const FEATURES: Feature[] = [
   {
     kind: 'stream',
     illustration: <StreamIllustration />,
-    title: 'Live feed',
-    description: 'Observations, summaries, and prompts stream in live.',
+    titleKey: 'liveFeed',
+    descKey: 'liveFeedDesc',
   },
   {
     kind: 'tune',
     illustration: <TuneIllustration />,
-    title: 'Tune it',
-    description: 'The gear in the top-right tunes memory injection.',
+    titleKey: 'tuneIt',
+    descKey: 'tuneItDesc',
   },
   {
     kind: 'recall',
     illustration: <RecallIllustration />,
-    title: 'Recall it',
-    description: 'Ask Claude or run /mem-search to find past work.',
+    titleKey: 'recallIt',
+    descKey: 'recallItDesc',
   },
 ];
 
 export function WelcomeCard({ onDismiss }: WelcomeCardProps) {
+  const { t } = useI18n();
   const handleDismiss = () => {
     setStoredWelcomeDismissed(true);
     onDismiss();
@@ -183,12 +185,12 @@ export function WelcomeCard({ onDismiss }: WelcomeCardProps) {
         aria-modal="true"
         aria-labelledby="welcome-modal-title"
       >
-        <DismissButton onClick={handleDismiss} />
+        <DismissButton onClick={handleDismiss} t={t} />
 
         <header className="welcome-modal-header">
           <img className="welcome-modal-logo" src="claude-mem-logo-stylized.png" alt="" width="96" height="96" />
-          <h2 id="welcome-modal-title">Welcome to claude-mem</h2>
-          <p>Persistent memory for Claude Code.</p>
+          <h2 id="welcome-modal-title">{t.welcome.title}</h2>
+          <p>{t.welcome.subtitle}</p>
         </header>
 
         <div className="welcome-modal-grid">
@@ -196,8 +198,8 @@ export function WelcomeCard({ onDismiss }: WelcomeCardProps) {
             <div key={feature.kind} className={`welcome-modal-feature welcome-modal-feature-${feature.kind}`}>
               <div className="welcome-modal-feature-inner">
                 {feature.illustration}
-                <h3 className="welcome-modal-feature-title">{feature.title}</h3>
-                <p className="welcome-modal-feature-desc">{feature.description}</p>
+                <h3 className="welcome-modal-feature-title">{t.welcome[feature.titleKey]}</h3>
+                <p className="welcome-modal-feature-desc">{t.welcome[feature.descKey]}</p>
               </div>
             </div>
           ))}
@@ -205,11 +207,11 @@ export function WelcomeCard({ onDismiss }: WelcomeCardProps) {
 
         <footer className="welcome-modal-footer">
           <a href={EXPLAINER_URL} target="_blank" rel="noopener noreferrer">
-            How it works
+            {t.welcome.howItWorks}
           </a>
           <span className="welcome-modal-footer-sep">{'·'}</span>
           <a href={DOCS_URL} target="_blank" rel="noopener noreferrer">
-            Read the docs
+            {t.welcome.readDocs}
           </a>
         </footer>
       </article>

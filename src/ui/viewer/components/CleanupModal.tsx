@@ -7,6 +7,7 @@
 
 import React, { useState, useCallback } from 'react';
 import { API_ENDPOINTS } from '../constants/api';
+import { useI18n } from '../i18n';
 
 interface CleanupModalProps {
   isOpen: boolean;
@@ -39,17 +40,18 @@ interface CleanupResult {
 }
 
 const CLEANUP_OPTIONS = [
-  { value: '7d', label: 'Son 7 gün', description: '7 günden eski kayıtları sil' },
-  { value: '15d', label: 'Son 15 gün', description: '15 günden eski kayıtları sil' },
-  { value: '1m', label: 'Son 1 ay', description: '30 günden eski kayıtları sil' },
-  { value: '6m', label: 'Son 6 ay', description: '180 günden eski kayıtları sil' },
-  { value: '1y', label: 'Son 1 yıl', description: '365 günden eski kayıtları sil' },
-  { value: 'all', label: 'Tümü', description: 'TÜM kayıtları sil (DİKKATLİ!)' }
+  { value: '7d', labelKey: 'last7Days' as const, descKey: 'last7DaysDesc' as const },
+  { value: '15d', labelKey: 'last15Days' as const, descKey: 'last15DaysDesc' as const },
+  { value: '1m', labelKey: 'last1Month' as const, descKey: 'last1MonthDesc' as const },
+  { value: '6m', labelKey: 'last6Months' as const, descKey: 'last6MonthsDesc' as const },
+  { value: '1y', labelKey: 'last1Year' as const, descKey: 'last1YearDesc' as const },
+  { value: 'all', labelKey: 'all' as const, descKey: 'allDesc' as const }
 ] as const;
 
 type CleanupPeriod = typeof CLEANUP_OPTIONS[number]['value'];
 
 export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
+  const { t } = useI18n();
   const [selectedPeriod, setSelectedPeriod] = useState<CleanupPeriod>('7d');
   const [preview, setPreview] = useState<CleanupPreview | null>(null);
   const [result, setResult] = useState<CleanupResult | null>(null);
@@ -91,8 +93,8 @@ export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
   }, [selectedPeriod]);
 
   const executeCleanup = useCallback(async () => {
-    if (selectedPeriod === 'all' && confirmText !== 'TÜMÜNÜ SİL') {
-      setError('Onay için "TÜMÜNÜ SİL" yazın');
+    if (selectedPeriod === 'all' && confirmText !== t.cleanup.confirmPhrase) {
+      setError(t.cleanup.confirmError);
       return;
     }
 
@@ -120,7 +122,7 @@ export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedPeriod, confirmText]);
+  }, [selectedPeriod, confirmText, t]);
 
   if (!isOpen) return null;
 
@@ -137,9 +139,9 @@ export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
               <line x1="10" y1="11" x2="10" y2="17" />
               <line x1="14" y1="11" x2="14" y2="17" />
             </svg>
-            Hafıza Bakımı
+            {t.cleanup.title}
           </h2>
-          <button className="modal-close-btn" onClick={handleClose} title="Kapat">
+          <button className="modal-close-btn" onClick={handleClose} title={t.cleanup.close}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="18" y1="6" x2="6" y2="18" />
               <line x1="6" y1="6" x2="18" y2="18" />
@@ -150,7 +152,7 @@ export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
         <div className="modal-body">
           {/* Period Selection */}
           <div className="cleanup-section">
-            <label className="section-label">Temizleme Periyodu</label>
+            <label className="section-label">{t.cleanup.cleanupPeriod}</label>
             <div className="cleanup-options">
               {CLEANUP_OPTIONS.map(option => (
                 <button
@@ -162,8 +164,8 @@ export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
                     resetState();
                   }}
                 >
-                  <span className="option-label">{option.label}</span>
-                  <span className="option-description">{option.description}</span>
+                  <span className="option-label">{t.cleanup[option.labelKey]}</span>
+                  <span className="option-description">{t.cleanup[option.descKey]}</span>
                 </button>
               ))}
             </div>
@@ -184,31 +186,31 @@ export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
           {/* Preview Results */}
           {preview && !result && (
             <div className="cleanup-preview">
-              <h3>Önizleme</h3>
+              <h3>{t.cleanup.previewTitle}</h3>
               {preview.cutoffDate && (
                 <p className="cutoff-date">
-                  Kesim tarihi: <strong>{new Date(preview.cutoffDate).toLocaleString('tr-TR')}</strong>
+                  {t.cleanup.cutoffDate} <strong>{new Date(preview.cutoffDate).toLocaleString()}</strong>
                 </p>
               )}
               <div className="preview-stats">
                 <div className="stat-item">
-                  <span className="stat-label">Observations</span>
+                  <span className="stat-label">{t.cleanup.observations}</span>
                   <span className="stat-value">{preview.preview.observations.toLocaleString()}</span>
                 </div>
                 <div className="stat-item">
-                  <span className="stat-label">Summaries</span>
+                  <span className="stat-label">{t.cleanup.summaries}</span>
                   <span className="stat-value">{preview.preview.summaries.toLocaleString()}</span>
                 </div>
                 <div className="stat-item">
-                  <span className="stat-label">Prompts</span>
+                  <span className="stat-label">{t.cleanup.prompts}</span>
                   <span className="stat-value">{preview.preview.prompts.toLocaleString()}</span>
                 </div>
                 <div className="stat-item">
-                  <span className="stat-label">Sessions</span>
+                  <span className="stat-label">{t.cleanup.sessions}</span>
                   <span className="stat-value">{preview.preview.sessions.toLocaleString()}</span>
                 </div>
                 <div className="stat-item total">
-                  <span className="stat-label">Toplam</span>
+                  <span className="stat-label">{t.cleanup.total}</span>
                   <span className="stat-value">{preview.totalRecords.toLocaleString()}</span>
                 </div>
               </div>
@@ -219,12 +221,12 @@ export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
                   className={`cleanup-confirm-btn ${selectedPeriod === 'all' ? 'danger' : ''}`}
                   onClick={() => setShowConfirm(true)}
                 >
-                  Temizlemeyi Başlat
+                  {t.cleanup.startCleanup}
                 </button>
               )}
 
               {preview.totalRecords === 0 && (
-                <p className="no-records">Bu dönemde silinecek kayıt yok.</p>
+                <p className="no-records">{t.cleanup.noRecords}</p>
               )}
             </div>
           )}
@@ -239,19 +241,18 @@ export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
                   <line x1="12" y1="17" x2="12.01" y2="17" />
                 </svg>
                 <p>
-                  <strong>{preview.totalRecords.toLocaleString()}</strong> kayıt kalıcı olarak silinecek.
-                  Bu işlem geri alınamaz!
+                  <strong>{preview.totalRecords.toLocaleString()}</strong>{t.cleanup.confirmWarningPost}
                 </p>
               </div>
 
               {selectedPeriod === 'all' && (
                 <div className="confirm-input">
-                  <label>Onaylamak için <strong>"TÜMÜNÜ SİL"</strong> yazın:</label>
+                  <label>{t.cleanup.confirmTypeLabel}</label>
                   <input
                     type="text"
                     value={confirmText}
                     onChange={e => setConfirmText(e.target.value)}
-                    placeholder="TÜMÜNÜ SİL"
+                    placeholder={t.cleanup.confirmPlaceholder}
                   />
                 </div>
               )}
@@ -265,15 +266,15 @@ export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
                     setConfirmText('');
                   }}
                 >
-                  İptal
+                  {t.cleanup.cancel}
                 </button>
                 <button
                   type="button"
                   className={`execute-btn ${selectedPeriod === 'all' ? 'danger' : ''}`}
                   onClick={executeCleanup}
-                  disabled={isLoading || (selectedPeriod === 'all' && confirmText !== 'TÜMÜNÜ SİL')}
+                  disabled={isLoading || (selectedPeriod === 'all' && confirmText !== t.cleanup.confirmPhrase)}
                 >
-                  {isLoading ? 'Siliniyor...' : 'Sil'}
+                  {isLoading ? t.cleanup.deleting : t.cleanup.delete}
                 </button>
               </div>
             </div>
@@ -286,18 +287,18 @@ export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
                 <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
                 <polyline points="22 4 12 14.01 9 11.01" />
               </svg>
-              <h3>Temizleme Tamamlandı!</h3>
+              <h3>{t.cleanup.cleanupComplete}</h3>
               <div className="result-stats">
-                <p><strong>{result.totalDeleted.toLocaleString()}</strong> kayıt silindi:</p>
+                <p><strong>{result.totalDeleted.toLocaleString()}</strong>{t.cleanup.recordsDeleted}</p>
                 <ul>
-                  <li>{result.deleted.observations.toLocaleString()} observation</li>
-                  <li>{result.deleted.summaries.toLocaleString()} summary</li>
-                  <li>{result.deleted.prompts.toLocaleString()} prompt</li>
-                  <li>{result.deleted.sessions.toLocaleString()} session</li>
+                  <li>{result.deleted.observations.toLocaleString()} {t.cleanup.observation}</li>
+                  <li>{result.deleted.summaries.toLocaleString()} {t.cleanup.summary}</li>
+                  <li>{result.deleted.prompts.toLocaleString()} {t.cleanup.prompt}</li>
+                  <li>{result.deleted.sessions.toLocaleString()} {t.cleanup.session}</li>
                 </ul>
               </div>
               <button type="button" className="done-btn" onClick={handleClose}>
-                Tamam
+                {t.cleanup.done}
               </button>
             </div>
           )}
@@ -307,7 +308,7 @@ export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
         {!preview && !result && (
           <div className="modal-footer">
             <button type="button" className="cancel-btn" onClick={handleClose}>
-              İptal
+              {t.cleanup.cancel}
             </button>
             <button
               type="button"
@@ -315,7 +316,7 @@ export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
               onClick={fetchPreview}
               disabled={isLoading}
             >
-              {isLoading ? 'Yükleniyor...' : 'Önizleme'}
+              {isLoading ? t.cleanup.loading : t.cleanup.preview}
             </button>
           </div>
         )}
