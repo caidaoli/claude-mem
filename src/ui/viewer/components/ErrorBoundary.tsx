@@ -1,4 +1,5 @@
 import React, { Component, ReactNode, ErrorInfo } from 'react';
+import { I18nContext } from '../i18n';
 
 interface Props {
   children: ReactNode;
@@ -35,26 +36,30 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <div style={{ padding: '20px', color: '#ff6b6b', backgroundColor: '#1a1a1a', minHeight: '100vh' }}>
-          <h1 style={{ fontSize: '24px', marginBottom: '10px' }}>Something went wrong</h1>
-          <p style={{ marginBottom: '10px', color: '#8b949e' }}>
-            The application encountered an error. Please refresh the page to try again.
-          </p>
-          {this.state.error && (
-            <details style={{ marginTop: '20px', color: '#8b949e' }}>
-              <summary style={{ cursor: 'pointer', marginBottom: '10px' }}>Error details</summary>
-              <pre style={{
-                backgroundColor: '#0d1117',
-                padding: '10px',
-                borderRadius: '6px',
-                overflow: 'auto'
-              }}>
-                {this.state.error.toString()}
-                {this.state.errorInfo && '\n\n' + this.state.errorInfo.componentStack}
-              </pre>
-            </details>
+        <I18nContext.Consumer>
+          {({ t }) => (
+            <div style={{ padding: '20px', color: '#ff6b6b', backgroundColor: '#1a1a1a', minHeight: '100vh' }}>
+              <h1 style={{ fontSize: '24px', marginBottom: '10px' }}>{t.errorBoundary.title}</h1>
+              <p style={{ marginBottom: '10px', color: '#8b949e' }}>
+                {t.errorBoundary.message}
+              </p>
+              {this.state.error && (
+                <details style={{ marginTop: '20px', color: '#8b949e' }}>
+                  <summary style={{ cursor: 'pointer', marginBottom: '10px' }}>{t.errorBoundary.details}</summary>
+                  <pre style={{
+                    backgroundColor: '#0d1117',
+                    padding: '10px',
+                    borderRadius: '6px',
+                    overflow: 'auto'
+                  }}>
+                    {this.state.error.toString()}
+                    {this.state.errorInfo && '\n\n' + this.state.errorInfo.componentStack}
+                  </pre>
+                </details>
+              )}
+            </div>
           )}
-        </div>
+        </I18nContext.Consumer>
       );
     }
 

@@ -235,6 +235,32 @@ export const en = {
     en: 'English',
     zhCN: '中文',
   },
+
+  // Error Boundary
+  errorBoundary: {
+    title: 'Something went wrong',
+    message: 'The application encountered an error. Please refresh the page to try again.',
+    details: 'Error details',
+  },
+
+  // GitHub Button
+  github: {
+    title: 'GitHub',
+    starUs: 'Star us on GitHub',
+    stars: 'stars',
+  },
+
+  // Scroll to Top
+  scrollToTop: {
+    ariaLabel: 'Scroll to top',
+  },
+
+  // Protocols
+  protocols: {
+    openai: 'OpenAI',
+    gemini: 'Gemini',
+    codex: 'Codex (Responses API)',
+  },
 } as const;
 
 export type TranslationKeys = typeof en;

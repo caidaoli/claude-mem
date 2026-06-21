@@ -237,5 +237,31 @@ export const zhCN: TranslationKeys = {
     en: 'English',
     zhCN: '中文',
   },
+
+  // Error Boundary
+  errorBoundary: {
+    title: '出错了',
+    message: '应用程序遇到错误。请刷新页面重试。',
+    details: '错误详情',
+  },
+
+  // GitHub Button
+  github: {
+    title: 'GitHub',
+    starUs: '在 GitHub 上给我们加星',
+    stars: '星标',
+  },
+
+  // Scroll to Top
+  scrollToTop: {
+    ariaLabel: '回到顶部',
+  },
+
+  // Protocols
+  protocols: {
+    openai: 'OpenAI',
+    gemini: 'Gemini',
+    codex: 'Codex (Responses API)',
+  },
 };
 

@@ -495,9 +495,9 @@ export function ContextSettingsModal({
                       value={formState.CLAUDE_MEM_CUSTOM_PROTOCOL || 'openai'}
                       onChange={(e) => updateSetting('CLAUDE_MEM_CUSTOM_PROTOCOL', e.target.value)}
                     >
-                      <option value="openai">OpenAI</option>
-                      <option value="gemini">Gemini</option>
-                      <option value="codex">Codex (Responses API)</option>
+                      <option value="openai">{t.protocols.openai}</option>
+                      <option value="gemini">{t.protocols.gemini}</option>
+                      <option value="codex">{t.protocols.codex}</option>
                     </select>
                   </FormField>
                   <FormField

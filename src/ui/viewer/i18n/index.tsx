@@ -41,7 +41,7 @@ interface I18nContextValue {
   t: TranslationKeys;
 }
 
-const I18nContext = createContext<I18nContextValue>({
+export const I18nContext = createContext<I18nContextValue>({
   locale: 'en',
   setLocale: () => {},
   t: en,
