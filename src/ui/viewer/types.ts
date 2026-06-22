@@ -109,23 +109,3 @@ export interface Settings {
   // Logging
   CLAUDE_MEM_LOG_LEVEL?: string;  // 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' | 'SILENT'
 }
-
-export interface WorkerStats {
-  version?: string;
-  uptime?: number;
-  activeSessions?: number;
-  sseClients?: number;
-}
-
-export interface DatabaseStats {
-  size?: number;
-  observations?: number;
-  sessions?: number;
-  summaries?: number;
-  firstObservationAt?: string | null;
-}
-
-export interface Stats {
-  worker?: WorkerStats;
-  database?: DatabaseStats;
-}

@@ -550,7 +550,6 @@ describe('Spawn-Contract Templating - Rule B installers bake absolute paths', ()
       'getBunAbsolutePath',
       'getNodeAbsolutePath',
       'getPluginRootAbsolutePath',
-      'getVersionCheckAbsolutePath',
     ]) {
       expect(content).toContain(`export function ${name}`);
     }
