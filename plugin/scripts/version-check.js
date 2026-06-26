@@ -10,6 +10,21 @@ const VERSION_CHECK_LOG_PREFIX = '[version-check]';
 const BUN_INSTALL_ARGS = Object.freeze(['install', '--production']);
 const BUN_INSTALL_TIMEOUT_MS = 120_000;
 const NODE_MODULES_DIRNAME = 'node_modules';
+const CODEX_SESSION_START_NOOP = JSON.stringify({
+  hookSpecificOutput: {
+    hookEventName: 'SessionStart',
+  },
+});
+
+let codexSessionStartOutputEmitted = false;
+
+function emitCodexSessionStartNoop() {
+  if (process.env.CLAUDE_MEM_CODEX_HOOK !== '1' || codexSessionStartOutputEmitted) {
+    return;
+  }
+  console.log(CODEX_SESSION_START_NOOP);
+  codexSessionStartOutputEmitted = true;
+}
 
 function findBun() {
   const pathCheck = IS_WINDOWS
@@ -139,17 +154,16 @@ function resolveRoot() {
 }
 
 const ROOT = resolveRoot();
-if (!ROOT) process.exit(0);
+if (!ROOT) {
+  emitCodexSessionStartNoop();
+  process.exit(0);
+}
 
 ensurePluginDependencies(ROOT);
 
 function emitUpgradeHint(message) {
   if (process.env.CLAUDE_MEM_CODEX_HOOK === '1') {
-    console.log(JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: 'SessionStart',
-      },
-    }));
+    emitCodexSessionStartNoop();
   } else {
     console.error(message);
   }
@@ -189,4 +203,5 @@ try {
 } catch {
   emitUpgradeHint('claude-mem: install marker unreadable - run: npx claude-mem@latest install');
 }
+emitCodexSessionStartNoop();
 process.exit(0);

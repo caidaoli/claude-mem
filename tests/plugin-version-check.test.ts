@@ -57,6 +57,20 @@ describe('plugin/scripts/version-check.js install marker compatibility', () => {
     expect(result.stderr).toBe('');
   });
 
+  it('emits a valid empty SessionStart envelope for Codex when install marker matches', () => {
+    writeFileSync(join(tempDir, '.install-version'), '12.4.4\n');
+
+    const result = runVersionCheck(tempDir, { CLAUDE_MEM_CODEX_HOOK: '1' });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(JSON.parse(result.stdout)).toEqual({
+      hookSpecificOutput: {
+        hookEventName: 'SessionStart',
+      },
+    });
+  });
+
   it('emits an upgrade hint for a mismatched legacy plain-text marker', () => {
     writeFileSync(join(tempDir, '.install-version'), '12.4.3\n');
 
