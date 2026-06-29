@@ -12,9 +12,9 @@ const WORKER_SERVICE = {
   source: 'src/services/worker-service.ts'
 };
 
-const SERVER_BETA_SERVICE = {
-  name: 'server-beta-service',
-  source: 'src/server/runtime/ServerBetaService.ts'
+const SERVER_SERVICE = {
+  name: 'server-service',
+  source: 'src/server/runtime/ServerService.ts'
 };
 
 const MCP_SERVER = {
@@ -72,7 +72,19 @@ function shellTemplateManifest(buildShellCommand) {
   });
   const codexHook = (tail, extra = {}) => buildShellCommand({
     host: 'codex-cli', requireFile: 'bun-runner.js', requireFileSecondary: 'worker-service.cjs',
-    trailingCommand: ccTrailing(...tail), notFoundMessage: 'claude-mem: plugin scripts not found', ...extra,
+    trailingCommand: ccTrailing(...tail), notFoundMessage: 'claude-mem: plugin scripts not found',
+    extraEnv: { CLAUDE_MEM_CODEX_HOOK: '1' },
+    ...extra,
+  });
+  const codexStartupHook = () => buildShellCommand({
+    host: 'codex-cli', requireFile: 'bun-runner.js', requireFileSecondary: 'worker-service.cjs',
+    trailingCommand: [
+      '_V=$(CLAUDE_MEM_CODEX_HOOK=1 node "$_P/scripts/version-check.js" || true);',
+      'if [ -n "$_V" ]; then printf \'%s\\n\' "$_V"; else',
+      'CLAUDE_MEM_CODEX_HOOK=1', ...ccTrailing('hook', 'codex', 'context'),
+      '; fi',
+    ],
+    notFoundMessage: 'claude-mem: plugin scripts not found',
   });
 
   return {
@@ -95,13 +107,7 @@ function shellTemplateManifest(buildShellCommand) {
     'plugin/hooks/codex-hooks.json': {
       kind: 'hooks',
       commands: {
-        'SessionStart.0.0': buildShellCommand({
-          host: 'codex-cli', requireFile: 'version-check.js', extraEnv: { CLAUDE_MEM_CODEX_HOOK: '1' },
-          trailingCommand: ['node', '"$_P/scripts/version-check.js"'],
-          notFoundMessage: 'claude-mem: version-check.js not found',
-        }),
-        'SessionStart.0.1': codexHook(['start'], { extraEnv: { CLAUDE_MEM_CODEX_HOOK: '1' } }),
-        'SessionStart.0.2': codexHook(['hook', 'codex', 'context']),
+        'SessionStart.0.0': codexStartupHook(),
         'UserPromptSubmit.0.0': codexHook(['hook', 'codex', 'session-init']),
         'PreToolUse.0.0': codexHook(['hook', 'codex', 'file-context']),
         'PostToolUse.0.0': codexHook(['hook', 'codex', 'observation']),
@@ -350,12 +356,12 @@ async function buildHooks() {
 
     console.log(`\n🔧 Building server beta service...`);
     await build({
-      entryPoints: [SERVER_BETA_SERVICE.source],
+      entryPoints: [SERVER_SERVICE.source],
       bundle: true,
       platform: 'node',
       target: 'node18',
       format: 'cjs',
-      outfile: `${hooksDir}/${SERVER_BETA_SERVICE.name}.cjs`,
+      outfile: `${hooksDir}/${SERVER_SERVICE.name}.cjs`,
       minify: true,
       logLevel: 'error',
       external: [
@@ -374,11 +380,11 @@ async function buildHooks() {
       }
     });
 
-    stripHardcodedDirname(`${hooksDir}/${SERVER_BETA_SERVICE.name}.cjs`);
+    stripHardcodedDirname(`${hooksDir}/${SERVER_SERVICE.name}.cjs`);
 
-    fs.chmodSync(`${hooksDir}/${SERVER_BETA_SERVICE.name}.cjs`, 0o755);
-    const serverBetaStats = fs.statSync(`${hooksDir}/${SERVER_BETA_SERVICE.name}.cjs`);
-    console.log(`✓ server-beta-service built (${(serverBetaStats.size / 1024).toFixed(2)} KB)`);
+    fs.chmodSync(`${hooksDir}/${SERVER_SERVICE.name}.cjs`, 0o755);
+    const serverStats = fs.statSync(`${hooksDir}/${SERVER_SERVICE.name}.cjs`);
+    console.log(`✓ server-service built (${(serverStats.size / 1024).toFixed(2)} KB)`);
 
     console.log(`\n🔧 Building MCP server...`);
     await build({
@@ -633,6 +639,12 @@ async function buildHooks() {
       }
     }
     const codexHooks = JSON.parse(fs.readFileSync('plugin/hooks/codex-hooks.json', 'utf-8'));
+    const validCodexHookRootKeys = new Set(['hooks']);
+    for (const rootKey of Object.keys(codexHooks)) {
+      if (!validCodexHookRootKeys.has(rootKey)) {
+        throw new Error(`plugin/hooks/codex-hooks.json contains unsupported Codex root key: ${rootKey}`);
+      }
+    }
     for (const eventName of Object.keys(codexHooks.hooks ?? {})) {
       if (!validCodexHookEvents.has(eventName)) {
         throw new Error(`plugin/hooks/codex-hooks.json contains unknown Codex hook event: ${eventName}`);
@@ -658,7 +670,7 @@ async function buildHooks() {
     console.log('\n✅ All build targets compiled successfully!');
     console.log(`   Output: ${hooksDir}/`);
     console.log(`   - Worker: worker-service.cjs`);
-    console.log(`   - Server beta: server-beta-service.cjs`);
+    console.log(`   - Server: server-service.cjs`);
     console.log(`   - MCP Server: mcp-server.cjs`);
     console.log(`   - Context Generator: context-generator.cjs`);
     console.log(`   - Transcript Watcher: transcript-watcher.cjs`);

@@ -1,5 +1,5 @@
 import { describe, expect, it, spyOn } from 'bun:test';
-import { loadServerBetaMode } from '../src/server/runtime/create-server-beta-service.js';
+import { loadServerMode } from '../src/server/runtime/create-server-service.js';
 import { logger } from '../src/utils/logger.js';
 
 describe('ModeManager path resolution from root-level test entrypoints', () => {
@@ -11,7 +11,7 @@ describe('ModeManager path resolution from root-level test entrypoints', () => {
     ];
 
     try {
-      expect(() => loadServerBetaMode()).not.toThrow();
+      expect(() => loadServerMode()).not.toThrow();
     } finally {
       spies.forEach(spy => spy.mockRestore());
     }

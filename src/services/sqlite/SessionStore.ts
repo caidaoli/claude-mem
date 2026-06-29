@@ -70,6 +70,7 @@ export class SessionStore {
     this.addObservationsMetadataColumn();
     this.ensureDeadPendingMessagesColumns();
     this.ensurePendingMessagesToolUseIdColumn();
+    this.dropWorkerPidColumn();
   }
 
   // Restore retry_count / failed_at_epoch / completed_at_epoch on databases that
@@ -93,6 +94,27 @@ export class SessionStore {
         logger.warn('DB', `Failed to restore ${name} column on pending_messages`, {}, error instanceof Error ? error : new Error(String(error)));
       }
     }
+  }
+
+  private dropWorkerPidColumn(): void {
+    const applied = this.db.prepare('SELECT version FROM schema_versions WHERE version = ?').get(32) as SchemaVersion | undefined;
+    const cols = this.db.query('PRAGMA table_info(pending_messages)').all() as TableColumnInfo[];
+    const hasColumn = cols.some(c => c.name === 'worker_pid');
+
+    if (applied && !hasColumn) return;
+
+    if (hasColumn) {
+      try {
+        this.db.run('DROP INDEX IF EXISTS idx_pending_messages_worker_pid');
+        this.db.run('ALTER TABLE pending_messages DROP COLUMN worker_pid');
+        logger.debug('DB', 'Dropped worker_pid column from pending_messages');
+      } catch (error) {
+        logger.warn('DB', 'Failed to drop worker_pid column from pending_messages', {}, error instanceof Error ? error : new Error(String(error)));
+        return;
+      }
+    }
+
+    this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(32, new Date().toISOString());
   }
 
   private initializeSchema(): void {

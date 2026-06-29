@@ -162,7 +162,7 @@ describe('SessionStore migrations', () => {
     expect(sessionFk?.on_delete).toBe('CASCADE');
   });
 
-  it('drops the dead pending_messages columns (retry_count / failed_at_epoch / completed_at_epoch / worker_pid) on a legacy db', () => {
+  it('restores pending retry lifecycle columns but drops legacy worker_pid on a legacy db', () => {
     const db = new Database(':memory:');
     try {
       db.run(`
@@ -186,9 +186,9 @@ describe('SessionStore migrations', () => {
       new SessionStore(db);
 
       const cols = new Set((db.query('PRAGMA table_info(pending_messages)').all() as Array<{ name: string }>).map(c => c.name));
-      expect(cols.has('retry_count')).toBe(false);
-      expect(cols.has('failed_at_epoch')).toBe(false);
-      expect(cols.has('completed_at_epoch')).toBe(false);
+      expect(cols.has('retry_count')).toBe(true);
+      expect(cols.has('failed_at_epoch')).toBe(true);
+      expect(cols.has('completed_at_epoch')).toBe(true);
       expect(cols.has('worker_pid')).toBe(false);
     } finally {
       db.close();

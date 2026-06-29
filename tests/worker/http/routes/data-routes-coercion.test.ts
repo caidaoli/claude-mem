@@ -28,7 +28,7 @@ function createMockReqRes(body: any): { req: Partial<Request>; res: Partial<Resp
 function captureChain(mockApp: any, targetPath: string): (req: Request, res: Response) => void | Promise<void> {
   let middleware: (req: Request, res: Response, next: () => void) => void;
   let handler: (req: Request, res: Response) => void;
-  mockApp.post = mock((path: string, ...rest: any[]) => {
+  const capture = mock((path: string, ...rest: any[]) => {
     if (path !== targetPath) return;
     if (rest.length === 1) {
       handler = rest[0];
@@ -37,6 +37,8 @@ function captureChain(mockApp: any, targetPath: string): (req: Request, res: Res
       handler = rest[1];
     }
   });
+  mockApp.get = capture;
+  mockApp.post = capture;
   return (req: Request, res: Response): void => {
     if (!middleware) {
       handler(req, res);
@@ -158,7 +160,7 @@ describe('DataRoutes Type Coercion', () => {
       const sessionManager = {
         initializeSession,
         isAnySessionProcessing: () => true,
-        getTotalQueueDepth: () => 41,
+        getTotalActiveWork: () => 41,
         getActiveSessionCount: () => 1,
       };
 
@@ -178,25 +180,21 @@ describe('DataRoutes Type Coercion', () => {
       );
 
       const mockApp: any = {
-        get: mock(() => {}),
-        post: mock(() => {}),
         delete: mock(() => {}),
         use: mock(() => {}),
       };
-      const handler = captureChain(mockApp, '/api/processing');
+      const handler = captureChain(mockApp, '/api/processing-status');
       routes.setupRoutes(mockApp as any);
 
       const { req, res, jsonSpy } = createMockReqRes({});
-      handler(req as Request, res as Response);
+      await handler(req as Request, res as Response);
       await new Promise(resolve => setTimeout(resolve, 0));
 
       expect(initializeSession).not.toHaveBeenCalled();
       expect(ensureGeneratorRunning).not.toHaveBeenCalled();
       expect(jsonSpy).toHaveBeenCalledWith(expect.objectContaining({
-        status: 'ok',
         isProcessing: true,
         queueDepth: 41,
-        activeSessions: 1,
       }));
     });
   });
