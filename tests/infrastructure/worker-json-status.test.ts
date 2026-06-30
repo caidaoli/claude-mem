@@ -5,6 +5,7 @@ import path from 'path';
 import {
   buildCodexSessionStartNoopOutput,
   buildStatusOutput,
+  formatDependencyHealthHint,
   StatusOutput,
 } from '../../src/services/worker-service.js';
 
@@ -184,6 +185,42 @@ describe('worker-json-status', () => {
           hookEventName: 'SessionStart',
         },
       });
+    });
+  });
+
+  describe('formatDependencyHealthHint', () => {
+    it('returns a short dependency degradation hint when health reports degraded dependencies', () => {
+      const hint = formatDependencyHealthHint({
+        dependencies: {
+          degraded: true,
+          statuses: [
+            {
+              dependency: 'claude_cli',
+              kind: 'setup_required',
+              message: 'Claude executable not found',
+              recordedAtMs: 123,
+            },
+            {
+              dependency: 'uvx',
+              kind: 'vector_search_unavailable',
+              message: 'uvx executable not found',
+              recordedAtMs: 124,
+            },
+          ],
+        },
+      });
+
+      expect(hint).toBe('  Dependencies: degraded (Claude CLI setup required, uvx unavailable for vector search). Run npx claude-mem doctor or open Settings for remediation.');
+    });
+
+    it('returns null when dependencies are healthy or absent', () => {
+      expect(formatDependencyHealthHint({})).toBeNull();
+      expect(formatDependencyHealthHint({
+        dependencies: {
+          degraded: false,
+          statuses: [],
+        },
+      })).toBeNull();
     });
   });
 

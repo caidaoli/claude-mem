@@ -39,7 +39,7 @@ export class PrivacyCheckValidator {
       return { allow: true, prompt: '' };
     }
 
-    const userPrompt = store.getUserPrompt(contentSessionId, promptNumber);
+    const userPrompt = store.getUserPrompt(contentSessionId, promptNumber, sessionDbId);
 
     if (userPrompt === null) {
       logger.warn(

@@ -1,6 +1,7 @@
-import { describe, it, expect, mock } from 'bun:test';
+import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
 
 import { SessionRoutes } from '../../src/services/worker/http/routes/SessionRoutes.js';
+import { resetDependencyStatusesForTesting } from '../../src/shared/dependency-health.js';
 
 function createMinimalWorkerService() {
   return {
@@ -75,6 +76,14 @@ function buildRoutes() {
 }
 
 describe('SessionRoutes generator idempotency', () => {
+  beforeEach(() => {
+    resetDependencyStatusesForTesting();
+  });
+
+  afterEach(() => {
+    resetDependencyStatusesForTesting();
+  });
+
   it('does not start a second generator when one is already running', async () => {
     const { routes, startSessionSpy, setSession, makeSession } = buildRoutes();
     // generatorPromise already live → guard must short-circuit.

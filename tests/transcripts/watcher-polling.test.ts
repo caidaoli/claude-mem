@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +8,8 @@ let failFirstOne = false;
 const ingestCalls: Array<{ toolResponse: unknown }> = [];
 
 const realFs = await import('node:fs');
+const realHttpShared = await import('../../src/services/worker/http/shared.js');
+const realHttpSharedSnapshot = { ...realHttpShared };
 
 mock.module('fs', () => ({
   ...realFs,
@@ -19,6 +21,7 @@ mock.module('fs', () => ({
 }));
 
 mock.module('../../src/services/worker/http/shared.js', () => ({
+  ...realHttpSharedSnapshot,
   ingestObservation: (payload: { toolResponse: unknown }) => {
     ingestCalls.push({ toolResponse: payload.toolResponse });
     if (payload.toolResponse === 'one' && failFirstOne) {
@@ -41,6 +44,10 @@ describe('TranscriptWatcher polling fallback', () => {
 
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  afterAll(() => {
+    mock.module('../../src/services/worker/http/shared.js', () => realHttpSharedSnapshot);
   });
 
   it('advances offsets for appended transcript lines even when fs.watch emits no events', async () => {

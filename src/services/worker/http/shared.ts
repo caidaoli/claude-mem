@@ -6,7 +6,7 @@ import type { SessionEventBroadcaster } from '../events/SessionEventBroadcaster.
 import type { ParsedSummary } from '../../../sdk/parser.js';
 import { stripMemoryTagsFromJson } from '../../../utils/tag-stripping.js';
 import { isProjectExcluded } from '../../../utils/project-filter.js';
-import { SettingsDefaultsManager } from '../../../shared/SettingsDefaultsManager.js';
+import { SettingsDefaultsManager, type SettingsDefaults } from '../../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH } from '../../../shared/paths.js';
 import { getProjectContext } from '../../../utils/project-name.js';
 import { normalizePlatformSource } from '../../../shared/platform-source.js';
@@ -20,6 +20,16 @@ interface IngestContext {
 }
 
 let ctx: IngestContext | null = null;
+
+type IngestStringSetting = 'CLAUDE_MEM_EXCLUDED_PROJECTS' | 'CLAUDE_MEM_SKIP_TOOLS';
+
+function getIngestStringSetting(settings: Partial<SettingsDefaults>, key: IngestStringSetting): string {
+  const value = settings[key];
+  if (typeof value === 'string') {
+    return value;
+  }
+  return SettingsDefaultsManager.get(key);
+}
 
 export function setIngestContext(next: IngestContext): void {
   ctx = next;
@@ -62,16 +72,18 @@ export async function ingestObservation(payload: ObservationPayload): Promise<In
   const cwd = typeof payload.cwd === 'string' ? payload.cwd : '';
   const project = cwd.trim() ? getProjectContext(cwd).primary : '';
 
-  const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+  const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH) as Partial<SettingsDefaults>;
+  const excludedProjects = getIngestStringSetting(settings, 'CLAUDE_MEM_EXCLUDED_PROJECTS');
+  const skipTools = getIngestStringSetting(settings, 'CLAUDE_MEM_SKIP_TOOLS');
 
-  if (cwd && isProjectExcluded(cwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS)) {
+  if (cwd && isProjectExcluded(cwd, excludedProjects)) {
     return { ok: true, status: 'skipped', reason: 'project_excluded' };
   }
 
   // Skip low-value or meta tools per user settings.
   // Supports exact matches and wildcard prefix patterns ending with '*'
   // (e.g. 'mcp__*' skips every MCP tool). Fork commit 7ff1b4a5.
-  const skipPatterns = settings.CLAUDE_MEM_SKIP_TOOLS.split(',').map(t => t.trim()).filter(Boolean);
+  const skipPatterns = skipTools.split(',').map(t => t.trim()).filter(Boolean);
   const exactMatches = new Set<string>();
   const prefixPatterns: string[] = [];
   for (const pattern of skipPatterns) {
@@ -98,7 +110,7 @@ export async function ingestObservation(payload: ObservationPayload): Promise<In
   let promptNumber: number;
   try {
     sessionDbId = store.createSDKSession(payload.contentSessionId, project, '', undefined, platformSource);
-    promptNumber = store.getPromptNumberFromUserPrompts(payload.contentSessionId);
+    promptNumber = store.getPromptNumberFromUserPrompts(payload.contentSessionId, sessionDbId);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger.error('INGEST', 'Observation session resolution failed', {
