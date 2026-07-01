@@ -347,6 +347,7 @@ describe('SessionStore migrations', () => {
     const promptFks = store.db.query('PRAGMA foreign_key_list(user_prompts)').all() as Array<{ table: string; from: string; to: string }>;
     expect(promptFks.some(fk => fk.table === 'sdk_sessions' && fk.from === 'session_db_id' && fk.to === 'id')).toBe(true);
     expect(promptFks.some(fk => fk.table === 'sdk_sessions' && fk.from === 'content_session_id')).toBe(false);
+    expect(hasUniqueIndexOnColumns(store.db, 'session_summaries', ['memory_session_id', 'content_hash'])).toBe(true);
   });
 
   it('migrates a single-platform DB without losing observations, summaries, prompts, or pending rows', () => {
@@ -390,6 +391,150 @@ describe('SessionStore migrations', () => {
       `).run(cursorId, 'shared-raw-id', 'tool-1', Date.now());
 
       expect((db.prepare("SELECT COUNT(*) AS n FROM pending_messages WHERE content_session_id = 'shared-raw-id'").get() as { n: number }).n).toBe(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('backfills summary content hashes and removes identical legacy summary duplicates', () => {
+    const db = new Database(':memory:');
+    try {
+      const now = new Date().toISOString();
+      db.run('CREATE TABLE schema_versions (id INTEGER PRIMARY KEY, version INTEGER UNIQUE NOT NULL, applied_at TEXT NOT NULL)');
+      db.run(`
+        CREATE TABLE sdk_sessions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          content_session_id TEXT UNIQUE NOT NULL,
+          memory_session_id TEXT UNIQUE,
+          project TEXT NOT NULL,
+          platform_source TEXT NOT NULL DEFAULT 'claude',
+          user_prompt TEXT,
+          started_at TEXT NOT NULL,
+          started_at_epoch INTEGER NOT NULL,
+          completed_at TEXT,
+          completed_at_epoch INTEGER,
+          status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'completed', 'failed'))
+        )
+      `);
+      db.run(`
+        CREATE TABLE session_summaries (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          memory_session_id TEXT NOT NULL,
+          project TEXT NOT NULL,
+          request TEXT,
+          investigated TEXT,
+          learned TEXT,
+          completed TEXT,
+          next_steps TEXT,
+          files_read TEXT,
+          files_edited TEXT,
+          notes TEXT,
+          created_at TEXT NOT NULL,
+          created_at_epoch INTEGER NOT NULL,
+          FOREIGN KEY(memory_session_id) REFERENCES sdk_sessions(memory_session_id) ON DELETE CASCADE
+        )
+      `);
+      db.prepare(`
+        INSERT INTO sdk_sessions (content_session_id, memory_session_id, project, started_at, started_at_epoch, status)
+        VALUES (?, ?, 'project', ?, ?, 'active')
+      `).run('content-legacy-summary', 'memory-legacy-summary', now, 1700000000000);
+      const insertSummary = db.prepare(`
+        INSERT INTO session_summaries (
+          memory_session_id, project, request, investigated, learned, completed, next_steps, notes, created_at, created_at_epoch
+        ) VALUES (?, 'project', ?, 'investigated', 'learned', ?, 'next', 'notes', ?, ?)
+      `);
+      insertSummary.run('memory-legacy-summary', 'same request', 'same completed', now, 1700000000001);
+      insertSummary.run('memory-legacy-summary', 'same request', 'same completed', now, 1700000000002);
+      insertSummary.run('memory-legacy-summary', 'different request', 'same completed', now, 1700000000003);
+
+      const migrated = new SessionStore(db);
+
+      expect(hasUniqueIndexOnColumns(db, 'session_summaries', ['memory_session_id', 'content_hash'])).toBe(true);
+      expect((db.prepare('SELECT COUNT(*) AS n FROM session_summaries').get() as { n: number }).n).toBe(2);
+      expect((db.prepare('SELECT COUNT(*) AS n FROM session_summaries WHERE content_hash IS NOT NULL').get() as { n: number }).n).toBe(2);
+
+      migrated.storeSummary('memory-legacy-summary', 'project', {
+        request: 'same request',
+        investigated: 'investigated',
+        learned: 'learned',
+        completed: 'same completed',
+        next_steps: 'next',
+        notes: 'notes',
+      }, 1, 0, 1700000000100);
+      expect((db.prepare('SELECT COUNT(*) AS n FROM session_summaries').get() as { n: number }).n).toBe(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('preserves discovery_tokens and content_hash columns across repeated migrations (worker restarts)', () => {
+    const db = new Database(':memory:');
+    try {
+      const now = new Date().toISOString();
+      db.run('CREATE TABLE schema_versions (id INTEGER PRIMARY KEY, version INTEGER UNIQUE NOT NULL, applied_at TEXT NOT NULL)');
+      db.run(`
+        CREATE TABLE sdk_sessions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          content_session_id TEXT UNIQUE NOT NULL,
+          memory_session_id TEXT UNIQUE,
+          project TEXT NOT NULL,
+          platform_source TEXT NOT NULL DEFAULT 'claude',
+          user_prompt TEXT,
+          started_at TEXT NOT NULL,
+          started_at_epoch INTEGER NOT NULL,
+          completed_at TEXT,
+          completed_at_epoch INTEGER,
+          status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'completed', 'failed'))
+        )
+      `);
+      db.run(`
+        CREATE TABLE session_summaries (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          memory_session_id TEXT NOT NULL,
+          project TEXT NOT NULL,
+          request TEXT,
+          investigated TEXT,
+          learned TEXT,
+          completed TEXT,
+          next_steps TEXT,
+          files_read TEXT,
+          files_edited TEXT,
+          notes TEXT,
+          created_at TEXT NOT NULL,
+          created_at_epoch INTEGER NOT NULL,
+          FOREIGN KEY(memory_session_id) REFERENCES sdk_sessions(memory_session_id) ON DELETE CASCADE
+        )
+      `);
+      db.prepare(`
+        INSERT INTO sdk_sessions (content_session_id, memory_session_id, project, started_at, started_at_epoch, status)
+        VALUES (?, ?, 'project', ?, ?, 'active')
+      `).run('content-restart', 'memory-restart', now, 1700000000000);
+
+      // 首次构造：迁移应建立完整 schema——discovery_tokens (v11) + content_hash 列与复合唯一索引 (v36)。
+      new SessionStore(db);
+      const afterFirst = (db.query('PRAGMA table_info(session_summaries)').all() as Array<{ name: string }>).map(c => c.name);
+      expect(afterFirst).toContain('discovery_tokens');
+      expect(afterFirst).toContain('content_hash');
+      expect(hasUniqueIndexOnColumns(db, 'session_summaries', ['memory_session_id', 'content_hash'])).toBe(true);
+
+      // 二次构造：模拟 worker 重启。v7 迁移绝不能因表上已存在的复合唯一索引而重建表、丢弃这两列。
+      const store = new SessionStore(db);
+      const afterSecond = (db.query('PRAGMA table_info(session_summaries)').all() as Array<{ name: string }>).map(c => c.name);
+      expect(afterSecond).toContain('discovery_tokens');
+      expect(afterSecond).toContain('content_hash');
+      expect(hasUniqueIndexOnColumns(db, 'session_summaries', ['memory_session_id', 'content_hash'])).toBe(true);
+
+      // 写入路径依赖这两列；任一缺失都会以 "no such column" 抛错，summary 便再也写不进去。
+      expect(() => store.storeSummary('memory-restart', 'project', {
+        request: 'req',
+        investigated: 'inv',
+        learned: 'learn',
+        completed: 'done',
+        next_steps: 'next',
+        notes: 'notes',
+      }, 1, 5, 1700000000200)).not.toThrow();
+      const stored = db.prepare('SELECT discovery_tokens FROM session_summaries WHERE memory_session_id = ?').get('memory-restart') as { discovery_tokens: number } | undefined;
+      expect(stored?.discovery_tokens).toBe(5);
     } finally {
       db.close();
     }
