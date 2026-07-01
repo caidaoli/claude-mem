@@ -10,6 +10,8 @@ const CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(
 const INSTALLED_PATH = path.join(CLAUDE_CONFIG_DIR, 'plugins', 'marketplaces', 'thedotmack');
 const CACHE_BASE_PATH = path.join(CLAUDE_CONFIG_DIR, 'plugins', 'cache', 'thedotmack', 'claude-mem');
 const INSTALL_MARKER_EXCLUDES = '--exclude=.install-version --exclude=.cli-installed';
+const LOCAL_DEVELOPMENT_METADATA_EXCLUDES =
+  '--exclude=/.agents/ --exclude=/.claude/ --exclude=/.codegraph/';
 const MARKETPLACE_PLUGIN_RUNTIME_EXCLUDES =
   '--exclude=plugin/node_modules --exclude=plugin/package-lock.json --exclude=plugin/bun.lock ' +
   '--exclude=plugin/.install-version --exclude=plugin/.cli-installed';
@@ -177,10 +179,12 @@ try {
   // lists "plugin" (it's a build artifact), but marketplace needs it for hooks/scripts
   // Install markers are machine-local state, not source assets. Keep them out
   // before the broad plugin include, then write fresh markers after dependency install.
+  // Local development metadata is not source either; never leak editor/agent/index
+  // state into the installed marketplace tree.
   // Runtime installs are target-local too: Codex copies ./plugin as the plugin
   // root, so stale source node_modules/package-lock files must never be copied.
   execSync(
-    `rsync -av --delete --exclude=.git --exclude=/.mcp.json --exclude=bun.lock --exclude=package-lock.json --exclude=scripts/package.json --exclude=scripts/node_modules ${MARKETPLACE_PLUGIN_RUNTIME_EXCLUDES} --include=plugin/*** ${gitignoreExcludes} ./ ~/.claude/plugins/marketplaces/thedotmack/`,
+    `rsync -av --delete --exclude=.git --exclude=/.mcp.json --exclude=bun.lock --exclude=package-lock.json --exclude=scripts/package.json --exclude=scripts/node_modules ${LOCAL_DEVELOPMENT_METADATA_EXCLUDES} ${MARKETPLACE_PLUGIN_RUNTIME_EXCLUDES} --include=plugin/*** ${gitignoreExcludes} ./ ~/.claude/plugins/marketplaces/thedotmack/`,
     { stdio: 'inherit' }
   );
 
