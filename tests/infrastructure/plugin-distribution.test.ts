@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { readFileSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { readFileSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync } from 'fs';
 import { tmpdir } from 'os';
 import { spawnSync } from 'child_process';
 import path from 'path';
@@ -260,6 +260,57 @@ describe('Plugin Distribution - Build Script Verification', () => {
       expect(result.stdout).toContain('Codex CLI not found');
     } finally {
       rmSync(emptyPath, { recursive: true, force: true });
+    }
+  });
+
+  it('Codex plugin sync helper falls back to the installed marketplace name', () => {
+    const helperPath = path.join(projectRoot, 'scripts/sync-codex-plugin.cjs');
+    const binDir = mkdtempSync(path.join(tmpdir(), 'claude-mem-fake-codex-'));
+    const logPath = path.join(binDir, 'calls.log');
+    const codexPath = path.join(binDir, 'codex');
+
+    writeFileSync(codexPath, `#!/usr/bin/env node
+const fs = require('fs');
+const logPath = ${JSON.stringify(logPath)};
+const args = process.argv.slice(2);
+fs.appendFileSync(logPath, args.join(' ') + '\\n');
+if (args[0] === '--version') process.exit(0);
+if (args[0] !== 'plugin' || args[1] !== 'add') process.exit(2);
+if (args[2] === 'claude-mem@claude-mem-local') {
+  console.error('plugin not found in marketplace claude-mem-local');
+  process.exit(1);
+}
+if (args[2] === 'claude-mem@thedotmack') {
+  console.log(JSON.stringify({ pluginId: 'claude-mem@thedotmack' }));
+  process.exit(0);
+}
+process.exit(3);
+`);
+    chmodSync(codexPath, 0o755);
+
+    try {
+      const result = spawnSync(process.execPath, [helperPath], {
+        cwd: projectRoot,
+        encoding: 'utf-8',
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH ?? ''}`,
+        },
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('Refreshing Codex plugin cache: claude-mem@claude-mem-local');
+      expect(result.stdout).toContain('Refreshing Codex plugin cache: claude-mem@thedotmack');
+      expect(result.stdout).toContain('"pluginId":"claude-mem@thedotmack"');
+
+      const calls = readFileSync(logPath, 'utf-8').trim().split('\n');
+      expect(calls).toEqual([
+        '--version',
+        'plugin add claude-mem@claude-mem-local --json',
+        'plugin add claude-mem@thedotmack --json',
+      ]);
+    } finally {
+      rmSync(binDir, { recursive: true, force: true });
     }
   });
 
