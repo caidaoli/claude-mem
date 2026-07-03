@@ -6,7 +6,6 @@ import { readFileSync, writeFileSync, existsSync, renameSync, mkdirSync } from '
 import { getPackageRoot, paths } from '../../../../shared/paths.js';
 import { logger } from '../../../../utils/logger.js';
 import { SettingsManager } from '../../SettingsManager.js';
-import { getBranchInfo, switchBranch, pullUpdates } from '../../BranchManager.js';
 import { ModeManager } from '../../../domain/ModeManager.js';
 import { BaseRouteHandler } from '../BaseRouteHandler.js';
 import { validateBody } from '../middleware/validateBody.js';
@@ -17,10 +16,6 @@ import { snapshotDependencyHealth } from '../../../../shared/dependency-health.j
 
 const toggleMcpSchema = z.object({
   enabled: z.boolean(),
-}).passthrough();
-
-const switchBranchSchema = z.object({
-  branch: z.string().min(1),
 }).passthrough();
 
 export interface WorkerRestartOptions {
@@ -44,10 +39,6 @@ export class SettingsRoutes extends BaseRouteHandler {
 
     app.get('/api/mcp/status', this.handleGetMcpStatus.bind(this));
     app.post('/api/mcp/toggle', validateBody(toggleMcpSchema), this.handleToggleMcp.bind(this));
-
-    app.get('/api/branch/status', this.handleGetBranchStatus.bind(this));
-    app.post('/api/branch/switch', validateBody(switchBranchSchema), this.handleSwitchBranch.bind(this));
-    app.post('/api/branch/update', this.handleUpdateBranch.bind(this));
   }
 
   private handleGetSettings = this.wrapHandler((req: Request, res: Response): void => {
@@ -104,7 +95,6 @@ export class SettingsRoutes extends BaseRouteHandler {
       'CLAUDE_MEM_OPENROUTER_MODEL',
       'CLAUDE_MEM_OPENROUTER_SITE_URL',
       'CLAUDE_MEM_OPENROUTER_APP_NAME',
-      // Custom Provider Configuration
       'CLAUDE_MEM_CUSTOM_API_URL',
       'CLAUDE_MEM_CUSTOM_API_KEY',
       'CLAUDE_MEM_CUSTOM_MODEL',
@@ -114,7 +104,6 @@ export class SettingsRoutes extends BaseRouteHandler {
       'CLAUDE_MEM_CUSTOM_MAX_TOKENS',
       'CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT',
       'CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT',
-      // System Configuration
       'CLAUDE_MEM_DATA_DIR',
       'CLAUDE_MEM_LOG_LEVEL',
       'CLAUDE_MEM_PYTHON_VERSION',
@@ -170,52 +159,6 @@ export class SettingsRoutes extends BaseRouteHandler {
     res.json({ success: true, enabled: this.isMcpEnabled() });
   });
 
-  private handleGetBranchStatus = this.wrapHandler((req: Request, res: Response): void => {
-    const info = getBranchInfo();
-    res.json(info);
-  });
-
-  private handleSwitchBranch = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    const { branch } = req.body as z.infer<typeof switchBranchSchema>;
-
-    const allowedBranches = ['main', 'beta/7.0', 'feature/bun-executable'];
-    if (!allowedBranches.includes(branch)) {
-      res.status(400).json({
-        success: false,
-        error: `Invalid branch. Allowed: ${allowedBranches.join(', ')}`
-      });
-      return;
-    }
-
-    logger.info('WORKER', 'Branch switch requested', { branch });
-
-    const result = await switchBranch(branch);
-
-    if (result.success) {
-      flushResponseThen(res, result, async () => {
-        logger.info('WORKER', 'Restarting worker after branch switch');
-        await this.restartWorker();
-      });
-    } else {
-      res.json(result);
-    }
-  });
-
-  private handleUpdateBranch = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    logger.info('WORKER', 'Branch update requested');
-
-    const result = await pullUpdates();
-
-    if (result.success) {
-      flushResponseThen(res, result, async () => {
-        logger.info('WORKER', 'Restarting worker after branch update');
-        await this.restartWorker();
-      });
-    } else {
-      res.json(result);
-    }
-  });
-
   private validateSettings(settings: any): { valid: boolean; error?: string } {
     if (settings.CLAUDE_MEM_PROVIDER) {
     const validProviders = ['claude', 'gemini', 'openrouter', 'custom'];
@@ -224,7 +167,6 @@ export class SettingsRoutes extends BaseRouteHandler {
       }
     }
 
-    // Validate CLAUDE_MEM_CUSTOM_PROTOCOL
     if (settings.CLAUDE_MEM_CUSTOM_PROTOCOL) {
       const validProtocols = ['openai', 'gemini', 'codex'];
       if (!validProtocols.includes(settings.CLAUDE_MEM_CUSTOM_PROTOCOL)) {
@@ -232,7 +174,6 @@ export class SettingsRoutes extends BaseRouteHandler {
       }
     }
 
-    // Validate Custom numeric ranges (0 = disabled, so allow 0)
     const customNumericRanges: Array<{ key: string; min: number; max: number }> = [
       { key: 'CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES', min: 0, max: 200 },
       { key: 'CLAUDE_MEM_CUSTOM_MAX_TOKENS', min: 0, max: 2_000_000 },
@@ -248,7 +189,6 @@ export class SettingsRoutes extends BaseRouteHandler {
       }
     }
 
-    // Validate Custom API URL if provided
     if (settings.CLAUDE_MEM_CUSTOM_API_URL) {
       try {
         new URL(settings.CLAUDE_MEM_CUSTOM_API_URL);

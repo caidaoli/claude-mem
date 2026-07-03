@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { ingestObservation } from '../shared.js';
 import { validateBody } from '../middleware/validateBody.js';
 import { logger } from '../../../../utils/logger.js';
-import { stripMemoryTagsFromPrompt, isInternalProtocolPayload } from '../../../../utils/tag-stripping.js';
+import { stripMemoryTags, isInternalProtocolPayload } from '../../../../utils/tag-stripping.js';
 import { SessionManager } from '../../SessionManager.js';
 import { DatabaseManager } from '../../DatabaseManager.js';
 import { ClaudeProvider } from '../../ClaudeProvider.js';
@@ -18,12 +18,9 @@ import { PrivacyCheckValidator } from '../../validation/PrivacyCheckValidator.js
 import { SettingsDefaultsManager } from '../../../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH } from '../../../../shared/paths.js';
 import { getProjectContext } from '../../../../utils/project-name.js';
-import { normalizePlatformSource } from '../../../../shared/platform-source.js';
 import { handleGeneratorExit } from '../../session/GeneratorExitHandler.js';
 import { telemetryBuffer } from '../../../telemetry/buffer.js';
-import { instrument } from '../../../telemetry/instrument.js';
 import { SessionCompletionHandler } from '../../session/SessionCompletionHandler.js';
-import { getUptimeSeconds } from '../../../../shared/uptime.js';
 import { USER_PROMPT_DEDUPE_WINDOW_MS } from '../../../../shared/user-prompts.js';
 import {
   CLAUDE_CLI_SETUP_RECHECK_COOLDOWN_MS,
@@ -71,47 +68,13 @@ export class SessionRoutes extends BaseRouteHandler {
     super();
   }
 
-  /**
-   * Get the appropriate agent based on settings
-   * Throws error if provider is selected but not configured (no silent fallback)
-   *
-   * Note: Session linking via contentSessionId allows provider switching mid-session.
-   * The conversationHistory on ActiveSession maintains context across providers.
-   */
-  private getActiveAgent(): ClaudeProvider | GeminiProvider | OpenRouterProvider | CustomAgent {
-    if (isCustomSelected()) {
-      if (isCustomAvailable()) {
-        logger.debug('SESSION', 'Using Custom agent');
-        return this.customAgent;
-      } else {
-        throw new Error('Custom provider selected but not configured. Set CLAUDE_MEM_CUSTOM_API_URL and CLAUDE_MEM_CUSTOM_API_KEY in settings.');
-      }
-    }
-    if (isOpenRouterSelected()) {
-      if (isOpenRouterAvailable()) {
-        logger.debug('SESSION', 'Using OpenRouter agent');
-        return this.openRouterAgent;
-      } else {
-        throw new Error('OpenRouter provider selected but no API key configured. Set CLAUDE_MEM_OPENROUTER_API_KEY in settings or OPENROUTER_API_KEY environment variable.');
-      }
-    }
-    if (isGeminiSelected()) {
-      if (isGeminiAvailable()) {
-        logger.debug('SESSION', 'Using Gemini agent');
-        return this.geminiAgent;
-      } else {
-        throw new Error('Gemini provider selected but no API key configured. Set CLAUDE_MEM_GEMINI_API_KEY in settings or GEMINI_API_KEY environment variable.');
-      }
-    }
-    return this.sdkAgent;
-  }
-
-  /**
-   * Get the currently selected provider name
-   */
   private getSelectedProvider(): 'claude' | 'gemini' | 'openrouter' | 'custom' {
-    if (isCustomSelected() && isCustomAvailable()) return 'custom';
-    if (isOpenRouterSelected() && isOpenRouterAvailable()) return 'openrouter';
+    if (isCustomSelected() && isCustomAvailable()) {
+      return 'custom';
+    }
+    if (isOpenRouterSelected() && isOpenRouterAvailable()) {
+      return 'openrouter';
+    }
     return (isGeminiSelected() && isGeminiAvailable()) ? 'gemini' : 'claude';
   }
 
@@ -144,6 +107,7 @@ export class SessionRoutes extends BaseRouteHandler {
               source,
             });
           } catch (error) {
+            const err = error instanceof Error ? error : new Error(String(error));
             const classified = classifyClaudeError(error);
             if (classified.kind === 'setup_required') {
               recordClaudeCliSetupRequired(classified.message);
@@ -152,7 +116,7 @@ export class SessionRoutes extends BaseRouteHandler {
               sessionId: sessionDbId,
               source,
               error: classified.message,
-            });
+            }, err);
             return;
           }
         }
@@ -169,6 +133,8 @@ export class SessionRoutes extends BaseRouteHandler {
         selectedProvider,
         historyLength: session.conversationHistory.length
       });
+      // Let current generator finish naturally, next one will use new provider
+      // The shared conversationHistory ensures context is preserved
     }
   }
 
@@ -249,38 +215,27 @@ export class SessionRoutes extends BaseRouteHandler {
         // transcript is the recovery path. The next observation ingest will
         // start a fresh generator via ensureGeneratorRunning.
         //
-        // Single instrumentation call: the local error line (full fidelity)
-        // and the scrubbed session_compressed rollup are one logical event.
+        // The local error line (full fidelity) and the scrubbed
+        // session_compressed rollup are one logical event.
         // No abort_reason here: every site that sets abortReason aborts the
         // controller on its next line, so aborted generators either resolve
         // normally (quota/overflow break) or hit the signal-aborted early
         // return above — this catch only ever sees non-abort rejections.
-        instrument(
-          'SESSION',
-          'error',
-          `Generator failed`,
-          {
-            sessionId: session.sessionDbId,
-            provider,
-            error: errorMsg,
-            data: error,
-          },
-          {
-            event: 'session_compressed',
-            rollup: 'session',
-            sessionDbId: session.sessionDbId,
-            props: {
-              outcome: 'error',
-              provider,
-              // Providers seed lastModelId when they start; 'unknown' covers a
-              // generator that died before resolving its model.
-              model: session.lastModelId ?? 'unknown',
-              error_category: 'provider_error',
-              hook: session.lastGeneratorSource,
-              ide: session.platformSource,
-            },
-          }
-        );
+        logger.error('SESSION', 'Generator failed', {
+          sessionId: session.sessionDbId,
+          provider,
+          error: errorMsg,
+        }, error);
+        telemetryBuffer.record('session_compressed', session.sessionDbId, {
+          outcome: 'error',
+          provider,
+          // Providers seed lastModelId when they start; 'unknown' covers a
+          // generator that died before resolving its model.
+          model: session.lastModelId ?? 'unknown',
+          error_category: 'provider_error',
+          hook: session.lastGeneratorSource,
+          ide: session.platformSource,
+        });
       })
       .finally(async () => {
         if (skipGeneratorExitFinalization) {
@@ -333,7 +288,6 @@ export class SessionRoutes extends BaseRouteHandler {
       validateBody(SessionRoutes.summarizeByClaudeIdSchema),
       this.handleSummarizeByClaudeId.bind(this)
     );
-    app.get('/api/sessions/status', this.handleStatusByClaudeId.bind(this));
   }
 
   private static readonly sessionInitByClaudeIdSchema = z.object({
@@ -430,13 +384,8 @@ export class SessionRoutes extends BaseRouteHandler {
     }
 
     const cleanedLastAssistantMessage = last_assistant_message
-      ? stripMemoryTagsFromPrompt(String(last_assistant_message))
+      ? stripMemoryTags(String(last_assistant_message))
       : last_assistant_message;
-
-    // Queue summarize. Completed-session finalization is generator-exit-driven via
-    // SessionCompletionHandler (upstream architecture), so no completion control
-    // message is queued here. Late summarize after completion is harmless: finalizeSession
-    // is idempotent (skips when status is already 'completed').
     await this.sessionManager.queueSummarize(sessionDbId, cleanedLastAssistantMessage);
 
     await this.ensureGeneratorRunning(sessionDbId, 'summarize');
@@ -444,56 +393,6 @@ export class SessionRoutes extends BaseRouteHandler {
     this.eventBroadcaster.broadcastSummarizeQueued();
 
     res.json({ status: 'queued' });
-  });
-
-  private static firstString(value: unknown): string | undefined {
-    if (Array.isArray(value)) {
-      return SessionRoutes.firstString(value[0]);
-    }
-    return typeof value === 'string' && value.trim() ? value : undefined;
-  }
-
-  private getPlatformSourceFromRequest(req: Request): string {
-    const body = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
-    const header = req.get?.('x-platform-source')
-      ?? req.get?.('x-claude-mem-platform-source');
-    const rawPlatformSource =
-      SessionRoutes.firstString(req.query.platformSource)
-      ?? SessionRoutes.firstString(req.query.platform_source)
-      ?? SessionRoutes.firstString(body.platformSource)
-      ?? SessionRoutes.firstString(body.platform_source)
-      ?? SessionRoutes.firstString(header);
-
-    return normalizePlatformSource(rawPlatformSource);
-  }
-
-  private handleStatusByClaudeId = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    const contentSessionId = SessionRoutes.firstString(req.query.contentSessionId)
-      ?? SessionRoutes.firstString(req.query.content_session_id);
-
-    if (!contentSessionId) {
-      return this.badRequest(res, 'Missing contentSessionId query parameter');
-    }
-
-    const store = this.dbManager.getSessionStore();
-    const platformSource = this.getPlatformSourceFromRequest(req);
-    const sessionDbId = store.createSDKSession(contentSessionId, '', '', undefined, platformSource);
-    const session = this.sessionManager.getSession(sessionDbId);
-
-    if (!session) {
-      res.json({ status: 'not_found', queueLength: 0 });
-      return;
-    }
-
-    const queueLength = this.sessionManager.getMessageBuffer().getPendingCount(sessionDbId);
-
-    res.json({
-      status: 'active',
-      sessionDbId,
-      queueLength,
-      summaryStored: session.lastSummaryStored ?? null,
-      uptime: getUptimeSeconds(session.startTime)
-    });
   });
 
   private handleSessionInitByClaudeId = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
@@ -539,10 +438,6 @@ export class SessionRoutes extends BaseRouteHandler {
 
     const sessionDbId = store.createSDKSession(contentSessionId, project, prompt, customTitle, platformSource);
 
-    // Session lifecycle: init re-activates the session row.
-    store.markSessionActive(sessionDbId);
-
-    // Verify session creation with DB lookup
     const dbSession = store.getSessionById(sessionDbId);
     const isNewSession = !dbSession?.memory_session_id;
     logger.info('SESSION', `CREATED | contentSessionId=${contentSessionId} → sessionDbId=${sessionDbId} | isNew=${isNewSession} | project=${project}`, {
@@ -559,7 +454,7 @@ export class SessionRoutes extends BaseRouteHandler {
       logger.debug('HTTP', `[ALIGNMENT] New Session | contentSessionId=${contentSessionId} | prompt#=${promptNumber} | memorySessionId will be captured on first SDK response`);
     }
 
-    const cleanedPrompt = stripMemoryTagsFromPrompt(prompt);
+    const cleanedPrompt = stripMemoryTags(prompt);
 
     if (!cleanedPrompt || cleanedPrompt.trim() === '') {
       logger.debug('HOOK', 'Session init - prompt entirely private', {

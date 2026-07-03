@@ -21,57 +21,18 @@ export interface SDKSession {
   last_assistant_message?: string;
 }
 
-/** Output format type for prompt generation */
 type OutputFormat = 'xml' | 'json';
 
-/**
- * Strip placeholder wrappers for JSON format templates.
- * Mode configs use [**fieldname**: description] syntax designed for XML context.
- * In JSON templates these wrappers leak into example values and models
- * (especially gpt-5.1-codex-mini) reproduce the wrapper in their output.
- *
- * "[**title**: Short title capturing the core action]" → "Short title capturing the core action"
- * "[Concise, self-contained statement]" → "Concise, self-contained statement"
- */
 function stripPlaceholderWrapper(placeholder: string): string {
   const trimmed = placeholder.trim();
-  // Match [**fieldname**: description] pattern
   const boldMatch = /^\[\*\*\w+\*\*:\s*(.*)\]$/.exec(trimmed);
   if (boldMatch) return boldMatch[1];
-  // Match simple [description] pattern
   const simpleMatch = /^\[(.*)\]$/.exec(trimmed);
   if (simpleMatch) return simpleMatch[1];
   return trimmed;
 }
 
-/**
- * Build observation format section based on output type
- */
-function buildObservationFormatSection(mode: ModeConfig, format: OutputFormat): string {
-  if (format === 'json') {
-    const p = mode.prompts;
-    return `IMPORTANT: You MUST respond with ONLY a valid JSON object. No explanations, no markdown, no thinking process - JUST the raw JSON.
-
-CRITICAL - type field MUST be EXACTLY one of these values (no other values allowed):
-${mode.observation_types.map(t => `  - "${t.id}": ${t.description}`).join('\n')}
-
-Output format (JSON):
-{
-  "type": "${mode.observation_types[0].id}",
-  "title": "${stripPlaceholderWrapper(p.xml_title_placeholder)}",
-  "subtitle": "${stripPlaceholderWrapper(p.xml_subtitle_placeholder)}",
-  "facts": ["${stripPlaceholderWrapper(p.xml_fact_placeholder)}", "${stripPlaceholderWrapper(p.xml_fact_placeholder)}"],
-  "narrative": "${stripPlaceholderWrapper(p.xml_narrative_placeholder)}",
-  "concepts": ["${stripPlaceholderWrapper(p.xml_concept_placeholder)}"],
-  "files_read": ["${stripPlaceholderWrapper(p.xml_file_placeholder)}"],
-  "files_modified": ["${stripPlaceholderWrapper(p.xml_file_placeholder)}"]
-}
-
-${p.field_guidance}
-${p.concept_guidance}`;
-  }
-
-  // XML format
+function observationSkeleton(mode: ModeConfig): string {
   return `${mode.prompts.output_format_header}
 
 <observation>
@@ -106,13 +67,43 @@ ${p.concept_guidance}`;
     <file>${mode.prompts.xml_file_placeholder}</file>
   </files_modified>
 </observation>
-\`\`\`
-${mode.prompts.format_examples}`;
+${mode.prompts.format_examples}
+
+${mode.prompts.footer}`;
 }
 
-/**
- * Build common prompt header with session context
- */
+function observationJsonSkeleton(mode: ModeConfig): string {
+  const p = mode.prompts;
+  return `IMPORTANT: You MUST respond with ONLY a valid JSON object. No explanations, no markdown, no thinking process - JUST the raw JSON.
+
+CRITICAL - type field MUST be EXACTLY one of these values (no other values allowed):
+${mode.observation_types.map(t => `  - "${t.id}": ${t.description}`).join('\n')}
+
+Output format (JSON):
+{
+  "type": "${mode.observation_types[0].id}",
+  "title": "${stripPlaceholderWrapper(p.xml_title_placeholder)}",
+  "subtitle": "${stripPlaceholderWrapper(p.xml_subtitle_placeholder)}",
+  "facts": ["${stripPlaceholderWrapper(p.xml_fact_placeholder)}", "${stripPlaceholderWrapper(p.xml_fact_placeholder)}"],
+  "narrative": "${stripPlaceholderWrapper(p.xml_narrative_placeholder)}",
+  "concepts": ["${stripPlaceholderWrapper(p.xml_concept_placeholder)}"],
+  "files_read": ["${stripPlaceholderWrapper(p.xml_file_placeholder)}"],
+  "files_modified": ["${stripPlaceholderWrapper(p.xml_file_placeholder)}"]
+}
+
+${p.field_guidance}
+${p.concept_guidance}`;
+}
+
+function buildObservationFormatSection(mode: ModeConfig, format: OutputFormat): string {
+  return format === 'json' ? observationJsonSkeleton(mode) : observationSkeleton(mode);
+}
+
+function buildObservationFormatWithFooter(mode: ModeConfig, format: OutputFormat): string {
+  const section = buildObservationFormatSection(mode, format);
+  return format === 'json' ? `${section}\n\n${mode.prompts.footer}` : section;
+}
+
 function buildSessionContextHeader(userPrompt: string): string {
   return `<observed_from_primary_session>
   <user_request>${userPrompt}</user_request>
@@ -120,9 +111,6 @@ function buildSessionContextHeader(userPrompt: string): string {
 </observed_from_primary_session>`;
 }
 
-/**
- * Build initial prompt to initialize the SDK agent
- */
 export function buildInitPrompt(project: string, sessionId: string, userPrompt: string, mode: ModeConfig): string {
   return `${mode.prompts.system_identity}
 
@@ -136,17 +124,11 @@ ${mode.prompts.recording_focus}
 
 ${mode.prompts.skip_guidance}
 
-${buildObservationFormatSection(mode, 'xml')}
-
-${mode.prompts.footer}
+${buildObservationFormatWithFooter(mode, 'xml')}
 
 ${mode.prompts.header_memory_start}`;
 }
 
-/**
- * Build initial prompt for JSON output (used by CustomAgent)
- * Uses JSON format instead of XML for more reliable parsing with responseMimeType
- */
 export function buildInitPromptJson(project: string, sessionId: string, userPrompt: string, mode: ModeConfig): string {
   return `${mode.prompts.system_identity}
 
@@ -160,9 +142,7 @@ ${mode.prompts.recording_focus}
 
 ${mode.prompts.skip_guidance}
 
-${buildObservationFormatSection(mode, 'json')}
-
-${mode.prompts.footer}
+${buildObservationFormatWithFooter(mode, 'json')}
 
 ${mode.prompts.header_memory_start}`;
 }
@@ -239,10 +219,6 @@ Concrete debugging findings from logs, queue state, database rows, session routi
 Never reply with prose such as "Skipping", "No substantive tool executions", or any explanation outside XML. Non-XML text is discarded.`;
 }
 
-/**
- * Build observation prompt with JSON output format (used by CustomAgent)
- * Combines tool observation data with JSON format instructions from mode config
- */
 export function buildObservationPromptJson(obs: Observation, mode: ModeConfig): string {
   const languageInstruction = mode.prompts.language_instruction?.trim();
   const languageSection = languageInstruction ? `\n\n${languageInstruction}` : '';
@@ -256,9 +232,6 @@ OUTPUT FORMAT: Return compact single-line JSON without any line breaks, indentat
 ${languageSection}`;
 }
 
-/**
- * Build prompt to generate progress summary
- */
 export function buildSummaryPrompt(session: SDKSession, mode: ModeConfig): string {
   const lastAssistantMessage = session.last_assistant_message || (() => {
     logger.error('SDK', 'Missing last_assistant_message in session for summary prompt', {
@@ -293,10 +266,6 @@ REMINDER: Your response MUST use <summary> as the root tag, NOT <observation>.
 ${mode.prompts.summary_footer}`;
 }
 
-/**
- * Build JSON-format summary prompt for Gemini
- * Uses JSON instead of XML for more reliable parsing with Gemini's responseMimeType
- */
 export function buildSummaryPromptJson(session: SDKSession, mode: ModeConfig): string {
   const lastAssistantMessage = session.last_assistant_message || (() => {
     logger.error('SDK', 'Missing last_assistant_message in session for summary prompt', {
@@ -322,42 +291,14 @@ CRITICAL: Your entire response must be a single valid JSON object on one line. D
 ${mode.prompts.summary_footer}`;
 }
 
-/**
- * Build prompt for continuation of existing session
- *
- * CRITICAL: Why contentSessionId Parameter is Required
- * ====================================================
- * This function receives contentSessionId from SDKAgent.ts, which comes from:
- * - SessionManager.initializeSession (fetched from database)
- * - SessionStore.createSDKSession (stored by new-hook.ts)
- * - new-hook.ts receives it from Claude Code's hook context
- *
- * The contentSessionId is the SAME session_id used by:
- * - NEW hook (to create/fetch session)
- * - SAVE hook (to store observations)
- * - This continuation prompt (to maintain session context)
- *
- * This is how everything stays connected - ONE session_id threading through
- * all hooks and prompts in the same conversation.
- *
- * Called when: promptNumber > 1 (see SDKAgent.ts line 150)
- * First prompt: Uses buildInitPrompt instead (promptNumber === 1)
- */
 export function buildContinuationPrompt(userPrompt: string, promptNumber: number, contentSessionId: string, mode: ModeConfig): string {
   return buildContinuationPromptInternal(userPrompt, mode, 'xml');
 }
 
-/**
- * Build continuation prompt for JSON output (used by CustomAgent)
- * Uses JSON format instead of XML for more reliable parsing with responseMimeType
- */
 export function buildContinuationPromptJson(userPrompt: string, promptNumber: number, contentSessionId: string, mode: ModeConfig): string {
   return buildContinuationPromptInternal(userPrompt, mode, 'json');
 }
 
-/**
- * Internal helper for building continuation prompts
- */
 function buildContinuationPromptInternal(userPrompt: string, mode: ModeConfig, format: OutputFormat): string {
   return `${mode.prompts.continuation_greeting}
 
@@ -375,9 +316,7 @@ ${mode.prompts.skip_guidance}
 
 ${mode.prompts.continuation_instruction}
 
-${buildObservationFormatSection(mode, format)}
-
-${mode.prompts.footer}
+${buildObservationFormatWithFooter(mode, format)}
 
 ${mode.prompts.header_memory_continued}`;
-} 
+}

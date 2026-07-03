@@ -7,7 +7,6 @@ import { useSpinningFavicon } from '../hooks/useSpinningFavicon';
 import { useI18n } from '../i18n';
 
 interface HeaderProps {
-  isConnected: boolean;
   projects: string[];
   currentFilter: string;
   onFilterChange: (filter: string) => void;
@@ -20,7 +19,6 @@ interface HeaderProps {
 }
 
 export function Header({
-  isConnected,
   projects,
   currentFilter,
   onFilterChange,

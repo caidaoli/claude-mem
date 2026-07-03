@@ -1,23 +1,8 @@
 import { describe, it, expect } from 'bun:test';
 
 import { isAbortError } from '../../../src/services/worker/agents/FallbackErrorHandler.js';
-import { FALLBACK_ERROR_PATTERNS } from '../../../src/services/worker/agents/types.js';
 
 describe('FallbackErrorHandler', () => {
-  describe('FALLBACK_ERROR_PATTERNS', () => {
-    it('should contain all 8 expected patterns', () => {
-      expect(FALLBACK_ERROR_PATTERNS).toHaveLength(8);
-      expect(FALLBACK_ERROR_PATTERNS).toContain('429');
-      expect(FALLBACK_ERROR_PATTERNS).toContain('500');
-      expect(FALLBACK_ERROR_PATTERNS).toContain('502');
-      expect(FALLBACK_ERROR_PATTERNS).toContain('503');
-      expect(FALLBACK_ERROR_PATTERNS).toContain('ECONNREFUSED');
-      expect(FALLBACK_ERROR_PATTERNS).toContain('ETIMEDOUT');
-      expect(FALLBACK_ERROR_PATTERNS).toContain('fetch failed');
-      expect(FALLBACK_ERROR_PATTERNS).toContain('Request timeout');
-    });
-  });
-
   describe('isAbortError', () => {
     it('should return true for Error with name "AbortError"', () => {
       const abortError = new Error('The operation was aborted');

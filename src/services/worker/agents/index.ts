@@ -7,10 +7,7 @@ export type {
   StorageResult,
 } from './types.js';
 
-export { FALLBACK_ERROR_PATTERNS } from './types.js';
-
-// Response Processing
-export { processAgentResponse, type ProcessAgentResponseOptions } from './ResponseProcessor.js';
+export { processAgentResponse } from './ResponseProcessor.js';
 
 export { broadcastObservation, broadcastSummary } from './ObservationBroadcaster.js';
 

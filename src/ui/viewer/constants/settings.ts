@@ -13,7 +13,6 @@ export const DEFAULT_SETTINGS = {
   CLAUDE_MEM_OPENROUTER_APP_NAME: 'claude-mem',
   CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED: 'true',
 
-  // Custom Provider Configuration — match SettingsDefaultsManager defaults
   CLAUDE_MEM_CUSTOM_API_URL: '',
   CLAUDE_MEM_CUSTOM_API_KEY: '',
   CLAUDE_MEM_CUSTOM_MODEL: 'gpt-4o',
@@ -24,7 +23,6 @@ export const DEFAULT_SETTINGS = {
   CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT: '0',
   CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT: '0',
 
-  // Token Economics — match SettingsDefaultsManager defaults (off by default to keep context lean)
   CLAUDE_MEM_CONTEXT_SHOW_READ_TOKENS: 'false',
   CLAUDE_MEM_CONTEXT_SHOW_WORK_TOKENS: 'false',
   CLAUDE_MEM_CONTEXT_SHOW_SAVINGS_AMOUNT: 'false',
@@ -38,9 +36,7 @@ export const DEFAULT_SETTINGS = {
   CLAUDE_MEM_CONTEXT_SHOW_LAST_MESSAGE: 'false',
   CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED: 'false',
 
-  // Logging — match SettingsDefaultsManager defaults
   CLAUDE_MEM_LOG_LEVEL: 'INFO',
-
   CLAUDE_MEM_EXCLUDED_PROJECTS: '',
   CLAUDE_MEM_FOLDER_MD_EXCLUDE: '[]',
 } as const;

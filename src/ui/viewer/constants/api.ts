@@ -3,8 +3,6 @@ export const API_ENDPOINTS = {
   SUMMARIES: '/api/summaries',
   PROMPTS: '/api/prompts',
   SETTINGS: '/api/settings',
-  STATS: '/api/stats',
-  PROCESSING_STATUS: '/api/processing-status',
   STREAM: '/stream',
   // Maintenance endpoints
   MAINTENANCE_CLEANUP_PREVIEW: '/api/maintenance/cleanup/preview',
