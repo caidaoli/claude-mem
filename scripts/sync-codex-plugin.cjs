@@ -39,6 +39,29 @@ function readCodexSelector(root) {
   };
 }
 
+function readInstalledMarketplaceSelector(root, pluginName, primaryMarketplaceName) {
+  const marketplacePath = path.join(root, '.claude-plugin', 'marketplace.json');
+  if (!existsSync(marketplacePath)) return null;
+
+  const marketplace = readJson(marketplacePath);
+  const marketplaceName = String(marketplace.name || '').trim();
+  if (!marketplaceName || marketplaceName === primaryMarketplaceName) return null;
+  if (!Array.isArray(marketplace.plugins)) return null;
+  if (!marketplace.plugins.some(plugin => plugin?.name === pluginName)) return null;
+
+  return {
+    marketplaceName,
+    pluginName,
+    selector: `${pluginName}@${marketplaceName}`,
+  };
+}
+
+function readCodexSelectors(root) {
+  const primary = readCodexSelector(root);
+  const installed = readInstalledMarketplaceSelector(root, primary.pluginName, primary.marketplaceName);
+  return installed ? [primary, installed] : [primary];
+}
+
 function isCodexAvailable(spawn = spawnSync) {
   const result = spawn('codex', ['--version'], { stdio: 'ignore' });
 
@@ -78,16 +101,20 @@ function ensureCodexMarketplace(root, marketplaceName, deps) {
   }
 }
 
-function installCodexPlugin(selector, deps) {
+function tryInstallCodexPlugin(selector, deps) {
   deps.log(`Refreshing Codex plugin cache: ${selector}`);
   const result = runCodex(['plugin', 'add', selector, '--json'], deps.spawn);
 
   if (result.status !== 0) {
-    throw new Error(`codex plugin add failed for ${selector}: ${formatFailure(result)}`);
+    return {
+      ok: false,
+      message: `codex plugin add failed for ${selector}: ${formatFailure(result)}`,
+    };
   }
 
   if (result.stdout) deps.stdout.write(result.stdout);
   if (result.stderr) deps.stderr.write(result.stderr);
+  return { ok: true };
 }
 
 function syncCodexPlugin(options = {}) {
@@ -104,9 +131,17 @@ function syncCodexPlugin(options = {}) {
     return;
   }
 
-  const { marketplaceName, selector } = readCodexSelector(root);
-  ensureCodexMarketplace(root, marketplaceName, deps);
-  installCodexPlugin(selector, deps);
+  const selectors = readCodexSelectors(root);
+  ensureCodexMarketplace(root, selectors[0].marketplaceName, deps);
+
+  const failures = [];
+  for (const candidate of selectors) {
+    const result = tryInstallCodexPlugin(candidate.selector, deps);
+    if (result.ok) return;
+    failures.push(result.message);
+  }
+
+  throw new Error(failures.join('; '));
 }
 
 if (require.main === module) {
@@ -122,4 +157,5 @@ if (require.main === module) {
 module.exports = {
   syncCodexPlugin,
   readCodexSelector,
+  readCodexSelectors,
 };

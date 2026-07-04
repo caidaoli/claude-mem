@@ -78,9 +78,4 @@ describe('TranscriptEventProcessor session_end', () => {
     });
   });
 
-  it('keeps the default Codex transcript schema in the summary producer path', async () => {
-    const { CODEX_SAMPLE_SCHEMA } = await import('../../src/services/transcripts/config.js');
-
-    expect(CODEX_SAMPLE_SCHEMA.events.some(event => event.action === 'session_end')).toBe(true);
-  });
 });

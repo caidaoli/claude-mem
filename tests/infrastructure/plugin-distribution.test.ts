@@ -274,9 +274,10 @@ const fs = require('fs');
 const logPath = ${JSON.stringify(logPath)};
 const args = process.argv.slice(2);
 fs.appendFileSync(logPath, args.join(' ') + '\\n');
-if (args[0] === '--version') process.exit(0);
-if (args[0] !== 'plugin' || args[1] !== 'add') process.exit(2);
-if (args[2] === 'claude-mem@claude-mem-local') {
+	if (args[0] === '--version') process.exit(0);
+	if (args[0] === 'plugin' && args[1] === 'marketplace' && args[2] === 'add') process.exit(0);
+	if (args[0] !== 'plugin' || args[1] !== 'add') process.exit(2);
+	if (args[2] === 'claude-mem@claude-mem-local') {
   console.error('plugin not found in marketplace claude-mem-local');
   process.exit(1);
 }
@@ -306,6 +307,7 @@ process.exit(3);
       const calls = readFileSync(logPath, 'utf-8').trim().split('\n');
       expect(calls).toEqual([
         '--version',
+        `plugin marketplace add ${projectRoot} --json`,
         'plugin add claude-mem@claude-mem-local --json',
         'plugin add claude-mem@thedotmack --json',
       ]);
@@ -601,8 +603,8 @@ describe('Spawn-Contract Templating - Rule B installers bake absolute paths', ()
   const installerFiles = [
     'src/services/integrations/CursorHooksInstaller.ts',
     'src/services/integrations/WindsurfHooksInstaller.ts',
-    'src/services/integrations/GeminiCliHooksInstaller.ts',
     'src/services/integrations/McpIntegrations.ts',
+    'src/services/integrations/AntigravityCliHooksInstaller.ts',
   ];
 
   for (const file of installerFiles) {
