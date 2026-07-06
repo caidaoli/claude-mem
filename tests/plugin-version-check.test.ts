@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdirSync, writeFileSync, rmSync } from 'fs';
+import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'fs';
 import { spawnSync } from 'child_process';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
 const VERSION_CHECK_SCRIPT = join(import.meta.dir, '..', 'plugin', 'scripts', 'version-check.js');
+const versionCheckSource = readFileSync(VERSION_CHECK_SCRIPT, 'utf-8');
 
 function runVersionCheck(root: string, envOverrides: Record<string, string> = {}) {
   const env = { ...process.env, CLAUDE_PLUGIN_ROOT: root };
@@ -92,5 +93,14 @@ describe('plugin/scripts/version-check.js install marker compatibility', () => {
         hookEventName: 'SessionStart',
       },
     });
+  });
+});
+
+describe('plugin/scripts/version-check.js Windows bun lookup', () => {
+  it('uses where as argv with windowsHide and no shell', () => {
+    const windowsCallMatch = versionCheckSource.match(/spawnSync\('where',\s*\['bun'\],\s*\{([^}]+)\}/);
+    expect(windowsCallMatch).not.toBeNull();
+    expect(windowsCallMatch![1]).toContain('windowsHide: true');
+    expect(windowsCallMatch![1]).not.toContain('shell');
   });
 });
