@@ -657,11 +657,12 @@ describe('SessionStore migrations', () => {
     }
   });
 
-  it('backfills summary content hashes and removes identical legacy summary duplicates', () => {
+  it('backfills summary content hashes despite a colliding legacy v36 marker', () => {
     const db = new Database(':memory:');
     try {
       const now = new Date().toISOString();
       db.run('CREATE TABLE schema_versions (id INTEGER PRIMARY KEY, version INTEGER UNIQUE NOT NULL, applied_at TEXT NOT NULL)');
+      db.prepare('INSERT INTO schema_versions (version, applied_at) VALUES (?, ?)').run(36, now);
       db.run(`
         CREATE TABLE sdk_sessions (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -713,6 +714,7 @@ describe('SessionStore migrations', () => {
       expect(hasUniqueIndexOnColumns(db, 'session_summaries', ['memory_session_id', 'content_hash'])).toBe(true);
       expect((db.prepare('SELECT COUNT(*) AS n FROM session_summaries').get() as { n: number }).n).toBe(2);
       expect((db.prepare('SELECT COUNT(*) AS n FROM session_summaries WHERE content_hash IS NOT NULL').get() as { n: number }).n).toBe(2);
+      expect((db.prepare('SELECT COUNT(*) AS n FROM schema_versions WHERE version = 41').get() as { n: number }).n).toBe(1);
 
       migrated.storeSummary('memory-legacy-summary', 'project', {
         request: 'same request',
@@ -771,7 +773,7 @@ describe('SessionStore migrations', () => {
         VALUES (?, ?, 'project', ?, ?, 'active')
       `).run('content-restart', 'memory-restart', now, 1700000000000);
 
-      // 首次构造：迁移应建立完整 schema——discovery_tokens (v11) + content_hash 列与复合唯一索引 (v36)。
+      // 首次构造：迁移应建立完整 schema——discovery_tokens (v11) + content_hash 列与复合唯一索引 (v41)。
       new SessionStore(db);
       const afterFirst = (db.query('PRAGMA table_info(session_summaries)').all() as Array<{ name: string }>).map(c => c.name);
       expect(afterFirst).toContain('discovery_tokens');

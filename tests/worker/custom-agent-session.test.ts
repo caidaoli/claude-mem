@@ -122,6 +122,7 @@ describe('CustomAgent session behavior', () => {
         ensureMemorySessionIdRegistered: () => {},
         storeObservations: mockStoreObservations
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve()
@@ -180,6 +181,7 @@ describe('CustomAgent session behavior', () => {
           createdAtEpoch: Date.now()
         }))
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve()
@@ -224,6 +226,7 @@ describe('CustomAgent session behavior', () => {
           createdAtEpoch: Date.now()
         }))
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve()
@@ -268,6 +271,7 @@ describe('CustomAgent session behavior', () => {
           createdAtEpoch: Date.now()
         }))
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve()
@@ -307,6 +311,7 @@ describe('CustomAgent session behavior', () => {
           createdAtEpoch: Date.now()
         }))
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve()
@@ -360,6 +365,7 @@ describe('CustomAgent session behavior', () => {
           createdAtEpoch: Date.now()
         }))
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve()
@@ -412,6 +418,7 @@ describe('CustomAgent session behavior', () => {
           createdAtEpoch: Date.now()
         }))
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve()
@@ -464,6 +471,7 @@ describe('CustomAgent session behavior', () => {
           createdAtEpoch: Date.now()
         }))
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve()
@@ -518,6 +526,7 @@ describe('CustomAgent session behavior', () => {
           createdAtEpoch: Date.now()
         }))
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve()
@@ -570,6 +579,7 @@ describe('CustomAgent session behavior', () => {
           createdAtEpoch: Date.now()
         }))
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve()
@@ -636,6 +646,7 @@ describe('CustomAgent session behavior', () => {
           createdAtEpoch: Date.now()
         }))
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve()
@@ -695,6 +706,7 @@ describe('CustomAgent session behavior', () => {
           createdAtEpoch: Date.now()
         }))
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve()
@@ -749,6 +761,7 @@ describe('CustomAgent session behavior', () => {
         ensureMemorySessionIdRegistered: () => {},
         storeObservations: mockStoreObservations
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve()
@@ -815,6 +828,7 @@ describe('CustomAgent session behavior', () => {
         ensureMemorySessionIdRegistered: () => {},
         storeObservations: mockStoreObservations,
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve(),
@@ -883,6 +897,7 @@ describe('CustomAgent session behavior', () => {
         ensureMemorySessionIdRegistered: () => {},
         storeObservations: mockStoreObservations,
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve(),
@@ -953,6 +968,7 @@ describe('CustomAgent session behavior', () => {
         ensureMemorySessionIdRegistered: () => {},
         storeObservations: mockStoreObservations,
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve(),
@@ -1017,6 +1033,7 @@ describe('CustomAgent session behavior', () => {
         ensureMemorySessionIdRegistered: () => {},
         storeObservations: mockStoreObservations,
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve(),
@@ -1065,6 +1082,7 @@ describe('CustomAgent session behavior', () => {
           createdAtEpoch: Date.now()
         }))
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve()
@@ -1122,6 +1140,7 @@ describe('CustomAgent session behavior', () => {
         ensureMemorySessionIdRegistered: () => {},
         storeObservations: mockStoreObservations,
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve(),
@@ -1207,6 +1226,7 @@ describe('CustomAgent session behavior', () => {
           createdAtEpoch: Date.now()
         }))
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve()
@@ -1275,6 +1295,7 @@ describe('CustomAgent session behavior', () => {
         ensureMemorySessionIdRegistered: () => {},
         storeObservations: mockStoreObservations
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve()
@@ -1371,6 +1392,7 @@ describe('CustomAgent session behavior', () => {
           createdAtEpoch: Date.now()
         }))
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve()
@@ -1437,6 +1459,7 @@ describe('CustomAgent session behavior', () => {
           createdAtEpoch: Date.now()
         }))
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve()
@@ -1474,6 +1497,7 @@ describe('CustomAgent session behavior', () => {
           createdAtEpoch: Date.now()
         }))
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve()
@@ -1531,6 +1555,7 @@ describe('CustomAgent session behavior', () => {
         ensureMemorySessionIdRegistered: () => {},
         storeObservations: mockStoreObservations,
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve(),
@@ -1601,6 +1626,7 @@ describe('CustomAgent session behavior', () => {
           createdAtEpoch: Date.now()
         }))
       }),
+      getCloudSync: () => null,
       getChromaSync: () => ({
         syncObservation: () => Promise.resolve(),
         syncSummary: () => Promise.resolve()

@@ -352,6 +352,8 @@ async function syncAndBroadcastObservations(
       }, error);
     });
 
+    dbManager.getCloudSync()?.notify();
+
     broadcastObservation(worker, {
       id: obsId,
       memory_session_id: session.memorySessionId,
@@ -436,6 +438,8 @@ async function syncAndBroadcastSummary(
       request: summaryForStore.request || '(no request)'
     }, error);
   });
+
+  dbManager.getCloudSync()?.notify();
 
   broadcastSummary(worker, {
     id: result.summaryId,
