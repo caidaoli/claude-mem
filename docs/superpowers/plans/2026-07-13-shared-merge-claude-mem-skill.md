@@ -47,7 +47,7 @@ Apply:
  ---
  name: merge-claude-mem
 -description: 用于将上游仓库的最新代码合并到当前分支，保护 Fork 定制代码（CustomAgent），处理 `plugin/` 目录的 skip-worktree，并验证运行中的 Worker 版本。
-+description: Use when Codex 或 Claude Code 需要从 upstream 合并最新代码到当前分支，同时保护 Fork 的 CustomAgent 定制、处理 plugin/ 的 skip-worktree 状态并验证运行中的 Worker 版本。
++description: Use when Codex 或 Claude Code 需要在包含 CustomAgent 定制和 plugin/ skip-worktree 状态的 claude-mem Fork 中同步 upstream 变更。
  ---
 ```
 
