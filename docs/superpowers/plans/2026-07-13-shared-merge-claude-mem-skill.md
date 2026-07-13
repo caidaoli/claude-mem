@@ -34,7 +34,7 @@
 Run:
 
 ```bash
-python /Users/caidaoli/.codex/skills/.system/skill-creator/scripts/quick_validate.py .agents/skills/merge-claude-mem
+uv run --with pyyaml python /Users/caidaoli/.codex/skills/.system/skill-creator/scripts/quick_validate.py .agents/skills/merge-claude-mem
 ```
 
 Expected: FAIL，报告 Skill 目录或 `SKILL.md` 不存在。
@@ -71,8 +71,8 @@ test -L .agents/skills/merge-claude-mem
 test "$(readlink .agents/skills/merge-claude-mem)" = "../../.claude/skills/merge-claude-mem"
 test "$(realpath .agents/skills/merge-claude-mem)" = "$(realpath .claude/skills/merge-claude-mem)"
 cmp .claude/skills/merge-claude-mem/SKILL.md .agents/skills/merge-claude-mem/SKILL.md
-python /Users/caidaoli/.codex/skills/.system/skill-creator/scripts/quick_validate.py .claude/skills/merge-claude-mem
-python /Users/caidaoli/.codex/skills/.system/skill-creator/scripts/quick_validate.py .agents/skills/merge-claude-mem
+uv run --with pyyaml python /Users/caidaoli/.codex/skills/.system/skill-creator/scripts/quick_validate.py .claude/skills/merge-claude-mem
+uv run --with pyyaml python /Users/caidaoli/.codex/skills/.system/skill-creator/scripts/quick_validate.py .agents/skills/merge-claude-mem
 ```
 
 Expected: 所有命令退出码为 0；两个 validator 都输出 `Skill is valid!`。
