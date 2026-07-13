@@ -2,243 +2,291 @@
 name: merge-claude-mem
 description: Use when Codex 或 Claude Code 需要在包含 CustomAgent 定制和 plugin/ skip-worktree 状态的 claude-mem Fork 中同步 upstream 变更。
 ---
-## 前置条件
 
-- 工作区干净（无未提交的更改）
-- 已配置 upstream remote（如未配置，需先添加）
+# 合并 claude-mem 上游
 
-## 合并流程
+## 不变量
 
-### 1. 检查工作区状态
+- 保留 Fork 行为，不保留过期代码形状；采用上游架构并迁移 CustomAgent 行为。
+- 将合并前 HEAD 和 upstream 精确 commit 持久化到 Git 目录；不用对话记忆、移动 ref 或 `HEAD~1`。
+- merge、测试或构建未完成时保持 `plugin/` 解锁；成功提交或明确 abort 后才恢复保护。
+- `.gitattributes` 的 `merge=ours` 不能替代删除冲突处理和行为测试。
+- 不批量选择 ours/theirs，不用 rebase 代替 upstream merge，不因构建失败自动修改依赖。
 
-```bash
-git status
-git remote -v
-```
+每个代码块都作为独立 shell 整块执行；任一命令失败立即停止。
 
-确认：
-- 工作区干净，无未提交更改
-- upstream remote 已正确配置
-- 如未配置 upstream，提示用户添加：`git remote add upstream <url>`
+## 1. Preflight 与快照
 
-### 2. 处理 plugin/ 目录的 skip-worktree（合并前）
-
-**重要**：`plugin/` 是编译生成的目录，本地使用 skip-worktree 忽略变更。合并前必须处理。
+先检查中断状态。状态目录存在时不要覆盖，转到“中断恢复与 Abort”：
 
 ```bash
-# 查看哪些文件设置了 skip-worktree
-git ls-files -v plugin/ | grep '^S'
-
-# 取消 plugin/ 目录所有文件的 skip-worktree（批量）
-git ls-files plugin/ | xargs git update-index --no-skip-worktree --
-
-# 还原 plugin/ 目录到 git 版本（丢弃本地编译产物）
-git checkout -- plugin/
+set -euo pipefail
+for cmd in git bun npm node jq curl; do command -v "$cmd" >/dev/null; done
+STATE_DIR=$(git rev-parse --git-path merge-claude-mem)
+if test -d "$STATE_DIR"; then
+  printf 'Interrupted merge state: %s\n' "$STATE_DIR"
+  for file in pre-merge-head upstream-ref upstream-head; do
+    test ! -f "$STATE_DIR/$file" || printf '%s=%s\n' \
+      "$file" "$(sed -n '1p' "$STATE_DIR/$file")"
+  done
+  git status --short
+  exit 1
+fi
 ```
 
-### 3. 快照 Fork 定制代码（合并前）
-
-**在执行 merge 之前，必须先记录共享文件中 CustomAgent 定制代码的当前状态。**
-
-读取以下文件，记住其中与 CustomAgent 相关的代码段（import、属性、方法、类型等），作为合并后验证的基准：
-
-| 共享文件 | 需保留的 CustomAgent 代码段 |
-|----------|--------------------------|
-| `src/services/worker-service.ts` | import CustomAgent/isCustomSelected/isCustomAvailable; `private customAgent` 属性; 构造函数中 `new CustomAgent()`; `getAiStatus()` 中 custom provider 判断; customAgent 传入 SessionRoutes; `getActiveAgent()` 返回类型含 CustomAgent |
-| `src/services/worker/http/routes/SessionRoutes.ts` | import CustomAgent/isCustomSelected/isCustomAvailable; 构造函数 customAgent 参数和属性; `getActiveAgent()` 中 custom provider 判断; agent registry 中 `'custom'` 条目 |
-| `src/services/worker-types.ts` | `currentProvider` 联合类型包含 `'custom'` |
-| `src/shared/SettingsDefaultsManager.ts` | `CLAUDE_MEM_CUSTOM_API_URL`, `CLAUDE_MEM_CUSTOM_API_KEY`, `CLAUDE_MEM_CUSTOM_MODEL`, `CLAUDE_MEM_CUSTOM_PROTOCOL`, `CLAUDE_MEM_CUSTOM_STREAMING`, `CLAUDE_MEM_CUSTOM_TIMEOUT_*` 设置项 |
-| `src/shared/EnvManager.ts` | `CUSTOM_API_KEY` 在 `MANAGED_CREDENTIAL_KEYS` 和 `ClaudeMemEnv` 中 |
-| `src/services/worker/agents/ResponseProcessor.ts` | `ProcessAgentResponseOptions` 中 `parseJsonObservation`/`parseJsonSummary` 字段; JSON 解析分支 |
-| `src/sdk/parser.ts` | `parseObservationsJson()`, `parseSummaryJson()` 函数 |
-| `src/sdk/prompts.ts` | `buildInitPromptJson`, `buildContinuationPromptJson`, `buildSummaryPromptJson`, `buildObservationPrompt` 中 JSON 格式段 |
-
-**注意**：当前项目 `.gitattributes` **未配置** `merge=ours` 规则，CustomAgent 专有文件（`src/services/worker/CustomAgent.ts`、`tests/worker/custom-agent-*.test.ts`、`tests/worker/gemini-sse-parser.test.ts`）的留存依赖三路合并逻辑（上游删除时 git 通常会自动删除它们）。
-
-**如果上游再次出现删除 CustomAgent 的风险**（v10.0.6、v12.3.8 都发生过），可在 `.gitattributes` 末尾追加以下规则以自动保留本地版本：
-```
-src/services/worker/CustomAgent.ts merge=ours
-tests/worker/custom-agent-session.test.ts merge=ours
-tests/worker/custom-agent-utils.test.ts merge=ours
-tests/worker/custom-agent-history-truncation.test.ts merge=ours
-tests/worker/gemini-sse-parser.test.ts merge=ours
-```
-并运行 `git config merge.ours.driver true` 激活 ours 合并驱动。
-
-### 4. 获取上游最新代码
+普通流程必须从干净的命名分支开始。冻结 upstream commit，验证 attributes 和合并前 CustomAgent 行为，再创建状态目录：
 
 ```bash
+set -euo pipefail
+test -n "$(git branch --show-current)"
+test -z "$(git status --porcelain=v1)" || { git status --short; exit 1; }
+git remote get-url upstream >/dev/null
+git config merge.ours.driver true
+
 git fetch upstream
+git symbolic-ref --quiet --short refs/remotes/upstream/HEAD >/dev/null || \
+  git remote set-head upstream --auto
+UPSTREAM_REF=$(git symbolic-ref --quiet --short refs/remotes/upstream/HEAD)
+UPSTREAM_HEAD=$(git rev-parse --verify "${UPSTREAM_REF}^{commit}")
+UPSTREAM_COUNT=$(git rev-list --count HEAD.."$UPSTREAM_HEAD")
+test "$UPSTREAM_COUNT" -gt 0 || { printf 'No upstream commits to merge.\n'; exit 1; }
+
+git check-attr merge -- \
+  src/services/worker/CustomAgent.ts \
+  tests/worker/custom-agent-session.test.ts \
+  tests/worker/custom-agent-utils.test.ts \
+  tests/worker/custom-agent-history-truncation.test.ts \
+  tests/worker/gemini-sse-parser.test.ts |
+  awk -F': ' '{ count++; if ($3 != "ours") bad = 1 }
+                 END { exit !(count == 5 && !bad) }'
+
+bun test tests/worker/custom-agent-*.test.ts \
+  tests/worker/gemini-sse-parser.test.ts \
+  tests/parser-json-observations.test.ts \
+  tests/sdk/parser.test.ts tests/sdk/prompts.test.ts
+
+git log --oneline --left-right --cherry-pick HEAD..."$UPSTREAM_HEAD"
+git diff --stat HEAD "$UPSTREAM_HEAD"
+
+STATE_DIR=$(git rev-parse --git-path merge-claude-mem)
+mkdir "$STATE_DIR"
+git rev-parse HEAD > "$STATE_DIR/pre-merge-head"
+printf '%s\n' "$UPSTREAM_REF" > "$STATE_DIR/upstream-ref"
+printf '%s\n' "$UPSTREAM_HEAD" > "$STATE_DIR/upstream-head"
 ```
 
-### 5. 确定上游分支
+## 2. 解锁 plugin
 
-检查上游的默认分支（通常是 main 或 master）：
+取消全部 skip-worktree，并从当前 HEAD 丢弃本地生成物。状态目录位于 `.git`，不会污染工作区：
+
 ```bash
-git remote show upstream | grep 'HEAD branch'
+set -euo pipefail
+test -n "$(git ls-files plugin/ | sed -n '1p')"
+git ls-files -z plugin/ | xargs -0 git update-index --no-skip-worktree --
+git restore --source=HEAD --worktree -- plugin/
+test -z "$(git status --porcelain=v1)" || { git status --short; exit 1; }
 ```
 
-### 6. 查看上游变更
+从此处到成功提交或 abort，不能恢复 skip-worktree。
+
+## 3. 合并与冲突
+
+只合并已冻结的 SHA：
 
 ```bash
-# 比较当前分支与上游分支的差异
-git log HEAD..upstream/<branch> --oneline
-
-# 查看详细变更
-git diff HEAD..upstream/<branch> --stat
+set -euo pipefail
+STATE_DIR=$(git rev-parse --git-path merge-claude-mem)
+UPSTREAM_HEAD=$(sed -n '1p' "$STATE_DIR/upstream-head")
+git cat-file -e "${UPSTREAM_HEAD}^{commit}"
+git merge --no-commit --no-ff "$UPSTREAM_HEAD"
 ```
 
-### 7. 执行合并
+发生冲突时：
+
+1. 用 `git diff --name-only --diff-filter=U` 和 `git ls-files -u` 列出冲突。
+2. 读取 base、local、upstream 三方语义；采用上游架构并迁移本地行为。
+3. 若 `.codegraph/` 存在，理解移动后的符号和调用路径时先使用 CodeGraph。
+4. 逐个编辑、验证和 `git add`；不得批量 checkout ours/theirs。
+
+从持久快照读取旧实现，例如：
 
 ```bash
-git merge upstream/<branch>
+STATE_DIR=$(git rev-parse --git-path merge-claude-mem)
+PRE_MERGE_HEAD=$(sed -n '1p' "$STATE_DIR/pre-merge-head")
+git show "${PRE_MERGE_HEAD}:src/services/worker/CustomAgent.ts"
 ```
 
-### 8. 处理合并冲突（如有）
+只恢复确认丢失的行为，不机械覆盖整个文件。
 
-如果出现冲突：
+## 4. 验证并暂存
 
-1. 使用 `git status` 查看冲突文件列表
-2. 逐个处理冲突文件：
-   - 读取文件内容，理解冲突
-   - 保留必要的本地修改
-   - 采用上游的新功能和修复
-3. 标记冲突已解决：`git add <file>`
-4. 完成合并：`git commit`
-
-**冲突处理原则：**
-- 优先保留上游的架构变更
-- 保留本地的定制配置和功能（特别是 CustomAgent 相关代码）
-- 如果不确定，询问用户
-
-### 9. 验证 Fork 定制代码完整性（合并后）
-
-**合并完成后，必须逐一验证步骤 3 中记录的所有 CustomAgent 代码段是否存活。**
-
-对每个共享文件执行检查：
-
-1. **读取合并后的文件**
-2. **对照步骤 3 的快照**，确认每个 CustomAgent 代码段仍然存在
-3. **如果某段代码缺失**：
-   - 根据快照恢复缺失的代码段
-   - 适配上游的新代码结构（如函数签名变化、import 路径调整等）
-   - 确保恢复的代码能与上游新代码正确集成
-4. **如果上游重构了共享文件的结构**（如拆分文件、重命名函数）：
-   - 将 CustomAgent 代码迁移到新的位置/结构
-   - 更新 import 路径和引用
-   - 询问用户确认迁移方案
-
-**验证清单**（逐项确认，全部通过才算完成）：
-
-- [ ] `worker-service.ts`: CustomAgent import、属性、构造、路由注册、provider 判断
-- [ ] `SessionRoutes.ts`: CustomAgent import、构造函数参数、agent registry
-- [ ] `worker-types.ts`: `'custom'` 在 currentProvider 类型中
-- [ ] `SettingsDefaultsManager.ts`: 所有 `CLAUDE_MEM_CUSTOM_*` 设置项
-- [ ] `EnvManager.ts`: `CUSTOM_API_KEY` 相关条目
-- [ ] `ResponseProcessor.ts`: JSON 解析选项和分支
-- [ ] `parser.ts`: JSON 格式解析函数
-- [ ] `prompts.ts`: JSON 格式 prompt 构建函数
-- [ ] `CustomAgent.ts`: 文件完整，未被上游删除覆盖
-- [ ] 所有 CustomAgent 测试文件完整
-
-### 10. 重建 plugin/ 目录并恢复保护
+保持 `MERGE_HEAD` 存在，确认没有冲突且 attributes 契约仍有效：
 
 ```bash
-# 重新构建项目
+set -euo pipefail
+STATE_DIR=$(git rev-parse --git-path merge-claude-mem)
+UPSTREAM_HEAD=$(sed -n '1p' "$STATE_DIR/upstream-head")
+MERGE_HEAD_PATH=$(git rev-parse --git-path MERGE_HEAD)
+test -f "$MERGE_HEAD_PATH"
+test "$(sed -n '1p' "$MERGE_HEAD_PATH")" = "$UPSTREAM_HEAD"
+test -z "$(git diff --name-only --diff-filter=U)"
+
+git check-attr merge -- \
+  src/services/worker/CustomAgent.ts \
+  tests/worker/custom-agent-session.test.ts \
+  tests/worker/custom-agent-utils.test.ts \
+  tests/worker/custom-agent-history-truncation.test.ts \
+  tests/worker/gemini-sse-parser.test.ts |
+  awk -F': ' '{ count++; if ($3 != "ours") bad = 1 }
+                 END { exit !(count == 5 && !bad) }'
+```
+
+按从快到慢的顺序验证公开行为：
+
+```bash
+set -euo pipefail
+bun test tests/worker/custom-agent-*.test.ts \
+  tests/worker/gemini-sse-parser.test.ts \
+  tests/parser-json-observations.test.ts \
+  tests/sdk/parser.test.ts tests/sdk/prompts.test.ts
+npm test
+npm run typecheck
+npm run build-and-sync
+```
+
+失败时保持 merge 进行中和 `plugin/` 解锁，修复根因后重跑完整验证；不要自动执行 `npm install`。
+
+检查 build 产生的 staged、unstaged 和 untracked 变更，逐个暂存属于本次合并的实际路径：
+
+```bash
+git status --short
+git diff --check
+git diff --stat
+git diff --cached --check
+git diff --cached --stat
+git ls-files --others --exclude-standard
+```
+
+暂存完成后必须没有遗漏：
+
+```bash
+set -euo pipefail
+test -z "$(git diff --name-only)"
+test -z "$(git ls-files --others --exclude-standard)"
+test -n "$(git diff --cached --name-only)"
+git diff --cached --check
+```
+
+验证 Worker 状态和版本：
+
+```bash
+set -euo pipefail
+WORKER_PORT=$(jq -r '.CLAUDE_MEM_WORKER_PORT // empty' \
+  ~/.claude-mem/settings.json 2>/dev/null || true)
+test -n "$WORKER_PORT" || WORKER_PORT=$((37700 + $(id -u) % 100))
+HEALTH=$(curl --fail --silent --show-error \
+  "http://127.0.0.1:${WORKER_PORT}/api/health")
+CODE_VERSION=$(node -p "require('./package.json').version")
+printf '%s\n' "$HEALTH" |
+  jq -e --arg version "$CODE_VERSION" \
+    '.status == "ok" and .version == $version'
+```
+
+## 5. 提交、保护与清理
+
+根据 staged diff 编写真实摘要并创建 merge commit。标题使用当前 `package.json` 版本；不要复制历史 hash 或提交模板文字。
+
+提交后验证两个 parent、工作区和 plugin 状态，再删除持久状态：
+
+```bash
+set -euo pipefail
+STATE_DIR=$(git rev-parse --git-path merge-claude-mem)
+PRE_MERGE_HEAD=$(sed -n '1p' "$STATE_DIR/pre-merge-head")
+UPSTREAM_REF=$(sed -n '1p' "$STATE_DIR/upstream-ref")
+UPSTREAM_HEAD=$(sed -n '1p' "$STATE_DIR/upstream-head")
+
+test ! -f "$(git rev-parse --git-path MERGE_HEAD)"
+test "$(git rev-parse HEAD^1)" = "$PRE_MERGE_HEAD"
+test "$(git rev-parse HEAD^2)" = "$UPSTREAM_HEAD"
+test -z "$(git status --porcelain=v1)" || { git status --short; exit 1; }
+
+UPSTREAM_COUNT=$(git rev-list --count "${PRE_MERGE_HEAD}..${UPSTREAM_HEAD}")
+printf 'upstream_ref=%s upstream_head=%s merge_commit=%s upstream_commits=%s\n' \
+  "$UPSTREAM_REF" "$UPSTREAM_HEAD" "$(git rev-parse HEAD)" "$UPSTREAM_COUNT"
+
+git ls-files -z plugin/ | xargs -0 git update-index --skip-worktree --
+git ls-files -v plugin/ |
+  awk 'BEGIN { skip = 0; total = 0 }
+       /^S / { skip++ }
+       { total++ }
+       END {
+         printf "skip=%d tracked=%d\n", skip, total
+         exit !(total > 0 && skip == total)
+       }'
+
+rm -f "$STATE_DIR/pre-merge-head" "$STATE_DIR/upstream-ref" "$STATE_DIR/upstream-head"
+rmdir "$STATE_DIR"
+test ! -d "$STATE_DIR"
+git status --short
+```
+
+## 6. 中断恢复与 Abort
+
+状态目录存在时按 Git state 分类：
+
+- `MERGE_HEAD` 存在：继续解决/验证，或经用户确认后 abort。
+- `HEAD == PRE_MERGE_HEAD`：merge 尚未开始或已经 abort，恢复运行时和 plugin 保护。
+- 当前 HEAD 的两个 parent 分别等于快照和 upstream SHA：merge 已提交，重跑第 4 节的测试、构建和 Worker 健康检查，确认工作区干净后完成第 5 节。
+- 其他情况：保留状态目录，停止并人工检查；不得自动 reset。
+
+只有用户决定放弃未提交 merge，或 HEAD 已回到快照时，才执行：
+
+```bash
+set -euo pipefail
+STATE_DIR=$(git rev-parse --git-path merge-claude-mem)
+PRE_MERGE_HEAD=$(sed -n '1p' "$STATE_DIR/pre-merge-head")
+UPSTREAM_HEAD=$(sed -n '1p' "$STATE_DIR/upstream-head")
+MERGE_HEAD_PATH=$(git rev-parse --git-path MERGE_HEAD)
+
+if test -f "$MERGE_HEAD_PATH"; then
+  test "$(sed -n '1p' "$MERGE_HEAD_PATH")" = "$UPSTREAM_HEAD"
+  git merge --abort
+elif test "$(git rev-parse HEAD)" != "$PRE_MERGE_HEAD"; then
+  printf 'Merge is committed or state diverged; explicit rollback approval is required.\n' >&2
+  exit 1
+fi
+
+test "$(git rev-parse HEAD)" = "$PRE_MERGE_HEAD"
+git ls-files -z plugin/ | xargs -0 git update-index --no-skip-worktree --
+git restore --source="$PRE_MERGE_HEAD" --staged --worktree -- plugin/
 npm run build-and-sync
 
-# 恢复 plugin/ 目录的 skip-worktree 保护（批量）
-git ls-files plugin/ | xargs git update-index --skip-worktree --
+WORKER_PORT=$(jq -r '.CLAUDE_MEM_WORKER_PORT // empty' \
+  ~/.claude-mem/settings.json 2>/dev/null || true)
+test -n "$WORKER_PORT" || WORKER_PORT=$((37700 + $(id -u) % 100))
+HEALTH=$(curl --fail --silent --show-error \
+  "http://127.0.0.1:${WORKER_PORT}/api/health")
+CODE_VERSION=$(node -p "require('./package.json').version")
+printf '%s\n' "$HEALTH" |
+  jq -e --arg version "$CODE_VERSION" \
+    '.status == "ok" and .version == $version' >/dev/null
 
-# 验证保护已恢复
-git ls-files -v plugin/ | grep '^S' | wc -l
+test -z "$(git status --porcelain=v1)" || { git status --short; exit 1; }
+
+git ls-files -z plugin/ | xargs -0 git update-index --skip-worktree --
+git ls-files -v plugin/ |
+  awk 'BEGIN { skip = 0; total = 0 }
+       /^S / { skip++ }
+       { total++ }
+       END { exit !(total > 0 && skip == total) }'
+
+rm -f "$STATE_DIR/pre-merge-head" "$STATE_DIR/upstream-ref" "$STATE_DIR/upstream-head"
+rmdir "$STATE_DIR"
+test ! -d "$STATE_DIR"
 ```
 
-### 11. 验证运行中的 Worker 版本
+任何恢复步骤失败都保留状态目录并报告真实状态。
 
-构建和同步完成后，确认当前运行的 worker 实例已加载最新代码：
+## 完成报告
 
-1. **读取本地配置的 worker 端口**（不要硬编码，端口随 `settings.json` 或 UID 派生而不同）：
-```bash
-WORKER_PORT=$(jq -r '.CLAUDE_MEM_WORKER_PORT // empty' ~/.claude-mem/settings.json)
-# 若 settings.json 未配置，回退到按 UID 派生的默认值 37700+(uid%100)
-: "${WORKER_PORT:=$(printf '%d' $((37700 + $(id -u) % 100)))}"
-```
-
-2. **查询 worker 运行状态和版本**：
-```bash
-curl -s "http://localhost:${WORKER_PORT}/api/health" | head -c 500
-```
-
-3. **对比版本号**：从 `package.json` 读取当前代码版本，与 `/api/health` 返回的 `version` 字段对比
-   - 如果版本一致：worker 已是最新
-   - 如果版本不一致：`npm run build-and-sync` 应该已触发重启，等待几秒后重新检查
-   - 如果仍然不一致：手动重启 worker
-
-4. **确认 worker 健康**：检查 `/api/health` 返回的 `status` 字段为 `ok`
-
-### 12. 提交信息格式
-
-**默认合并（ort 自动成功、无手动干预）** — 按项目惯例使用 amend 修正 git 默认的 merge message：
-
-```
-Merge upstream changes (vX.Y.Z) with local modifications
-
-- [合并摘要：关键 fix/feat、保留的本地定制]
-```
-
-参考近期合并：`7da8bb67`、`94bab50b`。
-
-**如有手动恢复 CustomAgent 代码** — 追加一个独立提交：
-```
-fix: restore CustomAgent integration after upstream merge
-```
-
-## 故障排除
-
-### 合并冲突过多
-
-考虑使用 rebase 策略：
-```bash
-git rebase upstream/<branch>
-```
-
-**注意**：rebase 后仍需执行步骤 9 的验证清单。
-
-### 构建失败
-
-1. 检查编译错误
-2. 比较依赖版本
-3. 更新依赖：`npm install`
-4. 检查 CustomAgent 代码是否因上游 API 变更而需要适配
-
-### skip-worktree 状态检查
-
-```bash
-# 查看所有 skip-worktree 文件
-git ls-files -v | grep '^S'
-
-# 单个文件取消 skip-worktree
-git update-index --no-skip-worktree <file>
-
-# 单个文件设置 skip-worktree
-git update-index --skip-worktree <file>
-```
-
-### CustomAgent 被上游删除
-
-如果上游再次移除 CustomAgent 相关代码（如 v10.0.6、v12.3.8 那样）：
-1. 专有文件（`CustomAgent.ts`、`tests/worker/custom-agent-*.test.ts` 等）在三路合并时通常不会被上游的 delete 传播过来（除非 merge base 中这些文件已存在）——合并后用 `ls` 确认仍在；若被删除，从上一次提交 `git checkout HEAD~1 -- <file>` 恢复
-2. 为避免下次再踩坑，按步骤 3 提示在 `.gitattributes` 配置 `merge=ours` 规则
-3. 共享文件需按步骤 9 的验证清单检查，必要时从步骤 3 的快照手动恢复
-4. 确认恢复后运行完整测试套件
-
-## 完成后
-
-**向用户提供合并总结**，包括：
-- 合并的提交数量和 commit hash
-- 根据合并的代码总结变更内容
-- 如有冲突，说明冲突解决方式
-- **CustomAgent 代码完整性验证结果**（全部通过 / 哪些需要手动恢复）
-- 确认 plugin/ 目录 skip-worktree 保护已恢复
-- **Worker 版本验证结果**（版本号是否一致、健康状态）
+报告 upstream ref/SHA/版本/提交数、merge commit、冲突处理、测试/typecheck/build、Worker 健康与版本、plugin skip/tracked 数量，以及状态目录是否清理。
