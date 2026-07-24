@@ -132,6 +132,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -191,6 +192,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -236,6 +238,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -281,6 +284,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -321,6 +325,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -375,6 +380,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -428,6 +434,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -481,6 +488,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -536,6 +544,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -589,6 +598,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () {
         yield {
           _persistentId: 902,
@@ -656,6 +666,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -716,6 +727,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -771,6 +783,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {}
@@ -838,6 +851,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -907,6 +921,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -978,6 +993,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -1043,6 +1059,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -1092,6 +1109,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -1150,6 +1168,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -1236,6 +1255,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () {
         yield {
           _persistentId: 901,
@@ -1305,6 +1325,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: clearPendingForSessionMock,
       confirmClaimedMessages: confirmClaimedMessagesMock,
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () {
         yield {
           _persistentId: 333,
@@ -1402,6 +1423,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () {
         yield {
           _persistentId: 902,
@@ -1469,6 +1491,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -1507,6 +1530,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -1565,6 +1589,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -1636,6 +1661,7 @@ describe('CustomAgent session behavior', () => {
     const sessionManager = {
       clearPendingForSession: () => {},
       confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
       getMessageIterator: async function* () { yield* []; },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},

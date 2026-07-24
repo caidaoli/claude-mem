@@ -184,7 +184,7 @@ try {
   // Runtime installs are target-local too: Codex copies ./plugin as the plugin
   // root, so stale source node_modules/package-lock files must never be copied.
   execSync(
-    `rsync -av --delete --exclude=.git --exclude=/.mcp.json --exclude=bun.lock --exclude=package-lock.json --exclude=scripts/package.json --exclude=scripts/node_modules ${LOCAL_DEVELOPMENT_METADATA_EXCLUDES} ${MARKETPLACE_PLUGIN_RUNTIME_EXCLUDES} --include=plugin/*** ${gitignoreExcludes} ./ ~/.claude/plugins/marketplaces/thedotmack/`,
+    `rsync -av --delete --exclude=.git --exclude=/.mcp.json --exclude=bun.lock --exclude=package-lock.json --exclude=scripts/package.json --exclude=scripts/node_modules --exclude=/workers ${LOCAL_DEVELOPMENT_METADATA_EXCLUDES} ${MARKETPLACE_PLUGIN_RUNTIME_EXCLUDES} --include=plugin/*** ${gitignoreExcludes} ./ ~/.claude/plugins/marketplaces/thedotmack/`,
     { stdio: 'inherit' }
   );
 

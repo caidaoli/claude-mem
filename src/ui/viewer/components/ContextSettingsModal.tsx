@@ -381,15 +381,14 @@ export function ContextSettingsModal({
                     tooltip={t.settings.geminiModelTooltip}
                   >
                     <select
-                      value={formState.CLAUDE_MEM_GEMINI_MODEL || 'gemini-2.5-flash-lite'}
+                      value={formState.CLAUDE_MEM_GEMINI_MODEL || 'gemini-flash-latest'}
                       onChange={(e) => updateSetting('CLAUDE_MEM_GEMINI_MODEL', e.target.value)}
                     >
-                      <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (10 RPM free)</option>
-                      <option value="gemini-2.5-flash">gemini-2.5-flash (10 RPM free)</option>
-                      <option value="gemini-2.5-pro">gemini-2.5-pro (5 RPM free)</option>
-                      <option value="gemini-2.0-flash">gemini-2.0-flash (15 RPM free)</option>
-                      <option value="gemini-2.0-flash-lite">gemini-2.0-flash-lite (30 RPM free)</option>
-                      <option value="gemini-3-flash-preview">gemini-3-flash-preview (5 RPM free)</option>
+                      <option value="gemini-flash-latest">gemini-flash-latest (default, latest GA Flash)</option>
+                      <option value="gemini-flash-lite-latest">gemini-flash-lite-latest (latest GA Flash-Lite)</option>
+                      <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                      <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
+                      <option value="gemini-3-flash-preview">gemini-3-flash-preview (preview)</option>
                     </select>
                   </FormField>
                   <div className="toggle-group" style={{ marginTop: '8px' }}>

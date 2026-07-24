@@ -18,6 +18,7 @@ plugin/data.backup/
 package-lock.json
 bun.lock
 !plugin/bun.lock
+!workers/sync-hub/bun.lock
 private/
 Auto Run Docs/
 
@@ -40,6 +41,7 @@ plugin/scripts/claude-mem
 
 CONTRIB_NOTES.md
 .serena
+CLAUDE.local.md
 
 .docker-claude-mem-data/
 
