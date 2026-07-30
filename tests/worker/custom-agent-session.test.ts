@@ -509,6 +509,75 @@ describe('CustomAgent session behavior', () => {
     expect(requestBody.generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'minimal' });
   });
 
+  it('keeps Gemini non-stream text when its part also carries a thought signature', async () => {
+    loadFromFileSpy.mockImplementation(() => ({
+      ...SettingsDefaultsManager.getAllDefaults(),
+      CLAUDE_MEM_CUSTOM_API_URL: 'https://custom.example.com',
+      CLAUDE_MEM_CUSTOM_API_KEY: 'test-key',
+      CLAUDE_MEM_CUSTOM_MODEL: 'gemini-3.6-flash',
+      CLAUDE_MEM_CUSTOM_PROTOCOL: 'gemini',
+      CLAUDE_MEM_CUSTOM_STREAMING: 'false',
+      CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES: '0',
+      CLAUDE_MEM_CUSTOM_MAX_TOKENS: '0',
+      CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT: '0',
+      CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT: '0'
+    }));
+
+    const mockStoreObservations = mock(() => ({
+      observationIds: [1],
+      summaryId: null,
+      createdAtEpoch: Date.now()
+    }));
+
+    const dbManager = {
+      getSessionStore: () => ({
+        getSessionById: () => ({ memory_session_id: 'mem-custom-1' }),
+        updateMemorySessionId: () => {},
+        ensureMemorySessionIdRegistered: () => {},
+        storeObservations: mockStoreObservations
+      }),
+      getCloudSync: () => null,
+      getChromaSync: () => ({
+        syncObservation: () => Promise.resolve(),
+        syncSummary: () => Promise.resolve()
+      })
+    } as unknown as DatabaseManager;
+
+    const sessionManager = {
+      clearPendingForSession: () => {},
+      confirmClaimedMessages: () => Promise.resolve(),
+      getClaimedMessages: () => [],
+      getMessageIterator: async function* () { yield* []; },
+      getPendingMessageStore: () => ({
+        confirmProcessed: () => {}
+      })
+    } as unknown as SessionManager;
+
+    global.fetch = mock(() => Promise.resolve(new Response(JSON.stringify({
+      candidates: [{
+        content: {
+          parts: [
+            {
+              thought: true,
+              thoughtSignature: 'internal-thinking-state',
+              text: 'internal reasoning'
+            },
+            {
+              thoughtSignature: 'signed-visible-output',
+              text: '{"type":"discovery","title":"ok","narrative":"n","files_read":[],"files_modified":[],"concepts":[]}'
+            }
+          ]
+        }
+      }],
+      usageMetadata: { totalTokenCount: 12 }
+    }))));
+
+    const agent = new CustomAgent(dbManager, sessionManager);
+    await agent.startSession(createSession());
+
+    expect(mockStoreObservations).toHaveBeenCalledTimes(1);
+  });
+
   it('serializes Gemini generationConfig before dynamic contents for prompt-cache prefix stability', async () => {
     loadFromFileSpy.mockImplementation(() => ({
       ...SettingsDefaultsManager.getAllDefaults(),

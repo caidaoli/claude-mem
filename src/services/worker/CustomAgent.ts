@@ -304,14 +304,13 @@ function extractCodexResponseText(data: CodexResponse): string {
 /**
  * Extract non-thinking text from Gemini response parts
  * Gemini 2.5+ models may return thinking parts with thought=true flag.
- * Gemini 3 also returns thoughtSignature parts (hash of thinking content).
- * Thinking parts are internal reasoning - never valid output content.
+ * Gemini marks internal reasoning with thought=true. A thoughtSignature is only
+ * metadata and may share the same part as visible text in non-stream responses.
  */
 function extractResponseText(parts: Array<{ text?: string; thought?: boolean; thoughtSignature?: string }> | undefined): string {
   if (!parts || parts.length === 0) return '';
 
-  // Filter out thinking parts (thought=true) and thought signatures
-  const nonThinkingParts = parts.filter(p => !p.thought && !p.thoughtSignature && p.text);
+  const nonThinkingParts = parts.filter(p => !p.thought && p.text);
   return nonThinkingParts.map(p => p.text).join('');
 }
 
