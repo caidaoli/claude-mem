@@ -4,6 +4,70 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [13.16.0] - 2026-08-25
+
+## claude-mem for Cowork 🧠
+
+Claude started remembering Cowork tasks today — this release takes it further.
+
+### New: claude-mem-cowork plugin
+A second plugin in the marketplace, built for **Cowork** (native Claude app — mobile, web, desktop cloud sessions):
+
+- Hooks capture tool use in ephemeral Cowork containers and stream fragments to cmem.ai, where Pro runs the observer server-side
+- Compiled observations are injected into every new session and every spawned agent
+- **Fail-soft by design**: no API key → silent no-op; cmem.ai unreachable → events spool locally and flush later; every hook exits 0 unconditionally
+- Credential redaction hardened: short and whitespace-bearing values, any Authorization scheme, Cookie headers, full URI userinfo
+- mem-search + mem-setup skills bundled
+
+Install in any Cowork session:
+```
+/plugin marketplace add thedotmack/claude-mem
+/plugin install claude-mem-cowork@thedotmack
+```
+Then say "set up claude-mem".
+
+Landing page: https://cmem.ai/cowork
+
+### Also in this release
+- Memory Prize scorecard and slides (hackathon 05)
+- Overflow spool re-spools the remainder instead of dropping oldest events
+- Marketplace version alignment
+
+## [13.15.3] - 2026-08-20
+
+## What's Changed
+
+### OpenRouter attribution overhaul
+- Renamed the OpenRouter app entry to **Claude-Mem** (display title only — the ranking identity is the referer URL, which is unchanged, so the accumulated leaderboard history stays intact)
+- Centralized all attribution headers into a shared module (`src/shared/openrouter-attribution.ts`) so the worker and server providers can never drift apart and split the app entry
+- Migrated from the legacy `X-Title` header to the canonical `X-OpenRouter-Title`
+- Claimed marketplace categories via `X-OpenRouter-Categories: cli-agent,creative-writing`
+- Env overrides (`CLAUDE_MEM_OPENROUTER_SITE_URL` / `CLAUDE_MEM_OPENROUTER_APP_NAME`) still work for forks and self-hosted gateways
+
+### Fixes
+- wowerpoint skill: corrected the share URL format (dropped the `/d/` path segment)
+
+**Full Changelog**: https://github.com/thedotmack/claude-mem/compare/v13.15.2...v13.15.3
+
+## [13.15.2] - 2026-08-16
+
+## Observer errors now tell you what happened and what to do
+
+When the memory observer stops working — most commonly a CMEM Pro allowance that's been used up — claude-mem now says so in plain words, once, with the one thing to do about it. No more silent `OpenRouter upstream error (status 502)` retry loops.
+
+### Fixes
+- **Worker carries the gateway's error envelope** (#3601): the OpenRouter classifier now understands the cmem.ai gateway's `{code, message, action, url, request_id}` errors and, for plain OpenRouter, keeps the upstream body (e.g. `Key limit exceeded … Manage it using <url>`) instead of discarding it. 402 and "key limit exceeded" bodies are classified as quota exhausted and are **not retried**.
+- **One log line per failure**: `Observer failed {kind, code, requestId} <message — action url (req id)>` replaces the five-line fan-out.
+- **Session-start warning says the right thing** (#3601, #3612): the observer-health warning now shows the message, a `What to do:` line, the link, and the request id — and no longer tells Pro users to edit `~/.claude-mem/settings.json`. It also appears for projects that have no memories yet (previously the welcome hint hid it).
+- **Observer-health alerting** (#3538): claude-mem alerts you at session start when observations stop flowing.
+
+### Pro trial
+- **7-day Pro trial surfaced everywhere the viewer URL is shown** (#3613): session-start banner, per-message banner, first-session welcome hint, installer "Next Steps", viewer header, and cursor-hooks docs — one source of truth (`src/shared/pro-promo.ts`) with per-surface `?from=` attribution links to https://cmem.ai/pro.
+
+Pairs with the cmem.ai gateway change (claude-mem-pro #106): honest status codes (402/401/429/503, never 502), a 6-code error taxonomy, and an `x-request-id` on every error.
+
+_Note: v13.15.1 was tagged but never released or published; 13.15.2 supersedes it._
+
 ## [13.15.0] - 2026-08-10
 
 The npx installer can now start a free week of CMEM Pro end to end:
