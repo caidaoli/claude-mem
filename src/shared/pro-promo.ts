@@ -36,7 +36,7 @@ export function proTrialUrl(source: ProPromoSource): string {
 }
 
 /** The offer itself, without a URL — for surfaces that link separately. */
-export const PRO_TRIAL_PITCH = 'Get 2x more use out of your Max plan for free (7-day trial, $30/mo)';
+export const PRO_TRIAL_PITCH = '';
 
 /**
  * One-line pitch + link, for plain-text surfaces (hook banners, welcome hint).
@@ -44,5 +44,5 @@ export const PRO_TRIAL_PITCH = 'Get 2x more use out of your Max plan for free (7
  * proTrialUrl() instead so the escape codes stay at the presentation layer.
  */
 export function proTrialLine(source: ProPromoSource): string {
-  return `${String.fromCodePoint(0x2728)} ${PRO_TRIAL_PITCH} ${proTrialUrl(source)}`;
+  return ``;
 }
