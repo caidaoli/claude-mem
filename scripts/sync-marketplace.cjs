@@ -5,21 +5,28 @@ const { existsSync, readFileSync, rmSync, writeFileSync } = require('fs');
 const path = require('path');
 const os = require('os');
 const { syncClaudePluginRegistry } = require('./lib/claude-plugin-registry.cjs');
+const { mirrorDirectory } = require('./mirror-dir.cjs');
 
 const CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 const INSTALLED_PATH = path.join(CLAUDE_CONFIG_DIR, 'plugins', 'marketplaces', 'thedotmack');
 const CACHE_BASE_PATH = path.join(CLAUDE_CONFIG_DIR, 'plugins', 'cache', 'thedotmack', 'claude-mem');
-const INSTALL_MARKER_EXCLUDES = '--exclude=.install-version --exclude=.cli-installed';
-const LOCAL_DEVELOPMENT_METADATA_EXCLUDES =
-  '--exclude=/.agents/ --exclude=/.claude/ --exclude=/.codegraph/';
-const MARKETPLACE_PLUGIN_RUNTIME_EXCLUDES =
-  '--exclude=plugin/node_modules --exclude=plugin/package-lock.json --exclude=plugin/bun.lock ' +
-  '--exclude=plugin/.install-version --exclude=plugin/.cli-installed';
 
 function parseWorkerPort(value) {
   const port = Number.parseInt(String(value ?? ''), 10);
   return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : null;
 }
+
+const BASE_EXCLUDES = [
+  '.git',
+  'bun.lock',
+  'package-lock.json',
+  'scripts/package.json',
+  'scripts/node_modules',
+  '/workers',
+  '/.agents/',
+  '/.claude/',
+  '/.codegraph/',
+];
 
 function getCurrentBranch() {
   try {
@@ -38,7 +45,7 @@ function getCurrentBranch() {
 
 function getGitignoreExcludes(basePath) {
   const gitignorePath = path.join(basePath, '.gitignore');
-  if (!existsSync(gitignorePath)) return '';
+  if (!existsSync(gitignorePath)) return [];
 
   const syncManagedFiles = new Set();
 
@@ -50,25 +57,11 @@ function getGitignoreExcludes(basePath) {
       !line.startsWith('#') &&
       !line.startsWith('!') &&
       !syncManagedFiles.has(line)
-    )
-    .map(pattern => `--exclude=${JSON.stringify(pattern)}`)
-    .join(' ');
+    );
 }
 
-const branch = getCurrentBranch();
-const isForce = process.argv.includes('--force');
-
-if (branch && branch !== 'main' && !isForce) {
-  console.log('');
-  console.log('\x1b[33m%s\x1b[0m', `WARNING: Installed plugin is on beta branch: ${branch}`);
-  console.log('\x1b[33m%s\x1b[0m', 'Running rsync would overwrite beta code.');
-  console.log('');
-  console.log('Options:');
-  console.log('  1. Use the claude-mem UI on the configured worker port to update beta');
-  console.log('  2. Switch to stable in UI first, then run sync');
-  console.log('  3. Force rsync: npm run sync-marketplace:force');
-  console.log('');
-  process.exit(1);
+function getMarketplaceExcludes(rootDir) {
+  return [...BASE_EXCLUDES, ...getGitignoreExcludes(rootDir)];
 }
 
 function getPluginVersion() {
@@ -116,21 +109,33 @@ function installPluginRuntime(targetDir, label) {
   execSync('bun install', { cwd: targetDir, stdio: 'inherit' });
 }
 
+function getPluginRuntimeExcludes(pluginDir) {
+  return [
+    '.git',
+    'node_modules/',
+    'package-lock.json',
+    'bun.lock',
+    '.install-version',
+    '.cli-installed',
+    ...getGitignoreExcludes(pluginDir),
+  ];
+}
+
 function detectInstalledVersion(buildVersion) {
   const dataDir = process.env.CLAUDE_MEM_DATA_DIR || path.join(os.homedir(), '.claude-mem');
   const settingsPath = path.join(dataDir, 'settings.json');
   let port = parseWorkerPort(process.env.CLAUDE_MEM_WORKER_PORT);
   if (!port && existsSync(settingsPath)) {
     try {
-      const s = JSON.parse(readFileSync(settingsPath, 'utf8'));
-      const settingsPort = parseWorkerPort(s.CLAUDE_MEM_WORKER_PORT);
-      if (settingsPort) port = settingsPort;
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
+      port = parseWorkerPort(settings.CLAUDE_MEM_WORKER_PORT);
     } catch {}
   }
   if (!port) {
     const uid = typeof process.getuid === 'function' ? process.getuid() : 77;
     port = 37700 + (uid % 100);
   }
+
   let healthBody;
   try {
     healthBody = execSync(`curl -s --max-time 2 http://127.0.0.1:${port}/api/health`, {
@@ -140,93 +145,20 @@ function detectInstalledVersion(buildVersion) {
     return null;
   }
   if (!healthBody) return null;
-  let installedVersion;
-  let installedPath;
+
   try {
-    const j = JSON.parse(healthBody);
-    installedVersion = j.version;
-    installedPath = j.workerPath;
+    const health = JSON.parse(healthBody);
+    if (!health.version || health.version === buildVersion) return null;
+    return {
+      installedVersion: health.version,
+      installedPath: health.workerPath,
+    };
   } catch {
     return null;
   }
-  if (!installedVersion || installedVersion === buildVersion) return null;
-  return { installedVersion, installedPath };
 }
 
-const installedMismatch = detectInstalledVersion(getPluginVersion());
-if (installedMismatch) {
-  console.log('');
-  console.log('\x1b[33m%s\x1b[0m', 'Version mismatch detected:');
-  console.log(`  Building:   ${getPluginVersion()}`);
-  console.log(`  Installed:  ${installedMismatch.installedVersion}`);
-  if (installedMismatch.installedPath) console.log(`  Worker path: ${installedMismatch.installedPath}`);
-  console.log('');
-  console.log('Claude Code can keep pointing at its installed cache dir. Mirroring this');
-  console.log('build into the installed-version cache and updating the plugin registry so');
-  console.log('new sessions resolve the current version.');
-  console.log('');
-  console.log('\x1b[36m%s\x1b[0m', 'Restart Claude Code to refresh already-running plugin state.');
-  console.log('');
-}
-
-
-console.log('Syncing to marketplace...');
-try {
-  const rootDir = path.join(__dirname, '..');
-  const gitignoreExcludes = getGitignoreExcludes(rootDir);
-
-  // --include=plugin/*** must come before gitignoreExcludes because .gitignore
-  // lists "plugin" (it's a build artifact), but marketplace needs it for hooks/scripts
-  // Install markers are machine-local state, not source assets. Keep them out
-  // before the broad plugin include, then write fresh markers after dependency install.
-  // Local development metadata is not source either; never leak editor/agent/index
-  // state into the installed marketplace tree.
-  // Runtime installs are target-local too: Codex copies ./plugin as the plugin
-  // root, so stale source node_modules/package-lock files must never be copied.
-  execSync(
-    `rsync -av --delete --exclude=.git --exclude=/.mcp.json --exclude=bun.lock --exclude=package-lock.json --exclude=scripts/package.json --exclude=scripts/node_modules --exclude=/workers ${LOCAL_DEVELOPMENT_METADATA_EXCLUDES} ${MARKETPLACE_PLUGIN_RUNTIME_EXCLUDES} --include=plugin/*** ${gitignoreExcludes} ./ ~/.claude/plugins/marketplaces/thedotmack/`,
-    { stdio: 'inherit' }
-  );
-
-  console.log('Running bun install in marketplace...');
-  execSync(
-    'cd ~/.claude/plugins/marketplaces/thedotmack/ && bun install',
-    { stdio: 'inherit' }
-  );
-
-  const version = getPluginVersion();
-  const MARKETPLACE_PLUGIN_PATH = path.join(INSTALLED_PATH, 'plugin');
-  installPluginRuntime(MARKETPLACE_PLUGIN_PATH, 'marketplace plugin');
-  writeInstallMarker(MARKETPLACE_PLUGIN_PATH, version);
-
-  const CACHE_VERSION_PATH = path.join(CACHE_BASE_PATH, version);
-
-  console.log(`Syncing installed marketplace plugin to cache folder (version ${version})...`);
-  execSync(
-    `rsync -av --delete ${INSTALL_MARKER_EXCLUDES} "${MARKETPLACE_PLUGIN_PATH}/" "${CACHE_VERSION_PATH}/"`,
-    { stdio: 'inherit' }
-  );
-
-  writeInstallMarker(CACHE_VERSION_PATH, version);
-  const registryResult = syncClaudePluginRegistry({
-    claudeConfigDir: CLAUDE_CONFIG_DIR,
-    version,
-  });
-  console.log(`Updated Claude plugin registry: claude-mem@thedotmack -> ${registryResult.cachePath}`);
-
-  if (installedMismatch && installedMismatch.installedVersion !== version) {
-    const INSTALLED_CACHE_PATH = path.join(CACHE_BASE_PATH, installedMismatch.installedVersion);
-    console.log(`Mirroring to installed-version cache (${installedMismatch.installedVersion}) for hot reload...`);
-    execSync(
-      `rsync -av --delete ${INSTALL_MARKER_EXCLUDES} "${MARKETPLACE_PLUGIN_PATH}/" "${INSTALLED_CACHE_PATH}/"`,
-      { stdio: 'inherit' }
-    );
-    writeInstallMarker(INSTALLED_CACHE_PATH, version);
-  }
-
-
-  console.log('\x1b[32m%s\x1b[0m', 'Sync complete!');
-
+function triggerWorkerRestart() {
   console.log('\n🔄 Triggering worker restart...');
   const http = require('http');
   const dataDir = process.env.CLAUDE_MEM_DATA_DIR || path.join(os.homedir(), '.claude-mem');
@@ -251,7 +183,7 @@ try {
     port: workerPort,
     path: '/api/admin/restart',
     method: 'POST',
-    timeout: 2000
+    timeout: 2000,
   }, (res) => {
     if (res.statusCode === 200) {
       console.log('\x1b[32m%s\x1b[0m', `✓ Worker restart triggered on port ${workerPort}`);
@@ -267,8 +199,94 @@ try {
     console.log('\x1b[33m%s\x1b[0m', `ℹ Worker restart on port ${workerPort} timed out`);
   });
   req.end();
-
-} catch (error) {
-  console.error('\x1b[31m%s\x1b[0m', 'Sync failed:', error.message);
-  process.exit(1);
 }
+
+function logInstalledMismatch(installedMismatch, buildVersion) {
+  if (!installedMismatch) return;
+  console.log('');
+  console.log('\x1b[33m%s\x1b[0m', 'Version mismatch detected:');
+  console.log(`  Building:   ${buildVersion}`);
+  console.log(`  Installed:  ${installedMismatch.installedVersion}`);
+  if (installedMismatch.installedPath) console.log(`  Worker path: ${installedMismatch.installedPath}`);
+  console.log('');
+  console.log('Claude Code can keep pointing at its installed cache dir. Mirroring this');
+  console.log('build into the installed-version cache and updating the plugin registry so');
+  console.log('new sessions resolve the current version.');
+  console.log('');
+  console.log('\x1b[36m%s\x1b[0m', 'Restart Claude Code to refresh already-running plugin state.');
+  console.log('');
+}
+
+function main() {
+  const branch = getCurrentBranch();
+  const isForce = process.argv.includes('--force');
+
+  if (branch && branch !== 'main' && !isForce) {
+    console.log('');
+    console.log('\x1b[33m%s\x1b[0m', `WARNING: Installed plugin is on beta branch: ${branch}`);
+    console.log('\x1b[33m%s\x1b[0m', 'Running sync would overwrite beta code.');
+    console.log('');
+    console.log('Options:');
+    console.log('  1. Use the claude-mem UI on the configured worker port to update beta');
+    console.log('  2. Switch to stable in UI first, then run sync');
+    console.log('  3. Force sync: npm run sync-marketplace:force');
+    console.log('');
+    process.exit(1);
+  }
+
+  const rootDir = path.join(__dirname, '..');
+  const version = getPluginVersion();
+  const installedMismatch = detectInstalledVersion(version);
+  logInstalledMismatch(installedMismatch, version);
+
+  console.log('Syncing to marketplace...');
+  try {
+    const marketplace = mirrorDirectory(rootDir, INSTALLED_PATH, {
+      exclude: getMarketplaceExcludes(rootDir),
+    });
+    console.log(`Marketplace: ${marketplace.copied} copied, ${marketplace.metadata} metadata reconciled, ${marketplace.deleted} stale removed`);
+
+    const marketplacePluginPath = path.join(INSTALLED_PATH, 'plugin');
+    installPluginRuntime(marketplacePluginPath, 'marketplace plugin');
+    writeInstallMarker(marketplacePluginPath, version);
+
+    const cacheVersionPath = path.join(CACHE_BASE_PATH, version);
+    const pluginDir = path.join(rootDir, 'plugin');
+    console.log(`Syncing to cache folder (version ${version})...`);
+    const cache = mirrorDirectory(pluginDir, cacheVersionPath, {
+      exclude: getPluginRuntimeExcludes(pluginDir),
+    });
+    console.log(`Cache: ${cache.copied} copied, ${cache.metadata} metadata reconciled, ${cache.deleted} stale removed`);
+
+    installPluginRuntime(cacheVersionPath, `cache folder (version ${version})`);
+    writeInstallMarker(cacheVersionPath, version);
+
+    const registryResult = syncClaudePluginRegistry({
+      claudeConfigDir: CLAUDE_CONFIG_DIR,
+      version,
+    });
+    console.log(`Updated Claude plugin registry: claude-mem@thedotmack -> ${registryResult.cachePath}`);
+
+    if (installedMismatch && installedMismatch.installedVersion !== version) {
+      const installedCachePath = path.join(CACHE_BASE_PATH, installedMismatch.installedVersion);
+      console.log(`Mirroring to installed-version cache (${installedMismatch.installedVersion}) for hot reload...`);
+      const installedCache = mirrorDirectory(pluginDir, installedCachePath, {
+        exclude: getPluginRuntimeExcludes(pluginDir),
+      });
+      console.log(`Installed-version cache: ${installedCache.copied} copied, ${installedCache.metadata} metadata reconciled, ${installedCache.deleted} stale removed`);
+      writeInstallMarker(installedCachePath, version);
+    }
+
+    console.log('\x1b[32m%s\x1b[0m', 'Sync complete!');
+    triggerWorkerRestart();
+  } catch (error) {
+    console.error('\x1b[31m%s\x1b[0m', 'Sync failed:', error.message);
+    process.exit(1);
+  }
+}
+
+if (require.main === module) {
+  main();
+}
+
+module.exports = { getGitignoreExcludes, getMarketplaceExcludes, INSTALLED_PATH, CACHE_BASE_PATH };
