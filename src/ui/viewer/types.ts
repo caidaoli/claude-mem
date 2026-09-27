@@ -108,4 +108,6 @@ export interface Settings {
 
   // Logging
   CLAUDE_MEM_LOG_LEVEL?: string;  // 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' | 'SILENT'
+  /** File/env only — shown read-only. Not written via POST /api/settings. */
+  CLAUDE_CODE_PATH?: string;
 }

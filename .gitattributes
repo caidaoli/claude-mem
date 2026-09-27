@@ -1,6 +1,6 @@
 * text=auto eol=lf
 
-plugin/scripts/*.cjs eol=lf
+plugin/scripts/*.cjs eol=lf whitespace=-blank-at-eol
 plugin/scripts/*.js  eol=lf
 
 *.png  binary
