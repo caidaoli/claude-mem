@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, afterAll } from 'bun:test';
-import { existsSync, readFileSync, mkdirSync, mkdtempSync, writeFileSync, rmSync, statSync } from 'fs';
+import { existsSync, readFileSync, mkdirSync, mkdtempSync, writeFileSync, rmSync, statSync, realpathSync } from 'fs';
 import { homedir, tmpdir } from 'os';
 import path from 'path';
 import type { PidInfo } from '../../src/services/infrastructure/index.js';
@@ -44,6 +44,18 @@ const { paths } = await import('../../src/shared/paths.js');
 // module the code under test uses, so test and code can never diverge.
 const DATA_DIR = paths.dataDir();
 const PID_FILE = paths.workerPid();
+
+// The preload tripwire only runs when bun picks up the repo-root bunfig.toml.
+// `bun test` from any other cwd (e.g. inside tests/) skips it, DATA_DIR then
+// resolves to the user's real data dir, and the rmSync below wipes it. Refuse
+// to run anything unless the frozen DATA_DIR is a temp dir.
+const TEMP_ROOTS = [tmpdir(), realpathSync(tmpdir())].map(root => path.resolve(root) + path.sep);
+if (!TEMP_ROOTS.some(root => path.resolve(DATA_DIR).startsWith(root))) {
+  throw new Error(
+    `process-manager.test.ts refuses to run: DATA_DIR ${DATA_DIR} is not under ${tmpdir()}. ` +
+    'Run `bun test` from the repo root so tests/preload.ts isolates the data dir.',
+  );
+}
 
 describe('ProcessManager', () => {
   const REAL_DATA_DIR = path.join(homedir(), '.claude-mem');
