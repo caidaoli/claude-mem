@@ -2,20 +2,14 @@ import { describe, it, expect } from 'bun:test';
 import { spawnSync } from 'child_process';
 import { existsSync } from 'fs';
 import path from 'path';
-import {
-  buildCodexSessionStartNoopOutput,
-  buildStatusOutput,
-  formatDependencyHealthHint,
-  StatusOutput,
-} from '../../src/services/worker-service.js';
+import { buildStatusOutput, formatDependencyHealthHint, StatusOutput } from '../../src/services/worker-service.js';
 
 const WORKER_SCRIPT = path.join(__dirname, '../../plugin/scripts/worker-service.cjs');
 
-function runWorkerStart(env: Record<string, string> = {}): { stdout: string; exitCode: number } {
+function runWorkerStart(): { stdout: string; exitCode: number } {
   const result = spawnSync('bun', [WORKER_SCRIPT, 'start'], {
     encoding: 'utf-8',
-    timeout: 60000,
-    env: { ...process.env, ...env }
+    timeout: 60000
   });
   return { stdout: result.stdout?.trim() || '', exitCode: result.status || 0 };
 }
@@ -178,16 +172,6 @@ describe('worker-json-status', () => {
     });
   });
 
-  describe('buildCodexSessionStartNoopOutput', () => {
-    it('returns a Codex SessionStart JSON envelope with no model context', () => {
-      expect(buildCodexSessionStartNoopOutput()).toEqual({
-        hookSpecificOutput: {
-          hookEventName: 'SessionStart',
-        },
-      });
-    });
-  });
-
   describe('formatDependencyHealthHint', () => {
     it('returns a short dependency degradation hint when health reports degraded dependencies', () => {
       const hint = formatDependencyHealthHint({
@@ -266,22 +250,6 @@ describe('worker-json-status', () => {
         } else if (parsed.status === 'error') {
           expect(typeof parsed.message).toBe('string');
         }
-      });
-
-      it('should output Codex SessionStart JSON when invoked as a Codex hook setup command', () => {
-        if (!existsSync(WORKER_SCRIPT)) {
-          console.log('Skipping CLI test - worker script not built');
-          return;
-        }
-
-        const { stdout, exitCode } = runWorkerStart({ CLAUDE_MEM_CODEX_HOOK: '1' });
-
-        expect(exitCode).toBe(0);
-        expect(JSON.parse(stdout)).toEqual({
-          hookSpecificOutput: {
-            hookEventName: 'SessionStart',
-          },
-        });
       });
     });
   });

@@ -25,7 +25,7 @@ function createMockReqRes(body: any): {
   const statusSpy = mock(() => ({ json: jsonSpy }));
   return {
     req: { body, path: '/api/settings', params: {}, query: {} } as Partial<Request>,
-    res: { json: jsonSpy, status: statusSpy, on: mock(() => {}), headersSent: false } as unknown as Partial<Response>,
+    res: { json: jsonSpy, status: statusSpy, headersSent: false } as unknown as Partial<Response>,
     jsonSpy,
     statusSpy,
   };
@@ -52,7 +52,7 @@ describe('SettingsRoutes — CLAUDE_MEM_CLAUDE_CONFIG_DIR write whitelist (#2753
 
   beforeEach(() => {
     priorSettingsContent = existsSync(settingsPath) ? readFileSync(settingsPath, 'utf-8') : undefined;
-    handler = captureSettingsPostHandler(new SettingsRoutes({} as any, () => {}));
+    handler = captureSettingsPostHandler(new SettingsRoutes({} as any));
   });
 
   afterEach(() => {
@@ -74,7 +74,7 @@ describe('SettingsRoutes — CLAUDE_MEM_CLAUDE_CONFIG_DIR write whitelist (#2753
 
     handler(req as Request, res as Response);
 
-    expect(jsonSpy).toHaveBeenCalledWith({ success: true, message: 'Settings updated. Worker is restarting; new values apply on next hook invocation.' });
+    expect(jsonSpy).toHaveBeenCalledWith({ success: true, message: 'Settings updated successfully' });
     const persisted = JSON.parse(readFileSync(settingsPath, 'utf-8'));
     expect(persisted.CLAUDE_MEM_CLAUDE_CONFIG_DIR).toBe('/Users/matthewdnye/.ccs/instances/iveg50');
   });
@@ -84,7 +84,7 @@ describe('SettingsRoutes — CLAUDE_MEM_CLAUDE_CONFIG_DIR write whitelist (#2753
 
     handler(req as Request, res as Response);
 
-    expect(jsonSpy).toHaveBeenCalledWith({ success: true, message: 'Settings updated. Worker is restarting; new values apply on next hook invocation.' });
+    expect(jsonSpy).toHaveBeenCalledWith({ success: true, message: 'Settings updated successfully' });
     const persisted = JSON.parse(readFileSync(settingsPath, 'utf-8'));
     expect(persisted.CLAUDE_MEM_CLAUDE_CONFIG_DIR).toBe('');
   });

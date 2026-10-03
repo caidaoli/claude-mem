@@ -5,7 +5,8 @@ import type { DatabaseManager } from '../DatabaseManager.js';
 import type { SessionEventBroadcaster } from '../events/SessionEventBroadcaster.js';
 import { stripMemoryTags } from '../../../utils/tag-stripping.js';
 import { isProjectExcluded } from '../../../utils/project-filter.js';
-import { SettingsDefaultsManager, type SettingsDefaults } from '../../../shared/SettingsDefaultsManager.js';
+import { shouldSkipAgentObservation } from '../../../shared/should-skip-agent-observation.js';
+import { SettingsDefaultsManager } from '../../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH } from '../../../shared/paths.js';
 import { getProjectContext } from '../../../utils/project-name.js';
 import { normalizePlatformSource } from '../../../shared/platform-source.js';
@@ -22,14 +23,52 @@ interface IngestContext {
 
 let ctx: IngestContext | null = null;
 
-type IngestStringSetting = 'CLAUDE_MEM_EXCLUDED_PROJECTS' | 'CLAUDE_MEM_SKIP_TOOLS';
+// Kimi Code's bookkeeping tools (its todo list, background-task polling and
+// cron scheduling) carry no project knowledge. Several share a name with a
+// Claude Code tool, so they are skipped for Kimi sessions only, not through
+// the global CLAUDE_MEM_SKIP_TOOLS default.
+const KIMI_BOOKKEEPING_TOOLS = new Set([
+  'SetTodoList',
+  'TodoList',
+  'TaskList',
+  'TaskOutput',
+  'TaskStop',
+  'CronCreate',
+  'CronList',
+  'CronDelete',
+]);
 
-function getIngestStringSetting(settings: Partial<SettingsDefaults>, key: IngestStringSetting): string {
-  const value = settings[key];
-  if (typeof value === 'string') {
-    return value;
+// Compile each CLAUDE_MEM_SKIP_BASH_PATTERNS value once, not per observation:
+// ingestObservation runs on the hot path. A cached `null` marks a value that
+// failed to compile, so an invalid regex warns once instead of on every Bash
+// command until the setting is fixed.
+const bashPatternCache = new Map<string, RegExp | null>();
+
+function getBashSkipPattern(pattern: string): RegExp | null {
+  const cached = bashPatternCache.get(pattern);
+  if (cached !== undefined) return cached;
+
+  let compiled: RegExp | null = null;
+  try {
+    compiled = new RegExp(pattern);
+  } catch (error) {
+    logger.warn('INGEST', 'Invalid CLAUDE_MEM_SKIP_BASH_PATTERNS regex — ignoring', {
+      pattern,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
-  return SettingsDefaultsManager.get(key);
+  bashPatternCache.set(pattern, compiled);
+  return compiled;
+}
+
+// The shell command CLAUDE_MEM_SKIP_BASH_PATTERNS is matched against. Claude
+// Code sends `Bash` + `command` (Cursor and Windsurf adapters normalize to the
+// same shape); the Codex transcript watcher sends `exec_command` + `cmd`.
+function shellCommandOf(toolName: string, toolInput: unknown): string {
+  if (!toolInput || typeof toolInput !== 'object') return '';
+  const input = toolInput as { command?: unknown; cmd?: unknown };
+  const command = toolName === 'Bash' ? input.command : toolName === 'exec_command' ? input.cmd : undefined;
+  return typeof command === 'string' ? command : '';
 }
 
 export function setIngestContext(next: IngestContext): void {
@@ -39,7 +78,9 @@ export function setIngestContext(next: IngestContext): void {
 export function attachIngestGeneratorStarter(
   ensureGeneratorRunning: (sessionDbId: number, source: string) => void | Promise<void>,
 ): void {
-  requireContext().ensureGeneratorRunning = ensureGeneratorRunning;
+  const context = requireContext();
+  context.ensureGeneratorRunning = ensureGeneratorRunning;
+  context.sessionManager.setGeneratorStarter?.(ensureGeneratorRunning);
 }
 
 function requireContext(): IngestContext {
@@ -79,20 +120,19 @@ export async function ingestObservation(payload: ObservationPayload): Promise<In
 
   const platformSource = normalizePlatformSource(payload.platformSource);
   const cwd = typeof payload.cwd === 'string' ? payload.cwd : '';
-  const project = cwd.trim() ? getProjectContext(cwd).primary : '';
+  const projectContext = cwd.trim() ? getProjectContext(cwd) : null;
+  const project = projectContext?.primary ?? '';
 
-  const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH) as Partial<SettingsDefaults>;
-  const excludedProjects = getIngestStringSetting(settings, 'CLAUDE_MEM_EXCLUDED_PROJECTS');
-  const skipTools = getIngestStringSetting(settings, 'CLAUDE_MEM_SKIP_TOOLS');
+  const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
 
-  if (cwd && isProjectExcluded(cwd, excludedProjects)) {
+  if (cwd && isProjectExcluded(cwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS)) {
     return { ok: true, status: 'skipped', reason: 'project_excluded' };
   }
 
   // Skip low-value or meta tools per user settings.
   // Supports exact matches and wildcard prefix patterns ending with '*'
   // (e.g. 'mcp__*' skips every MCP tool). Fork commit 7ff1b4a5.
-  const skipPatterns = skipTools.split(',').map(t => t.trim()).filter(Boolean);
+  const skipPatterns = settings.CLAUDE_MEM_SKIP_TOOLS.split(',').map(t => t.trim()).filter(Boolean);
   const exactMatches = new Set<string>();
   const prefixPatterns: string[] = [];
   for (const pattern of skipPatterns) {
@@ -114,6 +154,29 @@ export async function ingestObservation(payload: ObservationPayload): Promise<In
     }
     return { ok: true, status: 'skipped', reason: 'tool_excluded' };
   }
+  if (platformSource === 'kimi' && KIMI_BOOKKEEPING_TOOLS.has(payload.toolName)) {
+    return { ok: true, status: 'skipped', reason: 'tool_excluded' };
+  }
+
+  const skipBashPatterns = settings.CLAUDE_MEM_SKIP_BASH_PATTERNS.trim();
+  const command = skipBashPatterns ? shellCommandOf(payload.toolName, payload.toolInput) : '';
+  if (command) {
+    // A bad user regex never throws here — getBashSkipPattern returns null, so the
+    // command is captured as if no pattern was set.
+    const pattern = getBashSkipPattern(skipBashPatterns);
+    if (pattern && pattern.test(command)) {
+      return { ok: true, status: 'skipped', reason: 'bash_pattern_excluded' };
+    }
+  }
+
+  // #2736 — defense in depth: the hook handler already filters subagent
+  // observations before this HTTP call, but skip again here so any non-hook
+  // caller (direct API, future ingestion paths) is filtered before the
+  // queueObservation → provider request below.
+  const agentSkip = shouldSkipAgentObservation(payload.agentId, payload.agentType, settings);
+  if (agentSkip.skip) {
+    return { ok: true, status: 'skipped', reason: agentSkip.reason };
+  }
 
   const fileOperationTools = new Set(['Edit', 'Write', 'Read', 'NotebookEdit']);
   if (fileOperationTools.has(payload.toolName) && payload.toolInput && typeof payload.toolInput === 'object') {
@@ -130,6 +193,7 @@ export async function ingestObservation(payload: ObservationPayload): Promise<In
   let promptNumber: number;
   try {
     sessionDbId = store.createSDKSession(payload.contentSessionId, project, '', undefined, platformSource);
+    if (cwd) store.setSessionCwd(sessionDbId, cwd, projectContext?.keySource);
     promptNumber = store.getPromptNumberFromUserPrompts(payload.contentSessionId, sessionDbId);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

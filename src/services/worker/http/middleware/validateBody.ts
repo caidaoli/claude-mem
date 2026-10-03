@@ -4,8 +4,7 @@ import type { ZodTypeAny } from 'zod';
 
 export const validateBody = <S extends ZodTypeAny>(schema: S): RequestHandler =>
   (req, res, next) => {
-    const body = req.body === undefined ? {} : req.body;
-    const result = schema.safeParse(body);
+    const result = schema.safeParse(req.body);
     if (!result.success) {
       res.status(400).json({
         error: 'ValidationError',

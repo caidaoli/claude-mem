@@ -3,6 +3,7 @@ export const API_ENDPOINTS = {
   SUMMARIES: '/api/summaries',
   PROMPTS: '/api/prompts',
   SETTINGS: '/api/settings',
+  SESSIONS: '/api/sessions',
   STREAM: '/stream',
   // Maintenance endpoints
   MAINTENANCE_CLEANUP_PREVIEW: '/api/maintenance/cleanup/preview',

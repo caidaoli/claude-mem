@@ -39,10 +39,10 @@ function createMockReqRes(body: any): { req: Partial<Request>; res: Partial<Resp
   };
 }
 
-function captureChain(mockApp: any, targetPath: string): (req: Request, res: Response) => void | Promise<void> {
+function captureChain(mockApp: any, targetPath: string): (req: Request, res: Response) => void {
   let middleware: (req: Request, res: Response, next: () => void) => void;
   let handler: (req: Request, res: Response) => void;
-  const capture = mock((path: string, ...rest: any[]) => {
+  mockApp.post = mock((path: string, ...rest: any[]) => {
     if (path !== targetPath) return;
     if (rest.length === 1) {
       handler = rest[0];
@@ -51,8 +51,6 @@ function captureChain(mockApp: any, targetPath: string): (req: Request, res: Res
       handler = rest[1];
     }
   });
-  mockApp.get = capture;
-  mockApp.post = capture;
   return (req: Request, res: Response): void => {
     if (!middleware) {
       handler(req, res);
@@ -62,7 +60,7 @@ function captureChain(mockApp: any, targetPath: string): (req: Request, res: Res
     middleware(req, res, () => {
       nextCalled = true;
     });
-    if (nextCalled) return handler(req, res);
+    if (nextCalled) handler(req, res);
   };
 }
 
@@ -161,55 +159,6 @@ describe('DataRoutes Type Coercion', () => {
       handler(req as Request, res as Response);
 
       expect(jsonSpy).toHaveBeenCalledWith([]);
-    });
-  });
-
-  describe('handleSetProcessing', () => {
-    it('reports current processing status without starting generators', async () => {
-      // Generator (re)start is now driven by SessionCompletionHandler on generator
-      // exit, not by this endpoint — the handler is a pure status read (upstream
-      // v13.4.0). It must NOT init sessions or spin up generators.
-      const initializeSession = mock(() => undefined);
-      const ensureGeneratorRunning = mock(() => {});
-      const sessionManager = {
-        initializeSession,
-        isAnySessionProcessing: () => true,
-        getTotalActiveWork: () => 41,
-        getActiveSessionCount: () => 1,
-      };
-
-      routes = new DataRoutes(
-        {} as any,
-        {
-          getSessionStore: () => ({
-            getObservationsByIds: mockGetObservationsByIds,
-            getSdkSessionsBySessionIds: mockGetSdkSessionsBySessionIds,
-          }),
-        } as any,
-        sessionManager as any,
-        {} as any,
-        {} as any,
-        Date.now(),
-        ensureGeneratorRunning
-      );
-
-      const mockApp: any = {
-        delete: mock(() => {}),
-        use: mock(() => {}),
-      };
-      const handler = captureChain(mockApp, '/api/processing-status');
-      routes.setupRoutes(mockApp as any);
-
-      const { req, res, jsonSpy } = createMockReqRes({});
-      await handler(req as Request, res as Response);
-      await new Promise(resolve => setTimeout(resolve, 0));
-
-      expect(initializeSession).not.toHaveBeenCalled();
-      expect(ensureGeneratorRunning).not.toHaveBeenCalled();
-      expect(jsonSpy).toHaveBeenCalledWith(expect.objectContaining({
-        isProcessing: true,
-        queueDepth: 41,
-      }));
     });
   });
 

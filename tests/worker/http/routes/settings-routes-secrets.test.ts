@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
 import type { Request, Response } from 'express';
-import { existsSync, readFileSync, writeFileSync, rmSync, mkdirSync } from 'fs';
-import { dirname } from 'path';
+import { existsSync, readFileSync, writeFileSync, rmSync } from 'fs';
 import { SettingsRoutes } from '../../../../src/services/worker/http/routes/SettingsRoutes.js';
 import { paths } from '../../../../src/shared/paths.js';
 
@@ -18,7 +17,7 @@ function createMockRes(): {
   const jsonSpy = mock(() => {});
   const statusSpy = mock(() => ({ json: jsonSpy }));
   return {
-    res: { json: jsonSpy, status: statusSpy, on: mock(() => {}), headersSent: false } as unknown as Partial<Response>,
+    res: { json: jsonSpy, status: statusSpy, headersSent: false } as unknown as Partial<Response>,
     jsonSpy,
     statusSpy,
   };
@@ -54,6 +53,8 @@ const SECRET_ENV_KEYS = [
   'CLAUDE_MEM_TV_TOKEN',
   'CLAUDE_MEM_PRO_MEMORY_KEY',
   'CLAUDE_MEM_REDIS_URL',
+  'CLAUDE_MEM_GROK_BOT_WEBHOOK_SECRET',
+  'CLAUDE_MEM_GROK_BOT_WEBHOOK_URL',
 ];
 
 describe('SettingsRoutes — credential redaction and host bind (#3861)', () => {
@@ -63,14 +64,13 @@ describe('SettingsRoutes — credential redaction and host bind (#3861)', () => 
   let handlers: ReturnType<typeof captureHandlers>;
 
   beforeEach(() => {
-    mkdirSync(dirname(settingsPath), { recursive: true });
     priorSettingsContent = existsSync(settingsPath) ? readFileSync(settingsPath, 'utf-8') : undefined;
     priorEnv = {};
     for (const key of SECRET_ENV_KEYS) {
       priorEnv[key] = process.env[key];
       delete process.env[key];
     }
-    handlers = captureHandlers(new SettingsRoutes({} as any, () => {}));
+    handlers = captureHandlers(new SettingsRoutes({} as any));
   });
 
   afterEach(() => {
@@ -100,6 +100,8 @@ describe('SettingsRoutes — credential redaction and host bind (#3861)', () => 
       CLAUDE_MEM_CLOUD_SYNC_TOKEN: 'sync-token-wxyz',
       CLAUDE_MEM_TV_TOKEN: 'tv-token-9999',
       CLAUDE_MEM_PRO_MEMORY_KEY: 'pro-memory-key-aaaa',
+      CLAUDE_MEM_GROK_BOT_WEBHOOK_SECRET: 'brainbeat-secret-bbbb',
+      CLAUDE_MEM_GROK_BOT_WEBHOOK_URL: 'https://bot.example/hook?token=cccc',
     };
     writeFileSync(settingsPath, JSON.stringify({
       ...secrets,
@@ -142,7 +144,7 @@ describe('SettingsRoutes — credential redaction and host bind (#3861)', () => 
       query: {},
     } as Request, postRes as Response);
 
-    expect(postSpy).toHaveBeenCalledWith({ success: true, message: 'Settings updated. Worker is restarting; new values apply on next hook invocation.' });
+    expect(postSpy).toHaveBeenCalledWith({ success: true, message: 'Settings updated successfully' });
     const persisted = JSON.parse(readFileSync(settingsPath, 'utf-8'));
     expect(persisted.CLAUDE_MEM_GEMINI_API_KEY).toBe('keep-this-real-key');
   });
@@ -160,7 +162,7 @@ describe('SettingsRoutes — credential redaction and host bind (#3861)', () => 
       query: {},
     } as Request, res as Response);
 
-    expect(jsonSpy).toHaveBeenCalledWith({ success: true, message: 'Settings updated. Worker is restarting; new values apply on next hook invocation.' });
+    expect(jsonSpy).toHaveBeenCalledWith({ success: true, message: 'Settings updated successfully' });
     const persisted = JSON.parse(readFileSync(settingsPath, 'utf-8'));
     expect(persisted.CLAUDE_MEM_GEMINI_API_KEY).toBe('*new-gemini-secret');
   });
@@ -188,7 +190,7 @@ describe('SettingsRoutes — credential redaction and host bind (#3861)', () => 
         query: {},
       } as Request, res as Response);
       expect(statusSpy).not.toHaveBeenCalled();
-      expect(jsonSpy).toHaveBeenCalledWith({ success: true, message: 'Settings updated. Worker is restarting; new values apply on next hook invocation.' });
+      expect(jsonSpy).toHaveBeenCalledWith({ success: true, message: 'Settings updated successfully' });
     }
   });
 });
