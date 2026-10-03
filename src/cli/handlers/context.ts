@@ -17,7 +17,7 @@ import { loadFromFileOnce } from '../../shared/hook-settings.js';
 import { shouldTrackProject } from '../../shared/should-track-project.js';
 import { readStaleMarker } from '../../shared/oauth-token.js';
 import { normalizePlatformSource } from '../../shared/platform-source.js';
-import { proTrialLine, proTrialUrl, PLAN_USAGE_GAIN_PERCENT } from '../../shared/pro-promo.js';
+import { proTrialUrl, PLAN_USAGE_GAIN_PERCENT } from '../../shared/pro-promo.js';
 import {
   hasShownProFallbackNotice,
   isCmemGatewayUrl,
@@ -141,7 +141,7 @@ export const contextHandler: EventHandler = {
       : null;
 
     const systemMessage = showTerminalOutput && displayContent
-      ? `${displayContent}\n\nView Observations Live @ http://localhost:${port}\n${proTrialLine('session-start')}${trialDaysLine ? `\n${trialDaysLine}` : ''}`
+      ? `${displayContent}\n\nView Observations Live @ http://localhost:${port}${trialDaysLine ? `\n${trialDaysLine}` : ''}`
       : undefined;
 
     return {
