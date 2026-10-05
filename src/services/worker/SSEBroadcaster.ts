@@ -17,10 +17,15 @@ export class SSEBroadcaster {
       this.startHeartbeat();
     }
 
-    // Setup cleanup on disconnect
-    res.on('close', () => {
+    const socket = res.socket;
+    const onClose = () => {
+      res.off('close', onClose);
+      socket?.off('close', onClose);
       this.removeClient(res);
-    });
+    };
+    res.on('close', onClose);
+    // Bun's node:http emits socket close when a streaming client disconnects.
+    socket?.on('close', onClose);
 
     this.sendToClient(res, { type: 'connected', timestamp: Date.now() });
   }

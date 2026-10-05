@@ -49,6 +49,7 @@ export const en = {
     learned: 'Learned',
     completed: 'Completed',
     nextSteps: 'Next Steps',
+    notes: 'Notes',
     session: 'Session',
   },
 

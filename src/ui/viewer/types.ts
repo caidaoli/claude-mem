@@ -30,6 +30,7 @@ export interface Summary {
   learned?: string;
   completed?: string;
   next_steps?: string;
+  notes?: string | null;
   created_at_epoch: number;
 }
 

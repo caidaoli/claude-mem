@@ -51,6 +51,7 @@ export const zhCN: TranslationKeys = {
     learned: '已学习',
     completed: '已完成',
     nextSteps: '下一步',
+    notes: '备注',
     session: '会话',
   },
 

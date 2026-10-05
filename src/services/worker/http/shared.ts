@@ -147,18 +147,20 @@ export async function ingestObservation(payload: ObservationPayload, handoff: In
     return { ok: true, status: 'skipped', reason: 'project_excluded' };
   }
 
-  // Skip low-value or meta tools per user settings.
-  // Supports exact matches and wildcard prefix patterns ending with '*'
-  // (e.g. 'mcp__*' skips every MCP tool). Fork commit 7ff1b4a5.
-  const skipPatterns = settings.CLAUDE_MEM_SKIP_TOOLS.split(',').map(t => t.trim()).filter(Boolean);
+  // Case-insensitive, because hosts spell the same tool differently and
+  // adapters rename some (OpenCode's `read` arrives as `Read`). A user's
+  // `read` or `Read` entry keeps matching either way. Entries ending with '*'
+  // are prefix patterns (e.g. 'mcp__*' skips every MCP tool). Fork commit 7ff1b4a5.
+  const skipPatterns = settings.CLAUDE_MEM_SKIP_TOOLS.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
   const exactMatches = new Set<string>();
   const prefixPatterns: string[] = [];
   for (const pattern of skipPatterns) {
     if (pattern.endsWith('*')) prefixPatterns.push(pattern.slice(0, -1));
     else exactMatches.add(pattern);
   }
-  if (exactMatches.has(payload.toolName) ||
-      prefixPatterns.some(prefix => payload.toolName.startsWith(prefix))) {
+  const toolName = payload.toolName.toLowerCase();
+  if (exactMatches.has(toolName) ||
+      prefixPatterns.some(prefix => toolName.startsWith(prefix))) {
     if (payload.toolName === 'Skill') {
       const { skill_id, skill_source } = classifySkillId(
         skillNameFromToolInput(payload.toolName, payload.toolInput),
@@ -387,7 +389,7 @@ export async function ingestSummarize(
   const cleanedLastAssistantMessage = payload.lastAssistantMessage
     ? stripMemoryTags(String(payload.lastAssistantMessage))
     : payload.lastAssistantMessage;
-  sessionManager.queueSummarize(sessionDbId, cleanedLastAssistantMessage);
+  sessionManager.queueSummarize(sessionDbId, cleanedLastAssistantMessage, promptNumber);
   // Enqueued: the hand-off point. Synchronously, before the generator kick.
   handoff.markHandedOff?.();
 

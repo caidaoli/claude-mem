@@ -192,6 +192,12 @@ export interface SettingsDefaults {
   CLAUDE_MEM_CUSTOM_MAX_TOKENS: string;   // Max tokens (0 = disabled)
   CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT: string;  // First token timeout in seconds (0 = disabled)
   CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT: string;        // Total request timeout in seconds (0 = disabled)
+  // Quota guard: per-window utilization (0–1) at which a subscription observer stops (#4230).
+  CLAUDE_MEM_QUOTA_THRESHOLD_FIVE_HOUR: string;
+  CLAUDE_MEM_QUOTA_THRESHOLD_SEVEN_DAY: string;
+  CLAUDE_MEM_QUOTA_THRESHOLD_SEVEN_DAY_OPUS: string;
+  CLAUDE_MEM_QUOTA_THRESHOLD_SEVEN_DAY_SONNET: string;
+  CLAUDE_MEM_QUOTA_THRESHOLD_OVERAGE: string;
   CLAUDE_MEM_DATA_DIR: string;
   CLAUDE_MEM_LOG_LEVEL: string;
   CLAUDE_MEM_PYTHON_VERSION: string;
@@ -424,6 +430,11 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_CUSTOM_MAX_TOKENS: '0',  // Disabled by default
     CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT: '0',  // Disabled by default (seconds)
     CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT: '0',  // Disabled by default (seconds)
+    CLAUDE_MEM_QUOTA_THRESHOLD_FIVE_HOUR: '0.95',          // Quota guard (#4230): subscription observer stops at this utilization of the window. A provider rejection always stops it
+    CLAUDE_MEM_QUOTA_THRESHOLD_SEVEN_DAY: '0.93',
+    CLAUDE_MEM_QUOTA_THRESHOLD_SEVEN_DAY_OPUS: '0.93',
+    CLAUDE_MEM_QUOTA_THRESHOLD_SEVEN_DAY_SONNET: '0.92',
+    CLAUDE_MEM_QUOTA_THRESHOLD_OVERAGE: '0.95',
     CLAUDE_MEM_DATA_DIR: join(homedir(), '.claude-mem'),
     CLAUDE_MEM_LOG_LEVEL: 'INFO',
     CLAUDE_MEM_PYTHON_VERSION: '3.13',

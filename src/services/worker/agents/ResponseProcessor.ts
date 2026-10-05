@@ -108,8 +108,7 @@ function normalizePathValue(value: unknown): string | null {
   if (typeof value !== 'string') {
     return null;
   }
-  const trimmed = value.trim();
-  return trimmed ? trimmed : null;
+  return value.trim() ? value : null;
 }
 
 function maybeParseObject(value: unknown): Record<string, unknown> | null {
@@ -198,9 +197,12 @@ function extractPatchPaths(toolInput: unknown): string[] {
   }
 
   const patches: string[] = [];
-  const patch = normalizePathValue(input.patch);
-  if (patch) {
-    patches.push(patch);
+  // Codex's apply_patch hook carries the raw patch in tool_input.command.
+  for (const field of ['patch', 'command']) {
+    const patch = normalizePathValue(input[field]);
+    if (patch) {
+      patches.push(patch);
+    }
   }
 
   const edits = input.edits;
@@ -759,7 +761,7 @@ export async function processAgentResponse(
         contentSessionId: session.contentSessionId,
         toolUseIds: claimedToolUseIds,
         observationId: linkObservationId,
-        memorySessionId: session.memorySessionId,
+        memorySessionId: registeredMemorySessionId,
       });
       logger.debug('DB', `TOOL_USES_LINKED | sessionDbId=${session.sessionDbId} | rows=${linked} | observationId=${linkObservationId}`, {
         sessionId: session.sessionDbId
@@ -772,15 +774,17 @@ export async function processAgentResponse(
     }
   }
 
-  // A completed store proves the observer pipeline works end-to-end — clear
+  // A store that wrote memory proves the observer pipeline works end-to-end — clear
   // the failure streak in the observer-health ledger, and release any quota
   // breaker so a re-probe that succeeds restores full speed at once rather
   // than waiting out the remaining cooldown (#3634). Codex clears its breaker
   // in query using the admitted cooldown identity: storing an earlier response
   // here must not erase a newer failure from a concurrent pool slot.
-  recordObserverSuccess();
-  if (session.currentProvider && session.currentProvider !== 'codex') {
-    clearQuotaCooldown(session.currentProvider);
+  if (result.observationIds.length > 0 || result.summaryId !== null) {
+    recordObserverSuccess();
+    if (session.currentProvider && session.currentProvider !== 'codex') {
+      clearQuotaCooldown(session.currentProvider);
+    }
   }
 
   // Telemetry: counts, enums, and REAL usage only (lastUsage is never an
@@ -858,14 +862,14 @@ export async function processAgentResponse(
     observations: fresh.observations,
     observationIds: fresh.observationIds,
     project: context.project,
-    memorySessionId: session.memorySessionId,
+    memorySessionId: registeredMemorySessionId,
   });
 
   void notifyGrokBotAwareness({
     observations: fresh.observations,
     observationIds: fresh.observationIds,
     project: context.project,
-    memorySessionId: session.memorySessionId,
+    memorySessionId: registeredMemorySessionId,
     agentId: context.pendingAgentId,
   });
 
@@ -889,6 +893,7 @@ export async function processAgentResponse(
     dbManager,
     worker,
     agentName,
+    registeredMemorySessionId,
     projectRoot
   );
 
@@ -900,7 +905,8 @@ export async function processAgentResponse(
     context,
     dbManager,
     worker,
-    agentName
+    agentName,
+    registeredMemorySessionId
   );
 
   if (result.summaryId) {
@@ -1009,9 +1015,9 @@ async function syncAndBroadcastObservations(
   dbManager: DatabaseManager,
   worker: WorkerRef | undefined,
   agentName: string,
+  memorySessionId: string,
   projectRoot?: string
 ): Promise<void> {
-  const memorySessionId = session.memorySessionId;
   if (!memorySessionId) {
     return;
   }
@@ -1068,7 +1074,7 @@ async function syncAndBroadcastObservations(
 
     broadcastObservation(worker, {
       id: obsId,
-      memory_session_id: session.memorySessionId,
+      memory_session_id: memorySessionId,
       session_id: session.contentSessionId,
       content_session_id: session.contentSessionId,
       platform_source: session.platformSource,
@@ -1119,12 +1125,12 @@ async function syncAndBroadcastSummary(
   context: ResponseContext,
   dbManager: DatabaseManager,
   worker: WorkerRef | undefined,
-  agentName: string
+  agentName: string,
+  memorySessionId: string
 ): Promise<void> {
   if (!summaryForStore || !result.summaryId) {
     return;
   }
-  const memorySessionId = session.memorySessionId;
   if (!memorySessionId) {
     return;
   }

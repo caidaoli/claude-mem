@@ -528,10 +528,6 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
     originalTimestamp: number | null,
     lastCwd: string | undefined
   ): Promise<void> {
-    if (message.prompt_number !== undefined) {
-      session.lastPromptNumber = message.prompt_number;
-    }
-
     if (!session.memorySessionId) {
       throw new Error('Cannot process observations: memorySessionId not yet captured. This session may need to be reinitialized.');
     }
@@ -554,6 +550,11 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
     // prompt is built, so the observation carries a summary of the whole field
     // rather than a head/tail slice with the middle cut out (#3800). The field
     // cap scales with the model's window (#3625).
+    // A newer user prompt may arrive while the payload is being condensed.
+    const responseContext = {
+      ...snapshotResponseContext(session),
+      promptNumber: message.prompt_number ?? session.lastPromptNumber,
+    };
     const fieldMaxChars = observationFieldMaxChars(session.observerContextWindowTokens);
     const optimized = await optimizeObservationFields(
       { toolInput: message.tool_input, toolOutput: message.tool_response },
@@ -575,7 +576,6 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
       created_at_epoch: originalTimestamp ?? Date.now(),
       cwd: message.cwd
     }, fieldMaxChars, takeObserverSchemaReminder(session));
-    const responseContext = snapshotResponseContext(session);
 
     const turnPrompt = this.observationTurnPrompt(session, message, obsPrompt);
     if (this.rejectAbortedObservation) session.abortController.signal.throwIfAborted();
@@ -619,7 +619,7 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
 
   private async processSummaryMessage(
     session: ActiveSession,
-    message: { last_assistant_message?: string },
+    message: { last_assistant_message?: string; prompt_number?: number },
     worker: WorkerRef | undefined,
     config: TConfig,
     mode: ModeConfig,
@@ -629,7 +629,6 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
     if (!session.memorySessionId) {
       throw new Error('Cannot process summary: memorySessionId not yet captured. This session may need to be reinitialized.');
     }
-
     const summaryPrompt = buildSummaryPrompt({
       id: session.sessionDbId,
       memory_session_id: session.memorySessionId,
@@ -637,7 +636,10 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
       user_prompt: session.userPrompt,
       last_assistant_message: message.last_assistant_message || ''
     }, mode);
-    const responseContext = snapshotResponseContext(session);
+    const responseContext = {
+      ...snapshotResponseContext(session),
+      promptNumber: message.prompt_number ?? session.lastPromptNumber,
+    };
 
     session.conversationHistory.push({ role: 'user', content: summaryPrompt });
 
