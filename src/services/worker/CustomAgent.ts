@@ -330,7 +330,7 @@ function isGemini25FlashModel(model: string): boolean {
 
 /**
  * Build Gemini generation config with optional JSON mode
- * For Gemini 3 models, thinkingLevel: 'minimal' speeds up responses.
+ * For Gemini 3 models, thinkingLevel: 'low' speeds up responses ('minimal' is rejected by 3.7+ Flash and Pro).
  */
 function buildGeminiGenerationConfig(model: string, jsonMode: boolean = false): Record<string, unknown> {
   const config: Record<string, unknown> = {
@@ -342,10 +342,10 @@ function buildGeminiGenerationConfig(model: string, jsonMode: boolean = false): 
     config.responseMimeType = 'application/json';
   }
 
-  // Minimal thinking speeds up Gemini 3 responses
+  // Lowest level supported by every Gemini 3.x model
   if (isGemini3Model(model)) {
     config.thinkingConfig = {
-      thinkingLevel: 'minimal',
+      thinkingLevel: 'low',
     };
   } else if (isGemini25FlashModel(model)) {
     config.thinkingConfig = {
@@ -1007,7 +1007,7 @@ function buildOpenAIJsonRequestBody(
 
   if (isGemini3Model(model)) {
     body.thinkingConfig = {
-      thinkingLevel: 'minimal',
+      thinkingLevel: 'low',
     };
   }
 

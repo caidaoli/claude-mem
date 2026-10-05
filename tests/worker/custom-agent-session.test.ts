@@ -399,7 +399,7 @@ describe('CustomAgent session behavior', () => {
     expect(requestBody.thinking).toEqual({ type: 'disabled' });
   });
 
-  it('uses minimal thinking for gemini-3 models in OpenAI requests', async () => {
+  it('uses low thinking for gemini-3 models in OpenAI requests', async () => {
     loadFromFileSpy.mockImplementation(() => ({
       ...SettingsDefaultsManager.getAllDefaults(),
       CLAUDE_MEM_CUSTOM_API_URL: 'https://custom.example.com',
@@ -450,10 +450,10 @@ describe('CustomAgent session behavior', () => {
     await agent.startSession(createSession());
 
     const requestBody = JSON.parse((global.fetch as any).mock.calls[0][1].body as string);
-    expect(requestBody.thinkingConfig).toEqual({ thinkingLevel: 'minimal' });
+    expect(requestBody.thinkingConfig).toEqual({ thinkingLevel: 'low' });
   });
 
-  it('uses minimal thinking when Gemini protocol normalizes models-prefixed gemini-3.5 models', async () => {
+  it('uses low thinking when Gemini protocol normalizes models-prefixed gemini-3.5 models', async () => {
     loadFromFileSpy.mockImplementation(() => ({
       ...SettingsDefaultsManager.getAllDefaults(),
       CLAUDE_MEM_CUSTOM_API_URL: 'https://custom.example.com',
@@ -506,7 +506,7 @@ describe('CustomAgent session behavior', () => {
     const call = (global.fetch as any).mock.calls[0];
     expect(call[0]).toContain('/v1beta/models/gemini-3.5-flash:generateContent');
     const requestBody = JSON.parse(call[1].body as string);
-    expect(requestBody.generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'minimal' });
+    expect(requestBody.generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'low' });
   });
 
   it('keeps Gemini non-stream text when its part also carries a thought signature', async () => {
