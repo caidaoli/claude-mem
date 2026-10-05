@@ -92,21 +92,6 @@ describe('SessionStore.storeObservations', () => {
     expect(result.summaryId).not.toBeNull();
   });
 
-  it('dedupes identical summaries when storing observation batches', () => {
-    const mem = session('mem-summary-dedup-batch');
-    const input = summary({ request: 'same request' });
-
-    const first = store.storeObservations(mem, 'project', [], input, 1, 0, 1700000000000);
-    const second = store.storeObservations(mem, 'project', [], input, 1, 0, 1700000000100);
-
-    expect(second.summaryId).toBe(first.summaryId);
-
-    const count = store.db.prepare(
-      'SELECT COUNT(*) AS n FROM session_summaries WHERE memory_session_id = ?'
-    ).get(mem) as { n: number };
-    expect(count.n).toBe(1);
-  });
-
   it('applies promptNumber to every observation in the batch', () => {
     store.storeObservations(
       session('mem-prompt'),

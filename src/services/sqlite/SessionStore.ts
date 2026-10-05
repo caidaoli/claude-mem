@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { emitContextInvalidation } from '../../shared/context-invalidation.js';
 import { Database, type SQLQueryBindings, type Statement } from 'bun:sqlite';
 import { randomUUID } from 'crypto';
 import { DATA_DIR, DB_PATH, ensureDir, OBSERVER_SESSIONS_PROJECT, USER_SETTINGS_PATH } from '../../shared/paths.js';
@@ -48,6 +48,7 @@ import { isSubagentEvent } from '../../shared/subagent-predicate.js';
 import { findRecentDuplicateUserPrompt as findRecentDuplicateUserPromptRecord } from './prompts/get.js';
 import { normalizeStoredPromptText, MEDIA_PROMPT_PLACEHOLDER } from './prompt-storage.js';
 import { applySqliteConnectionPragmas } from './connection.js';
+import { streamRows } from './stream-rows.js';
 import { OBSERVATIONS_FTS_TRIGGERS_SQL, SESSION_SUMMARIES_FTS_TRIGGERS_SQL } from './SessionSearch.js';
 import {
   assertCanonicalDecimal,
@@ -60,41 +61,6 @@ import {
 // a slow request while allowing a later SessionEnd delivery to recover work
 // abandoned by a process crash between claiming and marking the row sent.
 export const TELEGRAM_WRAPUP_CLAIM_STALE_AFTER_MS = 5 * 60_000;
-
-let warnedMissingIterate = false;
-
-/**
- * Iterate a prepared statement's rows, preferring the streaming `.iterate()`
- * added in Bun v1.1.31 and falling back to the materializing `.all()` on
- * older runtimes.
- *
- * package.json declares `engines.bun >= 1.1.31`, but engines is advisory —
- * nothing enforces it when the plugin is installed through the Claude Code
- * marketplace. On an older Bun the bare `.iterate()` call threw
- * "…iterate is not a function" from inside schema migration v46, which runs
- * during background init. That rejection left the worker permanently
- * `initialized:false` while still serving 200 on /api/health, so every hook
- * silently skipped until the failure counter began blocking them outright.
- *
- * Falling back keeps the migration correct on old runtimes (it only costs
- * peak memory, and this scan runs once per install) and the one-time warning
- * names the real cause instead of a cryptic TypeError.
- */
-function streamRows(statement: {
-  iterate?: () => Iterable<unknown>;
-  all: () => unknown[];
-}): Iterable<unknown> {
-  if (typeof statement.iterate === 'function') return statement.iterate();
-  if (!warnedMissingIterate) {
-    warnedMissingIterate = true;
-    logger.warn('DB', 'bun:sqlite lacks Statement.iterate(); falling back to .all()', {
-      bunVersion: typeof Bun !== 'undefined' ? Bun.version : 'unknown',
-      requiredBunVersion: '>=1.1.31',
-      impact: 'migration rows are materialized in memory; upgrade Bun to restore streaming',
-    });
-  }
-  return statement.all();
-}
 
 /**
  * Coerce a value to something bun:sqlite can bind. The cloud/export shape
@@ -192,35 +158,6 @@ interface SdkSessionDetailRow {
   observed_billing: string | null;
 }
 
-function computeSummaryContentHash(
-  memorySessionId: string,
-  summary: {
-    request: string | null;
-    investigated: string | null;
-    learned: string | null;
-    completed: string | null;
-    next_steps: string | null;
-    files_read?: string | string[] | null;
-    files_edited?: string | string[] | null;
-    notes: string | null;
-  }
-): string {
-  return createHash('sha256')
-    .update([
-      memorySessionId || '',
-      summary.request || '',
-      summary.investigated || '',
-      summary.learned || '',
-      summary.completed || '',
-      summary.next_steps || '',
-      Array.isArray(summary.files_read) ? JSON.stringify(summary.files_read) : summary.files_read || '',
-      Array.isArray(summary.files_edited) ? JSON.stringify(summary.files_edited) : summary.files_edited || '',
-      summary.notes || '',
-    ].join('\x00'))
-    .digest('hex')
-    .slice(0, 16);
-}
-
 export interface SessionCatalogRow {
   content_session_id: string;
   project: string;
@@ -292,7 +229,6 @@ export class SessionStore {
     this.ensureSyncRevisionTextAffinity();
     this.initializeSyncHubLaunchBaseline();
     this.normalizeConceptTags();
-    this.ensureSessionSummaryContentHash();
     this.ensureSDKSessionsObservedColumns();
     this.ensureToolUsesTable();
     this.ensureTelegramWrapupsTable();
@@ -305,6 +241,7 @@ export class SessionStore {
     this.ensureSessionProjectKeySourceColumn();
     this.requeuePromptsDeadLetteredForSize();
     this.ensureWorkStateTable();
+    this.ensureHookSpoolConsumedTable();
   }
 
   private getIndexColumns(indexName: string): string[] {
@@ -418,9 +355,9 @@ export class SessionStore {
 
   private dropWorkerPidColumn(): void {
     const applied = this.db.prepare('SELECT version FROM schema_versions WHERE version = ?').get(32) as SchemaVersion | undefined;
+
     const cols = this.db.query('PRAGMA table_info(pending_messages)').all() as TableColumnInfo[];
     const hasColumn = cols.some(c => c.name === 'worker_pid');
-
     if (applied && !hasColumn) return;
 
     if (hasColumn) {
@@ -681,91 +618,6 @@ export class SessionStore {
     `);
     if (!applied) {
       this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(35, new Date().toISOString());
-    }
-  }
-
-  private ensureSessionSummaryContentHash(): void {
-    const migrationVersion = 53;
-    const applied = this.db.prepare('SELECT version FROM schema_versions WHERE version = ?').get(migrationVersion) as SchemaVersion | undefined;
-    const tables = this.db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='session_summaries'").all() as TableNameRow[];
-    if (tables.length === 0) {
-      this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(migrationVersion, new Date().toISOString());
-      return;
-    }
-
-    const cols = this.db.query('PRAGMA table_info(session_summaries)').all() as TableColumnInfo[];
-    const existingCols = new Set(cols.map(col => col.name));
-    const hasColumn = cols.some(c => c.name === 'content_hash');
-    const hasExpectedIndex = this.hasUniqueIndexOnColumns('session_summaries', ['memory_session_id', 'content_hash']);
-    if (hasColumn && hasExpectedIndex) {
-      if (!applied) {
-        this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(migrationVersion, new Date().toISOString());
-      }
-      return;
-    }
-
-    this.db.run('BEGIN TRANSACTION');
-    try {
-      if (!hasColumn) {
-        this.db.run('ALTER TABLE session_summaries ADD COLUMN content_hash TEXT');
-      }
-
-      const hashFields = ['request', 'investigated', 'learned', 'completed', 'next_steps', 'files_read', 'files_edited', 'notes'];
-      const hashProjection = hashFields.map(field => existingCols.has(field) ? field : `NULL AS ${field}`).join(', ');
-      const rows = this.db.prepare(`
-        SELECT id, memory_session_id, ${hashProjection}
-        FROM session_summaries
-        WHERE content_hash IS NULL OR content_hash = ''
-      `).all() as Array<{
-        id: number;
-        memory_session_id: string;
-        request: string | null;
-        investigated: string | null;
-        learned: string | null;
-        completed: string | null;
-        next_steps: string | null;
-        files_read: string | null;
-        files_edited: string | null;
-        notes: string | null;
-      }>;
-      const updateHash = this.db.prepare('UPDATE session_summaries SET content_hash = ? WHERE id = ?');
-      for (const row of rows) {
-        updateHash.run(computeSummaryContentHash(row.memory_session_id, row), row.id);
-      }
-
-      this.db.run(`
-        DELETE FROM session_summaries
-         WHERE id IN (
-           SELECT id
-             FROM (
-               SELECT id,
-                      ROW_NUMBER() OVER (
-                        PARTITION BY memory_session_id, content_hash
-                        ORDER BY created_at_epoch DESC, id DESC
-                      ) AS duplicate_rank
-                 FROM session_summaries
-             )
-            WHERE duplicate_rank > 1
-         )
-      `);
-
-      this.db.run(`
-        CREATE UNIQUE INDEX IF NOT EXISTS ux_session_summaries_session_hash
-        ON session_summaries(memory_session_id, content_hash)
-      `);
-
-      const hasSummariesFTS = (this.db.prepare(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='session_summaries_fts'"
-      ).all() as { name: string }[]).length > 0;
-      if (hasSummariesFTS) {
-        this.db.run("INSERT INTO session_summaries_fts(session_summaries_fts) VALUES('rebuild')");
-      }
-
-      this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(migrationVersion, new Date().toISOString());
-      this.db.run('COMMIT');
-    } catch (error) {
-      this.db.run('ROLLBACK');
-      throw error;
     }
   }
 
@@ -1303,7 +1155,7 @@ export class SessionStore {
 
       CREATE TABLE IF NOT EXISTS session_summaries (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        memory_session_id TEXT NOT NULL,
+        memory_session_id TEXT UNIQUE NOT NULL,
         project TEXT NOT NULL,
         request TEXT,
         investigated TEXT,
@@ -1313,7 +1165,6 @@ export class SessionStore {
         files_read TEXT,
         files_edited TEXT,
         notes TEXT,
-        content_hash TEXT,
         created_at TEXT NOT NULL,
         created_at_epoch INTEGER NOT NULL,
         FOREIGN KEY(memory_session_id) REFERENCES sdk_sessions(memory_session_id) ON DELETE CASCADE ON UPDATE CASCADE
@@ -1452,13 +1303,6 @@ export class SessionStore {
   }
 
   private removeSessionSummariesUniqueConstraint(): void {
-    // v7 是一次性历史迁移：仅用于把老库 session_summaries.memory_session_id 上的单列 UNIQUE 约束移除。
-    // 一旦应用过就必须彻底闭嘴——绝不能再基于运行时索引探测去重建表。否则会把后续迁移新增的列
-    // （v11 discovery_tokens、v36 content_hash 等）连同数据一起丢掉，导致写入路径 INSERT 报
-    // "no such column" 而无法再生成 summary。
-    const applied = this.db.prepare('SELECT version FROM schema_versions WHERE version = ?').get(7) as SchemaVersion | undefined;
-    if (applied) return;
-
     const summariesIndexes = this.db.query('PRAGMA index_list(session_summaries)').all() as IndexInfo[];
     // Only table-level UNIQUE constraints (PRAGMA origin 'u' — the v7 target,
     // `memory_session_id TEXT UNIQUE`) require the rebuild; they cannot be
@@ -2092,6 +1936,36 @@ export class SessionStore {
   private ensureWorkStateTable(): void {
     createWorkStateSchema(this.db);
     this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(61, new Date().toISOString());
+  }
+
+  // v62 — exactly-once hand-off marker for hook spool entries (HookSpool.drain):
+  // written the moment ingest irrevocably accepts an entry, cleared once its file is gone.
+  private ensureHookSpoolConsumedTable(): void {
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS hook_spool_consumed (
+        entry_key TEXT PRIMARY KEY,
+        consumed_at_epoch_ms INTEGER NOT NULL
+      )
+    `);
+    this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(62, new Date().toISOString());
+  }
+
+  isHookSpoolEntryConsumed(entryKey: string): boolean {
+    return this.db.prepare('SELECT 1 FROM hook_spool_consumed WHERE entry_key = ?').get(entryKey) != null;
+  }
+
+  markHookSpoolEntryConsumed(entryKey: string, consumedAtEpochMs: number): void {
+    this.db.prepare(
+      'INSERT INTO hook_spool_consumed (entry_key, consumed_at_epoch_ms) VALUES (?, ?) ON CONFLICT(entry_key) DO UPDATE SET consumed_at_epoch_ms = excluded.consumed_at_epoch_ms'
+    ).run(entryKey, consumedAtEpochMs);
+  }
+
+  clearHookSpoolEntryConsumed(entryKey: string): void {
+    this.db.prepare('DELETE FROM hook_spool_consumed WHERE entry_key = ?').run(entryKey);
+  }
+
+  pruneHookSpoolConsumedMarkersBefore(epochMs: number): void {
+    this.db.prepare('DELETE FROM hook_spool_consumed WHERE consumed_at_epoch_ms < ?').run(epochMs);
   }
 
   // v52 — durable claim ledger for one Telegram session wrap-up per route.
@@ -3111,7 +2985,9 @@ export class SessionStore {
   }
 
   appendWorkStateEntry(entry: { project: string; listName: string; fields: WorkStateFields; createdAtEpoch?: number }): number {
-    return appendWorkStateEntryRow(this.db, entry);
+    const entryId = appendWorkStateEntryRow(this.db, entry);
+    emitContextInvalidation({ projects: [entry.project] }, 'appendWorkStateEntry');
+    return entryId;
   }
 
   getWorkStateEntries(projects: string[], listName?: string): WorkStateEntry[] {
@@ -3172,10 +3048,12 @@ export class SessionStore {
     if (files) {
       const filesList = Array.isArray(files) ? files : [files];
       const fileConditions = filesList.map(() => {
-        return '(EXISTS (SELECT 1 FROM json_each(o.files_read) WHERE value LIKE ?) OR EXISTS (SELECT 1 FROM json_each(o.files_modified) WHERE value LIKE ?))';
+        return "(EXISTS (SELECT 1 FROM json_each(o.files_read) WHERE value LIKE ? ESCAPE '\\') OR EXISTS (SELECT 1 FROM json_each(o.files_modified) WHERE value LIKE ? ESCAPE '\\'))";
       });
       filesList.forEach(file => {
-        params.push(`%${file}%`, `%${file}%`);
+        // The hydration filter receives literal file paths, like SQLite search.
+        const literal = file.replace(/[\\%_]/g, '\\$&');
+        params.push(`%${literal}%`, `%${literal}%`);
       });
       additionalConditions.push(`(${fileConditions.join(' OR ')})`);
     }
@@ -3415,18 +3293,30 @@ export class SessionStore {
     return stmt.all(...memorySessionIds) as any[];
   }
 
-  getPromptNumberFromUserPrompts(contentSessionId: string, sessionDbId?: number): number {
+  /**
+   * The session's current prompt number (count of its user_prompts rows).
+   * `createdAtOrBeforeEpochMs` answers "which prompt was current at that
+   * moment" instead — for an event that happened earlier than it is being
+   * ingested (a hook spool entry drained after an outage).
+   */
+  getPromptNumberFromUserPrompts(
+    contentSessionId: string,
+    sessionDbId?: number,
+    createdAtOrBeforeEpochMs?: number,
+  ): number {
     const resolvedSessionDbId = this.resolvePromptSessionDbId(contentSessionId, sessionDbId);
-    if (resolvedSessionDbId !== null) {
+    const sessionClause = resolvedSessionDbId !== null ? 'session_db_id = ?' : 'content_session_id = ?';
+    const sessionParam = resolvedSessionDbId !== null ? resolvedSessionDbId : contentSessionId;
+    if (createdAtOrBeforeEpochMs !== undefined) {
       const result = this.db.prepare(`
-        SELECT COUNT(*) as count FROM user_prompts WHERE session_db_id = ?
-      `).get(resolvedSessionDbId) as { count: number };
+        SELECT COUNT(*) as count FROM user_prompts WHERE ${sessionClause} AND created_at_epoch <= ?
+      `).get(sessionParam, createdAtOrBeforeEpochMs) as { count: number };
       return result.count;
     }
 
     const result = this.db.prepare(`
-      SELECT COUNT(*) as count FROM user_prompts WHERE content_session_id = ?
-    `).get(contentSessionId) as { count: number };
+      SELECT COUNT(*) as count FROM user_prompts WHERE ${sessionClause}
+    `).get(sessionParam) as { count: number };
     return result.count;
   }
 
@@ -3740,18 +3630,15 @@ export class SessionStore {
   ): { id: number; createdAtEpoch: number } {
     const timestampEpoch = overrideTimestampEpoch ?? Date.now();
     const timestampIso = new Date(timestampEpoch).toISOString();
-    const contentHash = computeSummaryContentHash(memorySessionId, summary);
 
     const stmt = this.db.prepare(`
       INSERT INTO session_summaries
       (memory_session_id, project, request, investigated, learned, completed,
-       next_steps, files_read, files_edited, notes, content_hash, prompt_number, discovery_tokens, created_at, created_at_epoch)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(memory_session_id, content_hash) DO NOTHING
-      RETURNING id, created_at_epoch
+       next_steps, files_read, files_edited, notes, prompt_number, discovery_tokens, created_at, created_at_epoch)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    const inserted = stmt.get(
+    const result = stmt.run(
       memorySessionId,
       project,
       summary.request,
@@ -3762,31 +3649,16 @@ export class SessionStore {
       JSON.stringify(summary.files_read ?? []),
       JSON.stringify(summary.files_edited ?? []),
       summary.notes,
-      contentHash,
       promptNumber || null,
       discoveryTokens,
       timestampIso,
       timestampEpoch
-    ) as { id: number; created_at_epoch: number } | null;
-
-    if (inserted) {
-      return {
-        id: inserted.id,
-        createdAtEpoch: inserted.created_at_epoch
-      };
-    }
-
-    const existing = this.db.prepare(
-      'SELECT id, created_at_epoch FROM session_summaries WHERE memory_session_id = ? AND content_hash = ?'
-    ).get(memorySessionId, contentHash) as { id: number; created_at_epoch: number } | null;
-
-    if (!existing) {
-      throw new Error(`storeSummary: ON CONFLICT without existing row for content_hash=${contentHash}`);
-    }
+    );
+    emitContextInvalidation({ projects: [project] }, 'storeSummary');
 
     return {
-      id: existing.id,
-      createdAtEpoch: existing.created_at_epoch
+      id: Number(result.lastInsertRowid),
+      createdAtEpoch: timestampEpoch
     };
   }
 
@@ -3952,32 +3824,18 @@ export class SessionStore {
       }
 
       let summaryId: number | null = null;
-      let summaryEpoch: number | null = null;
       if (summary) {
-        // INVARIANT: summary.created_at_epoch > max(observations.created_at_epoch)
-        // Hook concurrency can cause summary to arrive before all observations are stored.
-        // Query the actual max to enforce the invariant.
-        const maxObsRow = this.db.prepare(`
-          SELECT MAX(created_at_epoch) as max_epoch
-          FROM observations WHERE memory_session_id = ?
-        `).get(memorySessionId) as { max_epoch: number | null } | undefined;
-
-        summaryEpoch = Math.max(timestampEpoch, ((maxObsRow?.max_epoch) ?? 0) + 1);
-        const summaryIso = new Date(summaryEpoch).toISOString();
-        const contentHash = computeSummaryContentHash(memorySessionId, summary);
         const rolledUp = rollupObservationFileLists(observations);
         const filesRead = summary.files_read ?? rolledUp.files_read;
         const filesEdited = summary.files_edited ?? rolledUp.files_edited;
         const summaryStmt = this.db.prepare(`
           INSERT INTO session_summaries
           (memory_session_id, project, request, investigated, learned, completed,
-           next_steps, files_read, files_edited, notes, content_hash, prompt_number, discovery_tokens, created_at, created_at_epoch)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(memory_session_id, content_hash) DO NOTHING
-          RETURNING id
+           next_steps, files_read, files_edited, notes, prompt_number, discovery_tokens, created_at, created_at_epoch)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
-        const inserted = summaryStmt.get(
+        const result = summaryStmt.run(
           memorySessionId,
           project,
           summary.request,
@@ -3988,30 +3846,20 @@ export class SessionStore {
           JSON.stringify(filesRead),
           JSON.stringify(filesEdited),
           summary.notes,
-          contentHash,
           promptNumber || null,
           discoveryTokens,
-          summaryIso,
-          summaryEpoch
-        ) as { id: number } | null;
-
-        if (inserted) {
-          summaryId = inserted.id;
-        } else {
-          const existing = this.db.prepare(
-            'SELECT id FROM session_summaries WHERE memory_session_id = ? AND content_hash = ?'
-          ).get(memorySessionId, contentHash) as { id: number } | null;
-          if (!existing) {
-            throw new Error(`storeObservations: ON CONFLICT without existing summary row for content_hash=${contentHash}`);
-          }
-          summaryId = existing.id;
-        }
+          timestampIso,
+          timestampEpoch
+        );
+        summaryId = Number(result.lastInsertRowid);
       }
 
       return { observationIds, mergedIntoExisting, insertedObservationIds, summaryId, createdAtEpoch: timestampEpoch };
     });
 
-    return storeTx();
+    const stored = storeTx();
+    emitContextInvalidation({ projects: [project] }, 'storeObservations');
+    return stored;
   }
 
   /**
@@ -4449,10 +4297,9 @@ export class SessionStore {
       return { imported: false, id: 0 };
     }
 
-    const contentHash = computeSummaryContentHash(summary.memory_session_id, summary);
     const existing = this.db.prepare(
-      'SELECT id FROM session_summaries WHERE memory_session_id = ? AND content_hash = ?'
-    ).get(summary.memory_session_id, contentHash) as { id: number } | undefined;
+      'SELECT id FROM session_summaries WHERE memory_session_id = ?'
+    ).get(summary.memory_session_id) as { id: number } | undefined;
 
     if (existing) {
       return { imported: false, id: existing.id };
@@ -4462,13 +4309,11 @@ export class SessionStore {
       INSERT INTO session_summaries (
         memory_session_id, project, request, investigated, learned,
         completed, next_steps, files_read, files_edited, notes,
-        content_hash, prompt_number, discovery_tokens, created_at, created_at_epoch
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(memory_session_id, content_hash) DO NOTHING
-      RETURNING id
+        prompt_number, discovery_tokens, created_at, created_at_epoch
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    const inserted = stmt.get(
+    const result = stmt.run(
       summary.memory_session_id,
       summary.project,
       coerceBindValue(summary.request),
@@ -4479,26 +4324,14 @@ export class SessionStore {
       coerceBindValue(summary.files_read),
       coerceBindValue(summary.files_edited),
       coerceBindValue(summary.notes),
-      contentHash,
       summary.prompt_number,
       summary.discovery_tokens || 0,
       summary.created_at,
       summary.created_at_epoch
-    ) as { id: number } | null;
+    );
+    emitContextInvalidation({ projects: [summary.project] }, 'importSessionSummary');
 
-    if (inserted) {
-      return { imported: true, id: inserted.id };
-    }
-
-    const existingAfterConflict = this.db.prepare(
-      'SELECT id FROM session_summaries WHERE memory_session_id = ? AND content_hash = ?'
-    ).get(summary.memory_session_id, contentHash) as { id: number } | undefined;
-
-    if (!existingAfterConflict) {
-      throw new Error(`importSessionSummary: ON CONFLICT without existing row for content_hash=${contentHash}`);
-    }
-
-    return { imported: false, id: existingAfterConflict.id };
+    return { imported: true, id: result.lastInsertRowid as number };
   }
 
   importObservation(obs: {
@@ -4571,6 +4404,7 @@ export class SessionStore {
       obs.created_at,
       obs.created_at_epoch
     );
+    emitContextInvalidation({ projects: [obs.project] }, 'importObservation');
 
     return { imported: true, id: result.lastInsertRowid as number };
   }

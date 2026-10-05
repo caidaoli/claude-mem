@@ -112,6 +112,29 @@ function buildSessionContextHeader(userPrompt: string): string {
 </observed_from_primary_session>`;
 }
 
+/**
+ * The observer instructions every init and continuation prompt opens with.
+ *
+ * A provider prompt cache (OpenRouter, the cmem.ai gateway) hits only on a
+ * byte-identical prefix. This block depends on the mode and output format
+ * alone, so it goes first and everything per-session (prior context, the
+ * user's request, the continuation greeting, dates, project names) follows
+ * it: every generation, session and user then shares one cacheable start.
+ */
+function observerInstructions(mode: ModeConfig, format: OutputFormat = 'xml'): string {
+  return `${mode.prompts.system_identity}
+
+${mode.prompts.observer_role}
+
+${mode.prompts.spatial_awareness}
+
+${mode.prompts.recording_focus}
+
+${mode.prompts.skip_guidance}
+
+${buildObservationFormatWithFooter(mode, format)}`;
+}
+
 export function buildInitPrompt(
   project: string,
   sessionId: string,
@@ -119,38 +142,18 @@ export function buildInitPrompt(
   mode: ModeConfig,
   priorContext: string = '',
 ): string {
-  return `${mode.prompts.system_identity}
+  return `${observerInstructions(mode)}
 ${wrapPriorContext(priorContext)}
 
 ${buildSessionContextHeader(userPrompt)}
-
-${mode.prompts.observer_role}
-
-${mode.prompts.spatial_awareness}
-
-${mode.prompts.recording_focus}
-
-${mode.prompts.skip_guidance}
-
-${buildObservationFormatWithFooter(mode, 'xml')}
 
 ${mode.prompts.header_memory_start}`;
 }
 
 export function buildInitPromptJson(project: string, sessionId: string, userPrompt: string, mode: ModeConfig): string {
-  return `${mode.prompts.system_identity}
+  return `${observerInstructions(mode, 'json')}
 
 ${buildSessionContextHeader(userPrompt)}
-
-${mode.prompts.observer_role}
-
-${mode.prompts.spatial_awareness}
-
-${mode.prompts.recording_focus}
-
-${mode.prompts.skip_guidance}
-
-${buildObservationFormatWithFooter(mode, 'json')}
 
 ${mode.prompts.header_memory_start}`;
 }
@@ -562,7 +565,13 @@ CRITICAL: Your entire response must be a single valid JSON object on one line. D
 ${mode.prompts.summary_footer}`;
 }
 
-export function buildContinuationPrompt(userPrompt: string, promptNumber: number, contentSessionId: string, mode: ModeConfig, priorContext: string = ''): string {
+export function buildContinuationPrompt(
+  userPrompt: string,
+  promptNumber: number,
+  contentSessionId: string,
+  mode: ModeConfig,
+  priorContext: string = '',
+): string {
   return buildContinuationPromptInternal(userPrompt, mode, 'xml', priorContext);
 }
 
@@ -571,24 +580,14 @@ export function buildContinuationPromptJson(userPrompt: string, promptNumber: nu
 }
 
 function buildContinuationPromptInternal(userPrompt: string, mode: ModeConfig, format: OutputFormat, priorContext: string = ''): string {
-  return `${mode.prompts.continuation_greeting}
+  return `${observerInstructions(mode, format)}
+
+${mode.prompts.continuation_greeting}
 ${wrapPriorContext(priorContext)}
 
 ${buildSessionContextHeader(userPrompt)}
 
-${mode.prompts.system_identity}
-
-${mode.prompts.observer_role}
-
-${mode.prompts.spatial_awareness}
-
-${mode.prompts.recording_focus}
-
-${mode.prompts.skip_guidance}
-
 ${mode.prompts.continuation_instruction}
-
-${buildObservationFormatWithFooter(mode, format)}
 
 ${mode.prompts.header_memory_continued}`;
 }

@@ -91,7 +91,7 @@ export function parseAgentXml(raw: string, correlationId?: string | number): Par
         next_steps: null,
         notes: null,
         skipped: true,
-        skip_reason: skipMatch[1] ?? null,
+        skip_reason: skipMatch[1] === undefined ? null : decodeXmlReferences(skipMatch[1]),
       },
     };
   }
@@ -352,52 +352,34 @@ function unwrapLabelWrappedTitle(title: string | null): string | null {
   return inner === '' ? title : inner;
 }
 
-/**
- * Extract a simple field value from XML content
- * Returns null for missing or empty/whitespace-only fields
- *
- * Uses non-greedy [\s\S]*? matching to support code snippets and nested tags (Issue #798).
- * Also strips wrapper tags and orphan same-name tags from malformed model output.
- */
+// Decode only after extracting markup: an escaped tag is character data, not
+// another element. A single replacement pass keeps &amp;lt; as literal &lt;.
+const XML_ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+function decodeXmlReferences(value: string): string {
+  return value.replace(/<!\[CDATA\[[\s\S]*?\]\]>|&(?:amp|lt|gt|quot|apos|#(?:x[0-9a-fA-F]+|[0-9]+));/g, reference => {
+    if (reference.startsWith('<![CDATA[')) return reference;
+    const name = reference.slice(1, -1);
+    if (!name.startsWith('#')) return XML_ENTITIES[name];
+    const codePoint = name.startsWith('#x') ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10);
+    // Only XML 1.0 legal characters are references; retain existing literal
+    // behavior for malformed/undeclared references in this text-XML bridge.
+    if (codePoint === 9 || codePoint === 10 || codePoint === 13 ||
+        (codePoint >= 0x20 && codePoint <= 0xD7FF) ||
+        (codePoint >= 0xE000 && codePoint <= 0xFFFD) ||
+        (codePoint >= 0x10000 && codePoint <= 0x10FFFF)) {
+      return String.fromCodePoint(codePoint);
+    }
+    return reference;
+  });
+}
+
 function extractField(content: string, fieldName: string): string | null {
   const regex = new RegExp(`<${fieldName}>([\\s\\S]*?)</${fieldName}>`, 'i');
   const match = regex.exec(content);
   if (!match) return null;
 
-  let rawContent = match[1].trim();
-  if (rawContent === '') return null;
-
-  // Strip orphan same-name opening tags left by non-greedy matching
-  // Handles: <investigated><investigated>content</investigated></investigated>
-  // After first match: rawContent = "<investigated>content"
-  const sameNameOpenTagRegex = new RegExp(`^<${fieldName}>\\s*`, 'i');
-  rawContent = rawContent.replace(sameNameOpenTagRegex, '').trim();
-
-  // Also strip any trailing orphan closing tags of the same name
-  const sameNameCloseTagRegex = new RegExp(`\\s*</${fieldName}>$`, 'i');
-  rawContent = rawContent.replace(sameNameCloseTagRegex, '').trim();
-
-  if (rawContent === '') return null;
-
-  // Generic XML wrapper tag stripper
-  // Matches any <tagname>content</tagname> pattern where tagname is a simple identifier
-  // Examples: <item>, <fact>, <point>, <bullet>, <entry>, <step>, etc.
-  const wrapperRegex = /<([a-z_][a-z0-9_]*)>([^<]*)<\/\1>/gi;
-  const items: string[] = [];
-  let itemMatch;
-  while ((itemMatch = wrapperRegex.exec(rawContent)) !== null) {
-    const itemContent = itemMatch[2].trim();
-    if (itemContent) {
-      items.push(itemContent);
-    }
-  }
-
-  // If wrapper tags were found, join them; otherwise return raw content
-  if (items.length > 0) {
-    return items.join('\n');
-  }
-
-  return rawContent;
+  const trimmed = decodeXmlReferences(match[1].trim());
+  return trimmed.trim() === '' ? null : trimmed;
 }
 
 function extractArrayElements(content: string, arrayName: string, elementName: string): string[] {
@@ -415,7 +397,7 @@ function extractArrayElements(content: string, arrayName: string, elementName: s
   const elementRegex = new RegExp(`<${elementName}>([\\s\\S]*?)</${elementName}>`, 'gi');
   let elementMatch;
   while ((elementMatch = elementRegex.exec(arrayContent)) !== null) {
-    const trimmed = elementMatch[1].trim();
+    const trimmed = decodeXmlReferences(elementMatch[1].trim());
     if (trimmed) {
       elements.push(trimmed);
     }
