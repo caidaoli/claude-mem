@@ -171,6 +171,16 @@ const spawnOptions = {
   env: process.env
 };
 
+// The host may launch us from a directory deleted underneath it (Codex removes
+// the old plugin cache version on upgrade while sessions still point there).
+// Bun inherits that cwd and the bundle dies at load on process.cwd() with
+// exit 1. Hook payloads carry their own cwd, so home is a safe fallback.
+try {
+  process.cwd();
+} catch {
+  spawnOptions.cwd = homedir();
+}
+
 let spawnCmd = bunPath;
 let spawnArgs = args;
 

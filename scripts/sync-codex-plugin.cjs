@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 const { spawnSync } = require('child_process');
-const { existsSync, readFileSync } = require('fs');
+const { existsSync, readFileSync, readdirSync } = require('fs');
+const os = require('os');
 const path = require('path');
 
 const rootDir = path.join(__dirname, '..');
@@ -80,9 +81,29 @@ function formatFailure(result) {
   return `exit ${result.status ?? 'unknown'}${result.stderr ? `, stderr: ${result.stderr.trim()}` : ''}${result.stdout ? `, stdout: ${result.stdout.trim()}` : ''}`;
 }
 
-function runCodex(args, spawn) {
+// Every CODEX_HOME needs its own refresh: one left behind keeps serving a
+// stale (possibly mid-merge) plugin cache. Refresh the default home plus any
+// ~/.codex* home whose config already enables the plugin.
+function findCodexHomes(pluginName, homeDir, env) {
+  const homes = [env.CODEX_HOME || path.join(homeDir, '.codex')];
+  let entries = [];
+  try {
+    entries = readdirSync(homeDir, { withFileTypes: true });
+  } catch {}
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith('.codex')) continue;
+    const home = path.join(homeDir, entry.name);
+    const configPath = path.join(home, 'config.toml');
+    if (homes.includes(home) || !existsSync(configPath)) continue;
+    if (readFileSync(configPath, 'utf-8').includes(`"${pluginName}@`)) homes.push(home);
+  }
+  return homes;
+}
+
+function runCodex(args, spawn, env) {
   const result = spawn('codex', args, {
     encoding: 'utf-8',
+    env,
   });
 
   if (result.error) {
@@ -94,7 +115,7 @@ function runCodex(args, spawn) {
 
 function ensureCodexMarketplace(root, marketplaceName, deps) {
   deps.log(`Ensuring Codex marketplace is configured: ${marketplaceName}`);
-  const result = runCodex(['plugin', 'marketplace', 'add', root, '--json'], deps.spawn);
+  const result = runCodex(['plugin', 'marketplace', 'add', root, '--json'], deps.spawn, deps.env);
 
   if (result.status !== 0) {
     throw new Error(`codex plugin marketplace add failed for ${marketplaceName}: ${formatFailure(result)}`);
@@ -103,7 +124,7 @@ function ensureCodexMarketplace(root, marketplaceName, deps) {
 
 function tryInstallCodexPlugin(selector, deps) {
   deps.log(`Refreshing Codex plugin cache: ${selector}`);
-  const result = runCodex(['plugin', 'add', selector, '--json'], deps.spawn);
+  const result = runCodex(['plugin', 'add', selector, '--json'], deps.spawn, deps.env);
 
   if (result.status !== 0) {
     return {
@@ -117,6 +138,19 @@ function tryInstallCodexPlugin(selector, deps) {
   return { ok: true };
 }
 
+function syncCodexHome(root, selectors, deps) {
+  deps.log(`Codex home: ${deps.env.CODEX_HOME}`);
+  ensureCodexMarketplace(root, selectors[0].marketplaceName, deps);
+
+  const failures = [];
+  for (const candidate of selectors) {
+    const result = tryInstallCodexPlugin(candidate.selector, deps);
+    if (result.ok) return null;
+    failures.push(result.message);
+  }
+  return failures.join('; ');
+}
+
 function syncCodexPlugin(options = {}) {
   const deps = {
     spawn: options.spawnSync || spawnSync,
@@ -125,6 +159,7 @@ function syncCodexPlugin(options = {}) {
     stderr: options.stderr || process.stderr,
   };
   const root = options.rootDir || rootDir;
+  const env = options.env || process.env;
 
   if (!isCodexAvailable(deps.spawn)) {
     deps.log('Codex CLI not found; skipping Codex plugin cache refresh.');
@@ -132,16 +167,18 @@ function syncCodexPlugin(options = {}) {
   }
 
   const selectors = readCodexSelectors(root);
-  ensureCodexMarketplace(root, selectors[0].marketplaceName, deps);
-
+  const homes = findCodexHomes(selectors[0].pluginName, options.homeDir || os.homedir(), env);
   const failures = [];
-  for (const candidate of selectors) {
-    const result = tryInstallCodexPlugin(candidate.selector, deps);
-    if (result.ok) return;
-    failures.push(result.message);
+  for (const home of homes) {
+    try {
+      const failure = syncCodexHome(root, selectors, { ...deps, env: { ...env, CODEX_HOME: home } });
+      if (failure) failures.push(`${home}: ${failure}`);
+    } catch (error) {
+      failures.push(`${home}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
-  throw new Error(failures.join('; '));
+  if (failures.length > 0) throw new Error(failures.join('; '));
 }
 
 if (require.main === module) {

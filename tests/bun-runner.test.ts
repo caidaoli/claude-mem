@@ -269,3 +269,27 @@ describe('bun-runner.js spawn: no cmd.exe for .exe targets (#3196)', () => {
     expect(source).not.toMatch(/if \(IS_WINDOWS\) \{\s*const quote/);
   });
 });
+
+const unixDescribe = process.platform === 'win32' ? describe.skip : describe;
+
+unixDescribe('bun-runner.js launched from a deleted cwd', () => {
+  it('runs the script instead of crashing on process.cwd()', () => {
+    const scriptDir = mkdtempSync(join(tmpdir(), 'bun-runner-script-'));
+    const goneDir = mkdtempSync(join(tmpdir(), 'bun-runner-gone-'));
+    try {
+      const script = join(scriptDir, 'cwd.js');
+      writeFileSync(script, 'process.stdout.write(process.cwd());');
+      const result = spawnSync('/bin/sh', [
+        '-c',
+        'cd "$1" && rmdir "$1" && exec node "$2" "$3"',
+        'sh', goneDir, BUN_RUNNER_PATH, script,
+      ], { encoding: 'utf-8', input: '{}' });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout.length).toBeGreaterThan(0);
+    } finally {
+      rmSync(scriptDir, { recursive: true, force: true });
+      rmSync(goneDir, { recursive: true, force: true });
+    }
+  });
+});

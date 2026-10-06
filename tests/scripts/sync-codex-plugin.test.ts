@@ -72,6 +72,8 @@ describe('sync-codex-plugin', () => {
 
     syncCodexPlugin({
       rootDir: root,
+      homeDir: mkdtempSync(join(tmpdir(), 'claude-mem-codex-home-')),
+      env: {},
       spawnSync,
       log: () => {},
       stdout: { write: (chunk: string) => stdout.push(chunk) },
@@ -100,6 +102,8 @@ describe('sync-codex-plugin', () => {
 
     syncCodexPlugin({
       rootDir: root,
+      homeDir: mkdtempSync(join(tmpdir(), 'claude-mem-codex-home-')),
+      env: {},
       spawnSync,
       log: () => {},
       stdout: { write: () => {} },
@@ -107,5 +111,32 @@ describe('sync-codex-plugin', () => {
     });
 
     expect(calls).toEqual([{ command: 'codex', args: ['--version'] }]);
+  });
+
+  test('refreshes every Codex home that enables the plugin, each under its own CODEX_HOME', () => {
+    const root = makePluginRoot();
+    const homeDir = mkdtempSync(join(tmpdir(), 'claude-mem-codex-home-'));
+    mkdirSync(join(homeDir, '.codex-cli'));
+    writeFileSync(join(homeDir, '.codex-cli', 'config.toml'), '[plugins."claude-mem@claude-mem-local"]\nenabled = true\n');
+    mkdirSync(join(homeDir, '.codex-other'));
+    writeFileSync(join(homeDir, '.codex-other', 'config.toml'), '[plugins."pdf@openai"]\n');
+    const installs: Array<string | undefined> = [];
+
+    const spawnSync = (_command: string, args: string[], options?: { env?: Record<string, string> }) => {
+      if (args[0] === 'plugin' && args[1] === 'add') installs.push(options?.env?.CODEX_HOME);
+      return { status: 0, stdout: '', stderr: '' };
+    };
+
+    syncCodexPlugin({
+      rootDir: root,
+      homeDir,
+      env: {},
+      spawnSync,
+      log: () => {},
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+    });
+
+    expect(installs).toEqual([join(homeDir, '.codex'), join(homeDir, '.codex-cli')]);
   });
 });
