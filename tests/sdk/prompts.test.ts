@@ -1,6 +1,6 @@
 import { describe, expect, it, spyOn } from 'bun:test';
 
-import { buildObservationPrompt, buildSummaryPrompt, stripImagePayloadsFromField } from '../../src/sdk/prompts.js';
+import { buildObservationPrompt, buildObservationPromptJson, buildSummaryPrompt, stripImagePayloadsFromField } from '../../src/sdk/prompts.js';
 
 const summaryMode = {
   prompts: {
@@ -77,6 +77,32 @@ describe('buildObservationPrompt', () => {
     }, summaryMode);
 
     expect(prompt).toContain('reply with exactly <skip_summary reason="nothing durable" /> instead of an empty response or prose');
+  });
+});
+
+describe('buildObservationPromptJson', () => {
+  it('asks only for JSON, with a JSON skip sentinel instead of the XML one', () => {
+    const jsonMode = {
+      prompts: {
+        xml_title_placeholder: 'title', xml_subtitle_placeholder: 'subtitle', xml_fact_placeholder: 'fact',
+        xml_narrative_placeholder: 'narrative', xml_concept_placeholder: 'concept', xml_file_placeholder: 'file',
+        field_guidance: '', concept_guidance: '',
+      },
+      observation_types: [{ id: 'discovery', description: 'Test type' }],
+    } as any;
+    const prompt = buildObservationPromptJson({
+      id: 1,
+      tool_name: 'exec_command',
+      tool_input: JSON.stringify({ cmd: 'pwd' }),
+      tool_output: JSON.stringify({ output: '/repo' }),
+      created_at_epoch: Date.now(),
+      cwd: '/repo',
+    }, jsonMode);
+
+    expect(prompt).toContain('<what_happened>exec_command</what_happened>');
+    expect(prompt).toContain('{"skip":true}');
+    expect(prompt).not.toContain('<skip_summary');
+    expect(prompt).not.toContain('<observation>');
   });
 });
 

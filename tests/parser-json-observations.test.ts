@@ -23,7 +23,7 @@ afterAll(() => {
   mock.module('../src/services/domain/ModeManager.js', () => realModeManagerSnapshot);
 });
 
-import { parseObservationsJson } from '../src/sdk/parser.js';
+import { parseObservationsJson, parseSummaryJson } from '../src/sdk/parser.js';
 
 let loggerSpies: Array<ReturnType<typeof spyOn>> = [];
 
@@ -111,5 +111,55 @@ describe('parseObservationsJson', () => {
     expect(result[0].subtitle).toBe('World');
     expect(result[0].facts).toEqual(['f1', 'f2']);
     expect(result[0].narrative).toBe('Text');
+  });
+});
+
+describe('parseSummaryJson', () => {
+  beforeEach(() => {
+    loggerSpies = [
+      spyOn(logger, 'warn').mockImplementation(() => {}),
+      spyOn(logger, 'error').mockImplementation(() => {}),
+    ];
+  });
+
+  afterEach(() => {
+    for (const spy of loggerSpies) {
+      spy.mockRestore();
+    }
+    loggerSpies = [];
+  });
+
+  it('parses a normal summary', () => {
+    const result = parseSummaryJson('{"request":"R","investigated":"I","learned":"L","completed":"C","next_steps":"N","notes":null}');
+    expect(result).toEqual({ request: 'R', investigated: 'I', learned: 'L', completed: 'C', next_steps: 'N', notes: null });
+  });
+
+  it('treats {"skip":true} as a skipped summary', () => {
+    const result = parseSummaryJson('{"skip":true}');
+    expect(result?.skipped).toBe(true);
+    expect(result?.request).toBeNull();
+  });
+
+  it('treats the XML skip sentinel as a skipped summary', () => {
+    const result = parseSummaryJson('<skip_summary reason="noise" />');
+    expect(result?.skipped).toBe(true);
+    expect(result?.skip_reason).toBe('noise');
+  });
+
+  it('coerces observation-shaped JSON instead of returning an empty summary', () => {
+    const result = parseSummaryJson('{"type":"discovery","title":"T","subtitle":"S","facts":["f1","f2"],"narrative":"N","concepts":[],"files_read":[],"files_modified":[]}');
+    expect(result).toEqual({
+      request: 'T',
+      investigated: 'N',
+      learned: 'f1; f2',
+      completed: 'T — S',
+      next_steps: null,
+      notes: null,
+    });
+  });
+
+  it('returns null when no field carries content', () => {
+    expect(parseSummaryJson('{"type":"discovery","title":"","facts":[],"narrative":null}')).toBeNull();
+    expect(parseSummaryJson('{"request":"","completed":"  "}')).toBeNull();
   });
 });

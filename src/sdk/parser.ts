@@ -529,30 +529,77 @@ function preprocessJsonResponse(text: string, allowArray: boolean = false): stri
  * handle Markdown-wrapped JSON and try to extract JSON from text responses.
  */
 export function parseSummaryJson(text: string, sessionId?: number): ParsedSummary | null {
+  const skipped = (skip_reason: string | null): ParsedSummary => ({
+    request: null, investigated: null, learned: null, completed: null, next_steps: null, notes: null,
+    skipped: true, skip_reason,
+  });
+
+  // Models that see XML elsewhere in the conversation sometimes answer with the
+  // XML sentinel even in JSON mode; it means the same thing.
+  const xmlSkip = /<skip_summary(?:\s+reason="([^"]*)")?\s*\/>/i.exec(text);
+  if (xmlSkip && !text.includes('{')) {
+    return skipped(xmlSkip[1] === undefined ? null : decodeXmlReferences(xmlSkip[1]));
+  }
+
   const jsonText = preprocessJsonResponse(text);
 
   try {
     const data = JSON.parse(jsonText);
-
-    // Validate and extract fields
-    const summary: ParsedSummary = {
-      request: typeof data.request === 'string' ? data.request : null,
-      investigated: typeof data.investigated === 'string' ? data.investigated : null,
-      learned: typeof data.learned === 'string' ? data.learned : null,
-      completed: typeof data.completed === 'string' ? data.completed : null,
-      next_steps: typeof data.next_steps === 'string' ? data.next_steps : null,
-      notes: typeof data.notes === 'string' ? data.notes : null,
-    };
-
-    // Log warning if all required fields are empty
-    if (!summary.request && !summary.investigated && !summary.learned && !summary.completed && !summary.next_steps) {
-      logger.warn('PARSER', 'JSON summary parsed but all fields are empty', {
-        sessionId,
-        keys: Object.keys(data)
-      });
+    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+      logger.warn('PARSER', 'JSON summary is not an object', { sessionId });
+      return null;
+    }
+    if (data.skip === true) {
+      return skipped(typeof data.reason === 'string' ? data.reason : null);
     }
 
-    return summary;
+    const str = (value: unknown): string | null =>
+      typeof value === 'string' && value.trim() ? value : null;
+
+    const summary: ParsedSummary = {
+      request: str(data.request),
+      investigated: str(data.investigated),
+      learned: str(data.learned),
+      completed: str(data.completed),
+      next_steps: str(data.next_steps),
+      notes: str(data.notes),
+    };
+
+    if (summary.request || summary.investigated || summary.learned || summary.completed || summary.next_steps) {
+      return summary;
+    }
+
+    // A summary turn answered with observation JSON (the multi-turn history is
+    // mostly observations). Salvage it with the XML path's mapping (#1633)
+    // instead of storing a summary row whose every field is empty.
+    const title = str(data.title);
+    const subtitle = str(data.subtitle);
+    const narrative = str(data.narrative);
+    const facts = Array.isArray(data.facts)
+      ? data.facts.filter((f: unknown): f is string => typeof f === 'string' && f.trim() !== '')
+      : [];
+    if (title || narrative || facts.length > 0) {
+      logger.warn('PARSER', 'Coerced observation JSON into summary', {
+        sessionId,
+        hasTitle: !!title,
+        hasNarrative: !!narrative,
+        factCount: facts.length,
+      });
+      return {
+        request: title || subtitle,
+        investigated: narrative,
+        learned: facts.length > 0 ? facts.join('; ') : null,
+        completed: title ? `${title}${subtitle ? ' — ' + subtitle : ''}` : null,
+        next_steps: null,
+        notes: null,
+      };
+    }
+
+    logger.warn('PARSER', 'JSON summary has no usable fields — discarding', {
+      sessionId,
+      keys: Object.keys(data)
+    });
+    return null;
   } catch (error) {
     const trimmedPreprocessed = jsonText.trim();
     const trimmedRaw = text.trim();

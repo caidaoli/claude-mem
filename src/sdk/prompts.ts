@@ -472,8 +472,9 @@ export function buildObservationPromptParts(
   };
 }
 
-export function renderObservationPrompt(parts: ObservationPromptParts): string {
-  const { parameters, outcome, restateSchema } = parts;
+/** The observed tool use itself, with no output-format instructions. */
+function renderObservationEvidence(parts: ObservationPromptParts): string {
+  const { parameters, outcome } = parts;
   const redactionHint = hasRedactionMarker(parameters + outcome) ? `\n${REDACTION_MARKER_HINT}\n` : '';
 
   return `${parts.header}
@@ -482,7 +483,13 @@ export function renderObservationPrompt(parts: ObservationPromptParts): string {
 </observed_from_primary_session>
 
 If a <parameters> or <outcome> block above contains an "<elided chars=... />" marker, that field was truncated to fit the observer's context window. Describe only what you can see in the kept portion and do not infer details about the elided range.
-${redactionHint}
+${redactionHint}`;
+}
+
+export function renderObservationPrompt(parts: ObservationPromptParts): string {
+  const { restateSchema } = parts;
+
+  return `${renderObservationEvidence(parts)}
 Return either one or more <observation>...</observation> blocks, or <skip_summary reason="noise" /> if this tool use should be skipped.
 Concrete debugging findings from logs, queue state, database rows, session routing, or code-path inspection count as durable discoveries and should be recorded.
 Never reply with an empty response, or with prose such as "Skipping", "No substantive tool executions", or any explanation outside XML. Only <observation> blocks or the <skip_summary /> sentinel complete this tool use; anything else is asked again once, then discarded.${restateSchema ? `\n${OBSERVATION_SCHEMA_REMINDER}` : ''}`;
@@ -492,10 +499,14 @@ export function buildObservationPromptJson(obs: Observation, mode: ModeConfig): 
   const languageInstruction = mode.prompts.language_instruction?.trim();
   const languageSection = languageInstruction ? `\n\n${languageInstruction}` : '';
 
-  return `${buildObservationPrompt(obs)}
+  // The XML prompt's closing instructions demand <observation>/<skip_summary/>;
+  // appending a JSON schema after them left the model two contradictory formats.
+  return `${renderObservationEvidence(buildObservationPromptParts(obs))}
+Concrete debugging findings from logs, queue state, database rows, session routing, or code-path inspection count as durable discoveries and should be recorded.
 
 ${buildObservationFormatSection(mode, 'json')}
 
+If this tool use should be skipped, return exactly {"skip":true}. Never reply with XML, prose, or an empty response.
 OUTPUT FORMAT: Return compact single-line JSON without any line breaks, indentation, or extra whitespace.
 
 ${languageSection}`;
@@ -561,6 +572,8 @@ Required JSON format (respond with ONLY this structure as compact single-line JS
 {"request":"Brief description of what the user requested","investigated":"What files, code, or resources were examined","learned":"Key insights or discoveries from this session","completed":"What was accomplished or built","next_steps":"Suggested follow-up actions","notes":null}
 
 CRITICAL: Your entire response must be a single valid JSON object on one line. Do not include any text before or after the JSON.
+This is a session summary, not an observation: do NOT return observation fields (type, title, subtitle, facts, narrative, concepts, files_read, files_modified).
+If there is genuinely nothing to summarize, return exactly {"skip":true}.
 
 ${mode.prompts.summary_footer}`;
 }
