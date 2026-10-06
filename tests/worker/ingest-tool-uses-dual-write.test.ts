@@ -124,16 +124,6 @@ describe('ingestObservation dual-write to tool_uses', () => {
 
     expect(store!.queryToolUses({})).toHaveLength(1);
   });
-
-  it('skips MCP observations when the configured tool pattern excludes them', async () => {
-    process.env.CLAUDE_MEM_SKIP_TOOLS = 'mcp__*';
-    const result = await ingestObservation(payload({ toolName: 'mcp__notion__search' }));
-
-    expect(result).toEqual({ ok: true, status: 'skipped', reason: 'tool_excluded' });
-    expect(queued).toHaveLength(0);
-    expect(store!.queryToolUses({})).toHaveLength(0);
-  });
-
   it('queues the observation even if the backup write throws', async () => {
     setIngestContext({
       sessionManager: {

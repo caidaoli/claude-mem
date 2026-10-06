@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { readFileSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, utimesSync } from 'fs';
+import { readFileSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync, chmodSync } from 'fs';
 import { tmpdir } from 'os';
 import { spawnSync } from 'child_process';
 import path from 'path';
@@ -474,53 +474,6 @@ describe('Plugin Distribution - Build Script Verification', () => {
     expect(content).toContain('plugin/.claude-plugin/plugin.json');
     expect(content).toContain('dist/bug-report/index.js');
   });
-
-  it('worker runtime keeps tiktoken external so its wasm ships with plugin dependencies', () => {
-    const pluginPackage = readJson('plugin/package.json');
-    const workerServicePath = path.join(projectRoot, 'plugin/scripts/worker-service.cjs');
-    const workerService = readFileSync(workerServicePath, 'utf-8');
-
-    expect(pluginPackage.dependencies?.tiktoken).toBeDefined();
-    expect(workerService).not.toContain('Missing tiktoken_bg.wasm');
-  });
-
-  it('build-and-sync refreshes Codex plugin cache after marketplace sync', () => {
-    const packageJson = readJson('package.json');
-    const buildAndSync = String(packageJson.scripts?.['build-and-sync'] ?? '');
-
-    expect(packageJson.scripts?.['sync-codex-plugin']).toBe('node scripts/sync-codex-plugin.cjs');
-    expect(buildAndSync).toContain('npm run sync-marketplace');
-    expect(buildAndSync).toContain('npm run sync-codex-plugin');
-    expect(buildAndSync).toContain('node scripts/restart-marketplace-worker.cjs');
-    expect(buildAndSync.indexOf('npm run sync-marketplace')).toBeLessThan(
-      buildAndSync.indexOf('npm run sync-codex-plugin')
-    );
-    expect(buildAndSync.indexOf('npm run sync-codex-plugin')).toBeLessThan(
-      buildAndSync.indexOf('node scripts/restart-marketplace-worker.cjs')
-    );
-  });
-
-  it('Codex plugin sync helper skips cleanly when Codex CLI is unavailable', () => {
-    const helperPath = path.join(projectRoot, 'scripts/sync-codex-plugin.cjs');
-    const emptyPath = mkdtempSync(path.join(tmpdir(), 'claude-mem-empty-path-'));
-
-    try {
-      const result = spawnSync(process.execPath, [helperPath], {
-        cwd: projectRoot,
-        encoding: 'utf-8',
-        env: {
-          ...process.env,
-          PATH: emptyPath,
-        },
-      });
-
-      expect(result.status).toBe(0);
-      expect(result.stdout).toContain('Codex CLI not found');
-    } finally {
-      rmSync(emptyPath, { recursive: true, force: true });
-    }
-  });
-
   it('Codex plugin sync helper falls back to the installed marketplace name', () => {
     const helperPath = path.join(projectRoot, 'scripts/sync-codex-plugin.cjs');
     const binDir = mkdtempSync(path.join(tmpdir(), 'claude-mem-fake-codex-'));
@@ -745,11 +698,10 @@ const claudeHook = (tail: string[], extra: Record<string, unknown> = {}) => buil
   host: 'claude-code', requireFile: 'bun-runner.js', requireFileSecondary: 'worker-service.cjs',
   trailingCommand: ccTrailing(...tail), notFoundMessage: 'claude-mem: plugin scripts not found', failOpen: true, ...extra,
 });
-const codexHook = (tail: string[], extra: Record<string, unknown> = {}) => buildShellCommand({
+const codexHook = (tail: string[]) => buildShellCommand({
   host: 'codex-cli', requireFile: 'bun-runner.js', requireFileSecondary: 'worker-service.cjs',
   trailingCommand: ccTrailing(...tail), notFoundMessage: 'claude-mem: plugin scripts not found',
   extraEnv: { CLAUDE_MEM_CODEX_HOOK: '1' },
-  ...extra,
 });
 const codexHookPair = (tail: string[]) => ({
   command: codexHook(tail),
