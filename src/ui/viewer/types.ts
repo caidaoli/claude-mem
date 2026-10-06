@@ -136,6 +136,7 @@ export interface Settings {
 
   CLAUDE_MEM_CONTEXT_SHOW_LAST_SUMMARY?: string;
   CLAUDE_MEM_CONTEXT_SHOW_LAST_MESSAGE?: string;
+  CLAUDE_MEM_FILE_READ_GATE_ENABLED?: string;
 
   // Logging
   CLAUDE_MEM_LOG_LEVEL?: string;  // 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' | 'SILENT'

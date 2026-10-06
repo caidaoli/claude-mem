@@ -4,6 +4,7 @@ import { formatDate } from '../utils/formatters';
 import { useI18n } from '../i18n';
 import { DeleteButton } from './DeleteButton';
 import type { DeletableItemType } from '../utils/feed-deletion';
+import { parseStoredStringList } from '../utils/stored-string-list';
 
 interface ObservationCardProps {
   observation: Observation;
@@ -35,10 +36,10 @@ export function ObservationCard({ observation, onDeleted }: ObservationCardProps
   const { t } = useI18n();
   const date = formatDate(observation.created_at_epoch);
 
-  const facts = observation.facts ? JSON.parse(observation.facts) : [];
-  const concepts = observation.concepts ? JSON.parse(observation.concepts) : [];
-  const filesRead = observation.files_read ? JSON.parse(observation.files_read).map(stripProjectRoot) : [];
-  const filesModified = observation.files_modified ? JSON.parse(observation.files_modified).map(stripProjectRoot) : [];
+  const facts = parseStoredStringList(observation.facts);
+  const concepts = parseStoredStringList(observation.concepts);
+  const filesRead = parseStoredStringList(observation.files_read).map(stripProjectRoot);
+  const filesModified = parseStoredStringList(observation.files_modified).map(stripProjectRoot);
 
   const hasFactsContent = facts.length > 0 || concepts.length > 0 || filesRead.length > 0 || filesModified.length > 0;
 

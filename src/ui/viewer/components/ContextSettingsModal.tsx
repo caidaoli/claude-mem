@@ -11,6 +11,11 @@ interface ContextSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   settings: Settings;
+  /** False until GET /api/settings succeeds; `settings` holds defaults until then. */
+  isLoaded: boolean;
+  /** Why the initial GET failed, or null. */
+  loadError: string | null;
+  onRetryLoad: () => void;
   onSave: (settings: Settings) => void;
   isSaving: boolean;
   saveStatus: string;
@@ -129,6 +134,9 @@ export function ContextSettingsModal({
   isOpen,
   onClose,
   settings,
+  isLoaded,
+  loadError,
+  onRetryLoad,
   onSave,
   isSaving,
   saveStatus
@@ -242,8 +250,9 @@ export function ContextSettingsModal({
             </div>
           </div>
 
-          {/* Right column - Settings Panel */}
-          <fieldset className="settings-column" disabled={isSaving}
+          {/* Right column - Settings Panel. Before the initial load the form
+              holds defaults; saving them would overwrite settings.json. */}
+          <fieldset className="settings-column" disabled={isSaving || !isLoaded}
             style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
             {/* Section 1: Loading */}
             <CollapsibleSection
@@ -258,8 +267,8 @@ export function ContextSettingsModal({
                   type="number"
                   min="1"
                   max="200"
-                  value={formState.CLAUDE_MEM_CONTEXT_OBSERVATIONS || '50'}
-                  onChange={(e) => updateSetting('CLAUDE_MEM_CONTEXT_OBSERVATIONS', e.target.value)}
+                  value={formState.CLAUDE_MEM_CONTEXT_OBSERVATIONS || DEFAULT_SETTINGS.CLAUDE_MEM_CONTEXT_OBSERVATIONS}
+                  onChange={(e) => updateSetting('CLAUDE_MEM_CONTEXT_OBSERVATIONS', e.target.value || DEFAULT_SETTINGS.CLAUDE_MEM_CONTEXT_OBSERVATIONS)}
                 />
               </FormField>
               <ToggleSwitch
@@ -277,8 +286,8 @@ export function ContextSettingsModal({
                   type="number"
                   min="1"
                   max="50"
-                  value={formState.CLAUDE_MEM_CONTEXT_SESSION_COUNT || '10'}
-                  onChange={(e) => updateSetting('CLAUDE_MEM_CONTEXT_SESSION_COUNT', e.target.value)}
+                  value={formState.CLAUDE_MEM_CONTEXT_SESSION_COUNT || DEFAULT_SETTINGS.CLAUDE_MEM_CONTEXT_SESSION_COUNT}
+                  onChange={(e) => updateSetting('CLAUDE_MEM_CONTEXT_SESSION_COUNT', e.target.value || DEFAULT_SETTINGS.CLAUDE_MEM_CONTEXT_SESSION_COUNT)}
                 />
               </FormField>
             </CollapsibleSection>
@@ -298,8 +307,8 @@ export function ContextSettingsModal({
                     type="number"
                     min="0"
                     max="20"
-                    value={formState.CLAUDE_MEM_CONTEXT_FULL_COUNT || '5'}
-                    onChange={(e) => updateSetting('CLAUDE_MEM_CONTEXT_FULL_COUNT', e.target.value)}
+                    value={formState.CLAUDE_MEM_CONTEXT_FULL_COUNT || DEFAULT_SETTINGS.CLAUDE_MEM_CONTEXT_FULL_COUNT}
+                    onChange={(e) => updateSetting('CLAUDE_MEM_CONTEXT_FULL_COUNT', e.target.value || DEFAULT_SETTINGS.CLAUDE_MEM_CONTEXT_FULL_COUNT)}
                   />
                 </FormField>
                 <FormField
@@ -766,6 +775,13 @@ export function ContextSettingsModal({
                   checked={formState.CLAUDE_MEM_CONTEXT_SHOW_LAST_MESSAGE === 'true'}
                   onChange={() => toggleBoolean('CLAUDE_MEM_CONTEXT_SHOW_LAST_MESSAGE')}
                 />
+                <ToggleSwitch
+                  id="file-read-gate"
+                  label="Block full-file reads"
+                  description="Send Claude to smart_outline/smart_unfold and past observations instead of reading whole files that have history"
+                  checked={formState.CLAUDE_MEM_FILE_READ_GATE_ENABLED !== 'false'}
+                  onChange={(checked) => updateSetting('CLAUDE_MEM_FILE_READ_GATE_ENABLED', checked ? 'true' : 'false')}
+                />
               </div>
             </CollapsibleSection>
           </fieldset>
@@ -774,12 +790,21 @@ export function ContextSettingsModal({
         {/* Footer with Save button */}
         <div className="modal-footer">
           <div className="save-status">
-            {saveStatus && <span className={saveStatusClass(saveStatus)}>{saveStatus}</span>}
+            {loadError ? (
+              <span className="error" role="alert">
+                {loadError}{' '}
+                <button type="button" onClick={onRetryLoad}>Retry</button>
+              </span>
+            ) : !isLoaded ? (
+              <span>Loading settings…</span>
+            ) : (
+              saveStatus && <span className={saveStatusClass(saveStatus)}>{saveStatus}</span>
+            )}
           </div>
           <button
             className="save-btn"
             onClick={handleSave}
-            disabled={isSaving}
+            disabled={isSaving || !isLoaded}
           >
             {isSaving ? t.settings.saving : t.settings.save}
           </button>

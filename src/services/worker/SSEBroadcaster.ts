@@ -20,9 +20,14 @@ export class SSEBroadcaster {
     const socket = res.socket;
     const onClose = () => {
       res.off('close', onClose);
+      res.off('error', onError);
       socket?.off('close', onClose);
       this.removeClient(res);
     };
+    // Response errors are asynchronous and cannot be caught around write().
+    // Keep the listener until close so pending failed writes remain handled.
+    const onError = () => this.disconnectFailedClient(res);
+    res.on('error', onError);
     res.on('close', onClose);
     // Bun's node:http emits socket close when a streaming client disconnects.
     socket?.on('close', onClose);
@@ -51,21 +56,8 @@ export class SSEBroadcaster {
 
     logger.debug('WORKER', 'SSE broadcast sent', { eventType: event.type, clients: this.sseClients.size });
 
-    // Single-pass write with error handling
-    const deadClients: SSEClient[] = [];
     for (const client of this.sseClients) {
-      try {
-        client.write(data);
-      } catch {
-        // Client disconnected, mark for removal
-        deadClients.push(client);
-      }
-    }
-
-    // Remove dead clients
-    for (const client of deadClients) {
-      this.sseClients.delete(client);
-      logger.debug('WORKER', 'Removed dead SSE client', { remaining: this.sseClients.size });
+      this.writeFrame(client, data);
     }
   }
 
@@ -73,9 +65,29 @@ export class SSEBroadcaster {
     return this.sseClients.size;
   }
 
+  private writeFrame(res: Response, data: string): void {
+    if (res.destroyed || res.writableEnded) {
+      this.removeClient(res);
+      return;
+    }
+    try {
+      res.write(data);
+    } catch (error) {
+      this.disconnectFailedClient(res);
+      logger.debug('WORKER', 'SSE client write failed', undefined, error instanceof Error ? error : undefined);
+    }
+  }
+
+  private disconnectFailedClient(res: Response): void {
+    this.removeClient(res);
+    // A failed stream must close so EventSource can reconnect. Retain the
+    // error listener until close to absorb already queued transport failures.
+    if (!res.destroyed) res.destroy();
+  }
+
   private sendToClient(res: Response, event: SSEEvent): void {
     const data = `data: ${JSON.stringify(event)}\n\n`;
-    res.write(data);
+    this.writeFrame(res, data);
   }
 
   /**
@@ -91,11 +103,7 @@ export class SSEBroadcaster {
         // Send SSE comment as heartbeat (browsers ignore comments but connection stays alive)
         const heartbeat = `: heartbeat ${Date.now()}\n\n`;
         for (const client of this.sseClients) {
-          try {
-            client.write(heartbeat);
-          } catch {
-            // Client might be disconnected, will be cleaned up on next event
-          }
+          this.writeFrame(client, heartbeat);
         }
       }
     }, SSEBroadcaster.HEARTBEAT_INTERVAL_MS);
