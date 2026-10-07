@@ -1,4 +1,4 @@
-import { describe, it, expect, mock, afterEach, afterAll } from 'bun:test';
+import { describe, it, expect, mock, afterEach, afterAll, beforeAll } from 'bun:test';
 
 // Snapshot the real logger BEFORE mock.module mutates the live namespace, then
 // re-register it in afterAll. bun's mock.module is process-global and
@@ -99,6 +99,14 @@ describe('extractFirstFile', () => {
 });
 
 describe('groupByDate', () => {
+  // groupByDate buckets by local calendar date; the fixtures are UTC instants.
+  const originalTZ = process.env.TZ;
+  beforeAll(() => { process.env.TZ = 'UTC'; });
+  afterAll(() => {
+    if (originalTZ === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTZ;
+  });
+
   interface TestItem {
     id: number;
     date: string;

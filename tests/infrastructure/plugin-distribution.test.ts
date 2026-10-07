@@ -506,6 +506,8 @@ process.exit(3);
         encoding: 'utf-8',
         env: {
           ...process.env,
+          HOME: binDir,
+          CODEX_HOME: '',
           PATH: `${binDir}:${process.env.PATH ?? ''}`,
         },
       });

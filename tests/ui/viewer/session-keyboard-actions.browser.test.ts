@@ -81,6 +81,9 @@ for (const key of ['Enter', 'Space'] as const) {
         await send('Input.dispatchKeyEvent', { type: 'keyUp', ...event });
         await settle();
       };
+      // macOS headless Chrome hides an unfocused page on Escape, which stops
+      // requestAnimationFrame and hangs settle(); emulate focus to keep it visible.
+      await send('Emulation.setFocusEmulationEnabled', { enabled: true });
       const renderDeadline = Date.now() + 10000;
       while (!await evaluate('!!document.querySelector(".session-card")')) {
         if (Date.now() > renderDeadline) throw new Error('Session card did not render');
