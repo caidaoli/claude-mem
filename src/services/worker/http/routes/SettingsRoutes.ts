@@ -19,6 +19,7 @@ import { parseContextCountValue } from '../../../../shared/context-count.js';
 import { OPENROUTER_REASONING_EFFORTS, parseOpenRouterReasoningEffort } from '../../OpenRouterProvider.js';
 import { CODEX_REASONING_EFFORTS, isCodexReasoningEffort } from '../../CodexProvider.js';
 import { emitContextInvalidation, noteUserSettingsSaved } from '../../../../shared/context-invalidation.js';
+import { flushResponseThen } from '../../../server/flushResponseThen.js';
 
 const toggleMcpSchema = z.object({
   enabled: z.boolean(),
@@ -169,7 +170,11 @@ export function isForeignLoopbackBrowserWrite(req: Pick<Request, 'headers'>): bo
 
 export class SettingsRoutes extends BaseRouteHandler {
   constructor(
-    private settingsManager: SettingsManager
+    private settingsManager: SettingsManager,
+    // Most settings (provider, port, log level, ...) are read once at worker
+    // startup, so a save restarts the worker. Omitted where no worker owns the
+    // process (tests): the save then only writes settings.json.
+    private restartWorker?: () => Promise<void>
   ) {
     super();
   }
@@ -325,6 +330,12 @@ export class SettingsRoutes extends BaseRouteHandler {
     noteUserSettingsSaved();
     // Context settings (counts, columns, welcome hint) shape the SessionStart block.
     emitContextInvalidation('all', 'settings');
+
+    if (this.restartWorker) {
+      logger.info('WORKER', 'Settings updated, restarting worker');
+      flushResponseThen(res, { success: true, message: 'Settings updated. Worker is restarting.' }, this.restartWorker);
+      return;
+    }
 
     logger.info('WORKER', 'Settings updated');
     res.json({ success: true, message: 'Settings updated successfully' });
