@@ -709,18 +709,18 @@ export function ContextSettingsModal({
                 tooltip={t.settings.quotaFallbackTooltip}
               >
                 <select
-                  value={formState.CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER || ''}
+                  value={formState.CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER || 'claude'}
                   onChange={(e) => updateSetting('CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER', e.target.value)}
                 >
-                  <option value="">{t.settings.quotaFallbackOff}</option>
                   <option value="claude">{t.settings.claudeOption[claudeAuthMethod]}</option>
+                  <option value="off">{t.settings.quotaFallbackOff}</option>
                   <option value="gemini">{t.settings.geminiOption}</option>
                   <option value="openrouter">{t.settings.openrouterOption}</option>
                   <option value="openai-compatible">{t.settings.quotaFallbackOpenaiCompat}</option>
                 </select>
               </FormField>
 
-              {formState.CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER === 'claude' && (
+              {(formState.CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER || 'claude') === 'claude' && (
                 <>
                   <FormField
                     label={t.settings.claudeAuthMethod}
