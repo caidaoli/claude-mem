@@ -521,9 +521,15 @@ describe('Plugin Distribution - Build Script Verification', () => {
     expect(content).toContain('plugin/.claude-plugin/plugin.json');
     expect(content).toContain('dist/bug-report/index.js');
   });
-  it('Codex plugin sync helper falls back to the installed marketplace name', () => {
+  it('Codex plugin sync helper registers the installed marketplace and falls back to its name', () => {
     const helperPath = path.join(projectRoot, 'scripts/sync-codex-plugin.cjs');
     const binDir = mkdtempSync(path.join(tmpdir(), 'claude-mem-fake-codex-'));
+    const claudeConfigDir = path.join(binDir, 'claude');
+    const installedMarketplace = path.join(claudeConfigDir, 'plugins', 'marketplaces', 'thedotmack');
+    for (const relativePath of ['package.json', '.agents/plugins/marketplace.json', '.claude-plugin/marketplace.json']) {
+      mkdirSync(path.dirname(path.join(installedMarketplace, relativePath)), { recursive: true });
+      writeFileSync(path.join(installedMarketplace, relativePath), readFileSync(path.join(projectRoot, relativePath)));
+    }
     const logPath = path.join(binDir, 'calls.log');
     const codexPath = path.join(binDir, 'codex');
 
@@ -554,6 +560,7 @@ process.exit(3);
         env: {
           ...process.env,
           HOME: binDir,
+          CLAUDE_CONFIG_DIR: claudeConfigDir,
           CODEX_HOME: '',
           PATH: `${binDir}:${process.env.PATH ?? ''}`,
         },
@@ -567,7 +574,7 @@ process.exit(3);
       const calls = readFileSync(logPath, 'utf-8').trim().split('\n');
       expect(calls).toEqual([
         '--version',
-        `plugin marketplace add ${projectRoot} --json`,
+        `plugin marketplace add ${installedMarketplace} --json`,
         'plugin add claude-mem@claude-mem-local --json',
         'plugin add claude-mem@thedotmack --json',
       ]);

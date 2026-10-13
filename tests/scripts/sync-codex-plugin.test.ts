@@ -88,6 +88,55 @@ describe('sync-codex-plugin', () => {
     expect(stdout).toEqual(['{"pluginId":"claude-mem@claude-mem-local"}\n']);
   });
 
+  test('re-points a marketplace that an earlier sync registered from another source', () => {
+    const root = makePluginRoot();
+    const calls: string[] = [];
+    let marketplaceSource = '/old/working-tree';
+
+    const spawnSync = (_command: string, args: string[]) => {
+      calls.push(args.join(' '));
+      if (args[0] === '--version') return { status: 0 };
+      if (args.join(' ') === `plugin marketplace add ${root} --json`) {
+        if (marketplaceSource !== '') {
+          return {
+            status: 1,
+            stdout: '',
+            stderr: "Error: marketplace 'claude-mem-local' is already added from a different source; remove it before adding this source\n",
+          };
+        }
+        marketplaceSource = root;
+        return { status: 0, stdout: '{"alreadyAdded":false}\n', stderr: '' };
+      }
+      if (args.join(' ') === 'plugin marketplace remove claude-mem-local --json') {
+        marketplaceSource = '';
+        return { status: 0, stdout: '', stderr: '' };
+      }
+      if (args.join(' ') === 'plugin add claude-mem@claude-mem-local --json') {
+        return { status: 0, stdout: '', stderr: '' };
+      }
+      return { status: 1, stderr: `unexpected call: ${args.join(' ')}` };
+    };
+
+    syncCodexPlugin({
+      rootDir: root,
+      homeDir: mkdtempSync(join(tmpdir(), 'claude-mem-codex-home-')),
+      env: {},
+      spawnSync,
+      log: () => {},
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+    });
+
+    expect(marketplaceSource).toBe(root);
+    expect(calls).toEqual([
+      '--version',
+      `plugin marketplace add ${root} --json`,
+      'plugin marketplace remove claude-mem-local --json',
+      `plugin marketplace add ${root} --json`,
+      'plugin add claude-mem@claude-mem-local --json',
+    ]);
+  });
+
   test('skips all plugin work when Codex CLI is unavailable', () => {
     const root = makePluginRoot();
     const calls: SpawnCall[] = [];

@@ -4,8 +4,7 @@ const { spawnSync } = require('child_process');
 const { existsSync, readFileSync, readdirSync } = require('fs');
 const os = require('os');
 const path = require('path');
-
-const rootDir = path.join(__dirname, '..');
+const { INSTALLED_PATH } = require('./sync-marketplace.cjs');
 
 function readJson(filePath) {
   if (!existsSync(filePath)) {
@@ -115,7 +114,18 @@ function runCodex(args, spawn, env) {
 
 function ensureCodexMarketplace(root, marketplaceName, deps) {
   deps.log(`Ensuring Codex marketplace is configured: ${marketplaceName}`);
-  const result = runCodex(['plugin', 'marketplace', 'add', root, '--json'], deps.spawn, deps.env);
+  let result = runCodex(['plugin', 'marketplace', 'add', root, '--json'], deps.spawn, deps.env);
+
+  // Older syncs registered the working tree. Codex refuses to switch sources in
+  // place; a marketplace remove keeps the plugin enabled and its cache intact.
+  if (result.status !== 0 && /different source/.test(`${result.stderr}${result.stdout}`)) {
+    deps.log(`Re-pointing Codex marketplace ${marketplaceName} at ${root}`);
+    const removed = runCodex(['plugin', 'marketplace', 'remove', marketplaceName, '--json'], deps.spawn, deps.env);
+    if (removed.status !== 0) {
+      throw new Error(`codex plugin marketplace remove failed for ${marketplaceName}: ${formatFailure(removed)}`);
+    }
+    result = runCodex(['plugin', 'marketplace', 'add', root, '--json'], deps.spawn, deps.env);
+  }
 
   if (result.status !== 0) {
     throw new Error(`codex plugin marketplace add failed for ${marketplaceName}: ${formatFailure(result)}`);
@@ -158,7 +168,11 @@ function syncCodexPlugin(options = {}) {
     stdout: options.stdout || process.stdout,
     stderr: options.stderr || process.stderr,
   };
-  const root = options.rootDir || rootDir;
+  // Codex re-copies ./plugin from the registered source whenever its version
+  // changes, so never register the working tree: a mid-merge checkout would
+  // leak into new sessions. The installed marketplace only moves on a
+  // successful sync-marketplace, like the marketplace Claude Code reads.
+  const root = options.rootDir || INSTALLED_PATH;
   const env = options.env || process.env;
 
   if (!isCodexAvailable(deps.spawn)) {

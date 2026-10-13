@@ -297,6 +297,10 @@ describe('marketplace sync excludes', () => {
     writeFileSync(join(source, 'workers', 'hub.ts'), 'hub');
     mkdirSync(join(source, '.codegraph'), { recursive: true });
     writeFileSync(join(source, '.codegraph', 'daemon.sock'), 'runtime state');
+    mkdirSync(join(source, '.agents', 'plugins'), { recursive: true });
+    writeFileSync(join(source, '.agents', 'plugins', 'marketplace.json'), '{"name":"claude-mem-local"}');
+    mkdirSync(join(source, '.agents', 'skills', 'local-skill'), { recursive: true });
+    writeFileSync(join(source, '.agents', 'skills', 'local-skill', 'SKILL.md'), 'dev only');
 
     mkdirSync(join(dest, '.git'), { recursive: true });
     writeFileSync(join(dest, '.git', 'HEAD'), 'ref: refs/heads/main');
@@ -313,6 +317,8 @@ describe('marketplace sync excludes', () => {
     expect(existsSync(join(dest, 'plugin', 'removed-in-this-build.cjs'))).toBe(false);
     expect(existsSync(join(dest, 'workers'))).toBe(false);
     expect(existsSync(join(dest, '.codegraph'))).toBe(false);
+    expect(existsSync(join(dest, '.agents', 'plugins', 'marketplace.json'))).toBe(true);
+    expect(existsSync(join(dest, '.agents', 'skills'))).toBe(false);
   });
 
   it('refreshes generated native bundles while leaving other ignored dist output alone', () => {

@@ -23,7 +23,8 @@ const BASE_EXCLUDES = [
   'scripts/package.json',
   'scripts/node_modules',
   '/workers',
-  '/.agents/',
+  // .agents/plugins is source: sync-codex-plugin registers it from here.
+  '/.agents/skills/',
   '/.claude/',
   '/.codegraph/',
 ];
