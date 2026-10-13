@@ -553,8 +553,14 @@ export function parseSummaryJson(text: string, sessionId?: number): ParsedSummar
       return skipped(typeof data.reason === 'string' ? data.reason : null);
     }
 
-    const str = (value: unknown): string | null =>
-      typeof value === 'string' && value.trim() ? value : null;
+    // Small models often answer a field with a list ("investigated":["a.md","b.ts"]);
+    // dropping it would leave a summary card with only its request line.
+    const str = (value: unknown): string | null => {
+      if (Array.isArray(value)) {
+        value = value.filter((v): v is string => typeof v === 'string' && v.trim() !== '').join('; ');
+      }
+      return typeof value === 'string' && value.trim() ? value : null;
+    };
 
     const summary: ParsedSummary = {
       request: str(data.request),
@@ -565,7 +571,9 @@ export function parseSummaryJson(text: string, sessionId?: number): ParsedSummar
       notes: str(data.notes),
     };
 
-    if (summary.request || summary.investigated || summary.learned || summary.completed || summary.next_steps) {
+    // The request alone just echoes the user's prompt: storing it gives an
+    // empty summary card, so it needs at least one field with content.
+    if (summary.investigated || summary.learned || summary.completed || summary.next_steps) {
       return summary;
     }
 

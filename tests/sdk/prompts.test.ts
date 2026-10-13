@@ -1,6 +1,15 @@
 import { describe, expect, it, spyOn } from 'bun:test';
 
-import { buildObservationPrompt, buildObservationPromptJson, buildSummaryPrompt, stripImagePayloadsFromField } from '../../src/sdk/prompts.js';
+import { ModeManager } from '../../src/services/domain/ModeManager.js';
+import {
+  buildContinuationPromptJson,
+  buildInitPromptJson,
+  buildObservationPrompt,
+  buildObservationPromptJson,
+  buildSummaryPrompt,
+  buildSummaryPromptJson,
+  stripImagePayloadsFromField,
+} from '../../src/sdk/prompts.js';
 
 const summaryMode = {
   prompts: {
@@ -103,6 +112,24 @@ describe('buildObservationPromptJson', () => {
     expect(prompt).toContain('{"skip":true}');
     expect(prompt).not.toContain('<skip_summary');
     expect(prompt).not.toContain('<observation>');
+  });
+});
+
+describe('JSON framing prompts with a real mode', () => {
+  it('never tell the JSON observer to answer in XML', () => {
+    const mode = ModeManager.getInstance().loadMode('code');
+    const prompts = {
+      init: buildInitPromptJson('proj', 'session-1', 'check the version', mode),
+      continuation: buildContinuationPromptJson('check the version', 2, 'session-1', mode),
+      summary: buildSummaryPromptJson({ id: 1, last_assistant_message: 'done' } as any, mode),
+    };
+
+    for (const prompt of Object.values(prompts)) {
+      expect(prompt).not.toContain('<skip_summary');
+      expect(prompt).not.toMatch(/\bXML\b/);
+    }
+    expect(prompts.init).toContain('reply with exactly {"skip":true}');
+    expect(prompts.continuation).toContain('reply with exactly {"skip":true}');
   });
 });
 

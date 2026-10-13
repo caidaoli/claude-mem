@@ -106,6 +106,19 @@ function buildObservationFormatWithFooter(mode: ModeConfig, format: OutputFormat
   return format === 'json' ? `${section}\n\n${mode.prompts.footer}` : section;
 }
 
+/**
+ * Mode prompt text is written for the XML observer. The JSON observer must not
+ * be told to emit "XML out", the <skip_summary /> sentinel or "the XML
+ * structure above": a model that follows those lines answers the init turn in
+ * XML, and that reply stays in the conversation history for every later turn.
+ */
+function asJsonInstructions(text: string): string {
+  return text
+    .replace(/<skip_summary reason="noise" \/>(?: \(a short reason in the attribute\))?/g, '{"skip":true}')
+    .replace(/XML structure above/g, 'JSON format above')
+    .replace(/XML out\b/g, 'JSON out');
+}
+
 function buildSessionContextHeader(userPrompt: string): string {
   return `<observed_from_primary_session>
   <user_request>${userPrompt}</user_request>
@@ -123,7 +136,7 @@ function buildSessionContextHeader(userPrompt: string): string {
  * it: every generation, session and user then shares one cacheable start.
  */
 function observerInstructions(mode: ModeConfig, format: OutputFormat = 'xml'): string {
-  return `${mode.prompts.system_identity}
+  const text = `${mode.prompts.system_identity}
 
 ${mode.prompts.observer_role}
 
@@ -134,6 +147,7 @@ ${mode.prompts.recording_focus}
 ${mode.prompts.skip_guidance}
 
 ${buildObservationFormatWithFooter(mode, format)}`;
+  return format === 'json' ? asJsonInstructions(text) : text;
 }
 
 export function buildInitPrompt(
@@ -575,7 +589,7 @@ CRITICAL: Your entire response must be a single valid JSON object on one line. D
 This is a session summary, not an observation: do NOT return observation fields (type, title, subtitle, facts, narrative, concepts, files_read, files_modified).
 If there is genuinely nothing to summarize, return exactly {"skip":true}.
 
-${mode.prompts.summary_footer}`;
+${asJsonInstructions(mode.prompts.summary_footer)}`;
 }
 
 export function buildContinuationPrompt(
@@ -600,7 +614,7 @@ ${wrapPriorContext(priorContext)}
 
 ${buildSessionContextHeader(userPrompt)}
 
-${mode.prompts.continuation_instruction}
+${format === 'json' ? asJsonInstructions(mode.prompts.continuation_instruction) : mode.prompts.continuation_instruction}
 
 ${mode.prompts.header_memory_continued}`;
 }

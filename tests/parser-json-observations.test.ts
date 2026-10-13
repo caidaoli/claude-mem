@@ -158,6 +158,15 @@ describe('parseSummaryJson', () => {
     });
   });
 
+  it('joins list-valued fields instead of dropping them', () => {
+    const result = parseSummaryJson('{"request":"R","investigated":["a.md","b.ts"],"learned":"L","completed":["done",""],"next_steps":[],"notes":null}');
+    expect(result).toEqual({ request: 'R', investigated: 'a.md; b.ts', learned: 'L', completed: 'done', next_steps: null, notes: null });
+  });
+
+  it('discards a summary that only echoes the request', () => {
+    expect(parseSummaryJson('{"request":"R","investigated":"","learned":"","completed":"","next_steps":"","notes":null}')).toBeNull();
+  });
+
   it('returns null when no field carries content', () => {
     expect(parseSummaryJson('{"type":"discovery","title":"","facts":[],"narrative":null}')).toBeNull();
     expect(parseSummaryJson('{"request":"","completed":"  "}')).toBeNull();
