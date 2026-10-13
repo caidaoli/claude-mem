@@ -101,6 +101,12 @@ git cat-file -e "${UPSTREAM_HEAD}^{commit}"
 git merge --no-commit --no-ff "$UPSTREAM_HEAD"
 ```
 
+Fork 不保留 GitHub Actions。无论是否冲突，都删除上游带回的工作流；这也会解决 modify/delete 冲突：
+
+```bash
+git rm -r -q --ignore-unmatch -- .github/workflows
+```
+
 发生冲突时：
 
 1. 用 `git diff --name-only --diff-filter=U` 和 `git ls-files -u` 列出冲突。
