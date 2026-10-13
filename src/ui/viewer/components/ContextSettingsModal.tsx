@@ -5,6 +5,7 @@ import { useContextPreview } from '../hooks/useContextPreview';
 import { useI18n } from '../i18n';
 import { DEFAULT_SETTINGS } from '../constants/settings';
 import { isClaudeMemObserverBaseUrl } from '../utils/observer-endpoint';
+import { CLAUDE_AUTH_METHODS, DEFAULT_CLAUDE_AUTH_METHOD } from '../utils/claude-auth-method';
 import { OPENAI_COMPAT_PRESET_OPTIONS, openAICompatPresetOption } from '../constants/openai-compat-presets';
 
 interface ContextSettingsModalProps {
@@ -146,6 +147,9 @@ export function ContextSettingsModal({
   // From the saved settings, not the form: the field stays editable while a
   // user types any other URL, and read-only for the observer's own endpoint.
   const observerManagesBaseUrl = isClaudeMemObserverBaseUrl(settings.CLAUDE_MEM_OPENROUTER_BASE_URL);
+  // Unknown or missing values read as the stored default, like claudeProviderOptionLabel.
+  const claudeAuthMethod = CLAUDE_AUTH_METHODS.find(m => m === formState.CLAUDE_MEM_CLAUDE_AUTH_METHOD)
+    ?? DEFAULT_CLAUDE_AUTH_METHOD;
 
   useEffect(() => {
     setFormState(settings);
@@ -367,7 +371,7 @@ export function ContextSettingsModal({
                   value={formState.CLAUDE_MEM_PROVIDER || 'claude'}
                   onChange={(e) => updateSetting('CLAUDE_MEM_PROVIDER', e.target.value)}
                 >
-                  <option value="claude">{t.settings.claudeOption}</option>
+                  <option value="claude">{t.settings.claudeOption[claudeAuthMethod]}</option>
                   <option value="gemini">{t.settings.geminiOption}</option>
                   <option value="openrouter">{t.settings.openrouterOption}</option>
                   <option value="codex">{t.settings.codexOption}</option>
@@ -377,19 +381,34 @@ export function ContextSettingsModal({
               </FormField>
 
               {formState.CLAUDE_MEM_PROVIDER === 'claude' && (
-                <FormField
-                  label={t.settings.claudeModel}
-                  tooltip={t.settings.claudeModelTooltip}
-                >
-                  <select
-                    value={formState.CLAUDE_MEM_MODEL || 'haiku'}
-                    onChange={(e) => updateSetting('CLAUDE_MEM_MODEL', e.target.value)}
+                <>
+                  <FormField
+                    label={t.settings.claudeModel}
+                    tooltip={t.settings.claudeModelTooltip}
                   >
-                    <option value="haiku">{t.settings.haikuOption}</option>
-                    <option value="sonnet">{t.settings.sonnetOption}</option>
-                    <option value="opus">{t.settings.opusOption}</option>
-                  </select>
-                </FormField>
+                    <select
+                      value={formState.CLAUDE_MEM_MODEL || 'haiku'}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_MODEL', e.target.value)}
+                    >
+                      <option value="haiku">{t.settings.haikuOption}</option>
+                      <option value="sonnet">{t.settings.sonnetOption}</option>
+                      <option value="opus">{t.settings.opusOption}</option>
+                    </select>
+                  </FormField>
+                  <FormField
+                    label={t.settings.claudeAuthMethod}
+                    tooltip={t.settings.claudeAuthMethodTooltip}
+                  >
+                    <select
+                      value={claudeAuthMethod}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_CLAUDE_AUTH_METHOD', e.target.value)}
+                    >
+                      {CLAUDE_AUTH_METHODS.map(method => (
+                        <option key={method} value={method}>{t.settings.claudeAuthOption[method]}</option>
+                      ))}
+                    </select>
+                  </FormField>
+                </>
               )}
 
               {formState.CLAUDE_MEM_PROVIDER === 'codex' && (
@@ -694,7 +713,7 @@ export function ContextSettingsModal({
                   onChange={(e) => updateSetting('CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER', e.target.value)}
                 >
                   <option value="">{t.settings.quotaFallbackOff}</option>
-                  <option value="claude">{t.settings.claudeOption}</option>
+                  <option value="claude">{t.settings.claudeOption[claudeAuthMethod]}</option>
                   <option value="gemini">{t.settings.geminiOption}</option>
                   <option value="openrouter">{t.settings.openrouterOption}</option>
                   <option value="openai-compatible">{t.settings.quotaFallbackOpenaiCompat}</option>
@@ -702,17 +721,32 @@ export function ContextSettingsModal({
               </FormField>
 
               {formState.CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER === 'claude' && (
-                <FormField
-                  label={t.settings.fallbackClaudeModel}
-                  tooltip={t.settings.fallbackClaudeModelTooltip}
-                >
-                  <input
-                    type="text"
-                    value={formState.CLAUDE_MEM_QUOTA_FALLBACK_MODEL || ''}
-                    onChange={(e) => updateSetting('CLAUDE_MEM_QUOTA_FALLBACK_MODEL', e.target.value)}
-                    placeholder={`${t.settings.examplePrefix}claude-haiku-4-5-20251001`}
-                  />
-                </FormField>
+                <>
+                  <FormField
+                    label={t.settings.claudeAuthMethod}
+                    tooltip={t.settings.fallbackClaudeAuthMethodTooltip}
+                  >
+                    <select
+                      value={claudeAuthMethod}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_CLAUDE_AUTH_METHOD', e.target.value)}
+                    >
+                      {CLAUDE_AUTH_METHODS.map(method => (
+                        <option key={method} value={method}>{t.settings.claudeAuthOption[method]}</option>
+                      ))}
+                    </select>
+                  </FormField>
+                  <FormField
+                    label={t.settings.fallbackClaudeModel}
+                    tooltip={t.settings.fallbackClaudeModelTooltip}
+                  >
+                    <input
+                      type="text"
+                      value={formState.CLAUDE_MEM_QUOTA_FALLBACK_MODEL || ''}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_QUOTA_FALLBACK_MODEL', e.target.value)}
+                      placeholder={`${t.settings.examplePrefix}claude-haiku-4-5-20251001`}
+                    />
+                  </FormField>
+                </>
               )}
 
               <FormField
