@@ -24,6 +24,7 @@ import { USER_SETTINGS_PATH } from '../../shared/paths.js';
 import { getCredential } from '../../shared/EnvManager.js';
 import type { ActiveSession, ConversationMessage } from '../worker-types.js';
 import { ModeManager } from '../domain/ModeManager.js';
+import type { ModeConfig } from '../domain/types.js';
 import {
   processAgentResponse,
   isAbortError,
@@ -62,6 +63,25 @@ export interface CustomAgentConfig {
   maxTokens: number;  // 0 = disabled
   firstTokenTimeoutSeconds: number;  // 0 = disabled (time to first body chunk, not HTTP headers)
   totalTimeoutSeconds: number;  // 0 = disabled
+}
+
+// Fork: Custom always writes Chinese, whatever language the active mode asks for.
+const CUSTOM_OBSERVATION_LANGUAGE = 'LANGUAGE REQUIREMENTS: Please write the observation data in 中文';
+const CUSTOM_SUMMARY_LANGUAGE = 'LANGUAGE REQUIREMENTS: Please write ALL summary content (request, investigated, learned, completed, next_steps, notes) in 中文';
+
+function withCustomLanguage(mode: ModeConfig): ModeConfig {
+  const setLanguage = (text: string, requirement: string) =>
+    `${text.replace(/\s*LANGUAGE REQUIREMENTS:[^\n]*/g, '')}\n\n${requirement}`;
+  return {
+    ...mode,
+    prompts: {
+      ...mode.prompts,
+      footer: setLanguage(mode.prompts.footer, CUSTOM_OBSERVATION_LANGUAGE),
+      continuation_instruction: setLanguage(mode.prompts.continuation_instruction, CUSTOM_OBSERVATION_LANGUAGE),
+      summary_footer: setLanguage(mode.prompts.summary_footer, CUSTOM_SUMMARY_LANGUAGE),
+      language_instruction: CUSTOM_OBSERVATION_LANGUAGE,
+    },
+  };
 }
 
 /**
@@ -1176,7 +1196,7 @@ export class CustomAgent {
       }
 
       // Load active mode
-      const mode = ModeManager.getInstance().getActiveMode();
+      const mode = withCustomLanguage(ModeManager.getInstance().getActiveMode());
       const requestSession = resolveRequestSessionId(session.contentSessionId || '');
       const requestSessionId = requestSession.sessionId;
       if (requestSession.generated) {

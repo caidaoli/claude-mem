@@ -1302,7 +1302,22 @@ describe('CustomAgent session behavior', () => {
     expect(mockStoreObservations).toHaveBeenCalledTimes(1);
   });
 
-  it('injects structured language instruction into observation prompt without footer regex', async () => {
+  it('writes Chinese in every Custom prompt regardless of the mode language', async () => {
+    const japaneseMode = {
+      ...mockMode,
+      prompts: {
+        ...mockMode.prompts,
+        footer: 'footer\n\nLANGUAGE REQUIREMENTS: Please write the observation data in 日本語',
+        continuation_instruction: 'continue observing\n\nLANGUAGE REQUIREMENTS: Please write the observation data in 日本語',
+        summary_footer: 'summary footer\n\nLANGUAGE REQUIREMENTS: Please write ALL summary content (request, investigated, learned, completed, next_steps, notes) in 日本語'
+      }
+    };
+    modeManagerSpy.mockRestore();
+    modeManagerSpy = spyOn(ModeManager, 'getInstance').mockImplementation(() => ({
+      getActiveMode: () => japaneseMode,
+      loadMode: () => {}
+    } as any));
+
     const dbManager = {
       getSessionStore: () => ({
         getSessionById: () => ({ memory_session_id: 'mem-custom-1' }),
@@ -1310,7 +1325,7 @@ describe('CustomAgent session behavior', () => {
         ensureMemorySessionIdRegistered: () => {},
         storeObservations: mock(() => ({
           observationIds: [1],
-          summaryId: null,
+          summaryId: 1,
           createdAtEpoch: Date.now()
         }))
       }),
@@ -1336,6 +1351,7 @@ describe('CustomAgent session behavior', () => {
           tool_response: { ok: true },
           cwd: '/tmp/project'
         } as any;
+        yield { type: 'summarize', last_assistant_message: 'done' } as any;
       },
       getPendingMessageStore: () => ({
         confirmProcessed: () => {},
@@ -1343,28 +1359,39 @@ describe('CustomAgent session behavior', () => {
       })
     } as unknown as SessionManager;
 
-    const session = createSession();
+    const session = { ...createSession(), lastPromptNumber: 2 };
 
-    global.fetch = mock(() => Promise.resolve(new Response(JSON.stringify({
-      choices: [{ message: { content: '{"type":"discovery","title":"ok","narrative":"n","files_read":[],"files_modified":[],"concepts":[]}' } }],
-      usage: { total_tokens: 12 }
-    }))));
+    let callCount = 0;
+    global.fetch = mock(() => {
+      callCount += 1;
+      const content = callCount === 3
+        ? '{"request":"r","investigated":"i","learned":"l","completed":"c","next_steps":"n","notes":null}'
+        : '{"type":"discovery","title":"ok","narrative":"n","files_read":[],"files_modified":[],"concepts":[]}';
+      return Promise.resolve(new Response(JSON.stringify({
+        choices: [{ message: { content } }],
+        usage: { total_tokens: 12 }
+      })));
+    });
 
     const agent = new CustomAgent(dbManager, sessionManager);
     await agent.startSession(session);
 
-    const secondRequestBody = JSON.parse((global.fetch as any).mock.calls[1][1].body as string);
-    const observationPrompt = secondRequestBody.messages.find((message: any) =>
-      typeof message.content === 'string' && message.content.includes('OUTPUT FORMAT: Return compact single-line JSON')
-    )?.content as string;
+    expect(global.fetch).toHaveBeenCalledTimes(3);
+    const lastUserPrompt = (callIndex: number) => {
+      const body = JSON.parse((global.fetch as any).mock.calls[callIndex][1].body as string);
+      return body.messages.filter((message: any) => message.role === 'user').at(-1).content as string;
+    };
+    const allPrompts = (global.fetch as any).mock.calls
+      .map((call: any) => call[1].body as string)
+      .join('\n');
 
-    const firstRequestHeaders = (global.fetch as any).mock.calls[0][1].headers;
-    const secondRequestHeaders = (global.fetch as any).mock.calls[1][1].headers;
-
-    expect(observationPrompt).toBeTruthy();
-    expect(observationPrompt).toContain('LANGUAGE REQUIREMENTS: Please write the observation data in Bahasa Indonesia');
-    expect(firstRequestHeaders.Session_id).toBe('content-1');
-    expect(secondRequestHeaders.Session_id).toBe('content-1');
+    expect(lastUserPrompt(1)).toContain('LANGUAGE REQUIREMENTS: Please write the observation data in 中文');
+    expect(lastUserPrompt(2)).toContain('LANGUAGE REQUIREMENTS: Please write ALL summary content (request, investigated, learned, completed, next_steps, notes) in 中文');
+    expect(JSON.parse((global.fetch as any).mock.calls[0][1].body as string).messages
+      .map((message: any) => message.content).join('\n'))
+      .toContain('LANGUAGE REQUIREMENTS: Please write the observation data in 中文');
+    expect(allPrompts).not.toContain('日本語');
+    expect(allPrompts).not.toContain('Bahasa Indonesia');
   });
 
   it('processes empty observation response to keep queue state consistent', async () => {
@@ -1450,7 +1477,7 @@ describe('CustomAgent session behavior', () => {
       ...mockMode,
       prompts: {
         ...mockMode.prompts,
-        language_instruction: 'LANGUAGE REQUIREMENTS: Please write the observation data in Mode A'
+        field_guidance: 'Mode A field guidance'
       },
       observation_types: [{ id: 'discovery', description: 'A 模式发现' }]
     };
@@ -1459,7 +1486,7 @@ describe('CustomAgent session behavior', () => {
       ...mockMode,
       prompts: {
         ...mockMode.prompts,
-        language_instruction: 'LANGUAGE REQUIREMENTS: Please write the observation data in Mode B'
+        field_guidance: 'Mode B field guidance'
       },
       observation_types: [{ id: 'bugfix', description: 'B 模式修复' }]
     };
@@ -1534,8 +1561,8 @@ describe('CustomAgent session behavior', () => {
 
     expect(observationPrompt).toBeTruthy();
     expect(observationPrompt).toMatch(/"type"\s*:\s*"discovery"/);
-    expect(observationPrompt).toContain('LANGUAGE REQUIREMENTS: Please write the observation data in Mode A');
-    expect(observationPrompt).not.toContain('LANGUAGE REQUIREMENTS: Please write the observation data in Mode B');
+    expect(observationPrompt).toContain('Mode A field guidance');
+    expect(observationPrompt).not.toContain('Mode B field guidance');
   });
 
   it('throws meaningful error when OpenAI response is non-JSON', async () => {
