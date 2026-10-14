@@ -17,7 +17,7 @@ const mockMode = {
     recording_focus: 'Record meaningful changes',
     skip_guidance: 'Skip noise',
     language_instruction: 'LANGUAGE REQUIREMENTS: Please write the observation data in Bahasa Indonesia',
-    footer: '',
+    footer: 'footer',
     header_memory_start: 'MEMORY_START',
     continuation_greeting: 'CONTINUE',
     continuation_instruction: 'continue observing',

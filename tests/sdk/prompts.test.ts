@@ -95,7 +95,7 @@ describe('buildObservationPromptJson', () => {
       prompts: {
         xml_title_placeholder: 'title', xml_subtitle_placeholder: 'subtitle', xml_fact_placeholder: 'fact',
         xml_narrative_placeholder: 'narrative', xml_concept_placeholder: 'concept', xml_file_placeholder: 'file',
-        field_guidance: '', concept_guidance: '',
+        field_guidance: 'field guidance', concept_guidance: 'concept guidance',
       },
       observation_types: [{ id: 'discovery', description: 'Test type' }],
     } as any;

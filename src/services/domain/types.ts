@@ -55,6 +55,7 @@ export interface ModePrompts {
 }
 
 export interface ModeConfig {
+  id?: string;
   name: string;
   description: string;
   version: string;

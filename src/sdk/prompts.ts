@@ -3,6 +3,7 @@ import { retainTextHeadTail } from '../shared/text-truncation.js';
 import { logger } from '../utils/logger.js';
 import { REDACTION_MARKER_HINT, hasRedactionMarker } from '../utils/redaction.js';
 import type { ModeConfig } from '../services/domain/types.js';
+import type { RequiredPromptKey } from '../services/domain/mode-validation.js';
 
 export const SUMMARY_MODE_MARKER = 'MODE SWITCH: PROGRESS SUMMARY';
 
@@ -34,48 +35,57 @@ function stripPlaceholderWrapper(placeholder: string): string {
   return trimmed;
 }
 
+function getPrompt(mode: ModeConfig, key: RequiredPromptKey): string {
+  const prompt = mode.prompts?.[key];
+  const allowEmpty = key === 'format_examples' || key === 'xml_file_placeholder';
+  if (typeof prompt !== 'string' || (!allowEmpty && !prompt.trim())) {
+    throw new Error(`Mode "${mode.id ?? mode.name}" is missing prompt "${key}"`);
+  }
+  return prompt;
+}
+
 function observationSkeleton(mode: ModeConfig): string {
-  return `${mode.prompts.output_format_header}
+  return `${getPrompt(mode, 'output_format_header')}
 
 <observation>
   <type>[ ${mode.observation_types.map(t => t.id).join(' | ')} ]</type>
   <!--
-    ${mode.prompts.type_guidance}
+    ${getPrompt(mode, 'type_guidance')}
   -->
-  <title>${mode.prompts.xml_title_placeholder}</title>
-  <subtitle>${mode.prompts.xml_subtitle_placeholder}</subtitle>
+  <title>${getPrompt(mode, 'xml_title_placeholder')}</title>
+  <subtitle>${getPrompt(mode, 'xml_subtitle_placeholder')}</subtitle>
   <facts>
-    <fact>${mode.prompts.xml_fact_placeholder}</fact>
-    <fact>${mode.prompts.xml_fact_placeholder}</fact>
-    <fact>${mode.prompts.xml_fact_placeholder}</fact>
+    <fact>${getPrompt(mode, 'xml_fact_placeholder')}</fact>
+    <fact>${getPrompt(mode, 'xml_fact_placeholder')}</fact>
+    <fact>${getPrompt(mode, 'xml_fact_placeholder')}</fact>
   </facts>
   <!--
-    ${mode.prompts.field_guidance}
+    ${getPrompt(mode, 'field_guidance')}
   -->
-  <narrative>${mode.prompts.xml_narrative_placeholder}</narrative>
+  <narrative>${getPrompt(mode, 'xml_narrative_placeholder')}</narrative>
   <concepts>
-    <concept>${mode.prompts.xml_concept_placeholder}</concept>
-    <concept>${mode.prompts.xml_concept_placeholder}</concept>
+    <concept>${getPrompt(mode, 'xml_concept_placeholder')}</concept>
+    <concept>${getPrompt(mode, 'xml_concept_placeholder')}</concept>
   </concepts>
   <!--
-    ${mode.prompts.concept_guidance}
+    ${getPrompt(mode, 'concept_guidance')}
   -->
   <files_read>
-    <file>${mode.prompts.xml_file_placeholder}</file>
-    <file>${mode.prompts.xml_file_placeholder}</file>
+    <file>${getPrompt(mode, 'xml_file_placeholder')}</file>
+    <file>${getPrompt(mode, 'xml_file_placeholder')}</file>
   </files_read>
   <files_modified>
-    <file>${mode.prompts.xml_file_placeholder}</file>
-    <file>${mode.prompts.xml_file_placeholder}</file>
+    <file>${getPrompt(mode, 'xml_file_placeholder')}</file>
+    <file>${getPrompt(mode, 'xml_file_placeholder')}</file>
   </files_modified>
 </observation>
-${mode.prompts.format_examples}
+${getPrompt(mode, 'format_examples')}
 
-${mode.prompts.footer}`;
+${getPrompt(mode, 'footer')}`;
 }
 
 function observationJsonSkeleton(mode: ModeConfig): string {
-  const p = mode.prompts;
+  const placeholder = (key: RequiredPromptKey) => stripPlaceholderWrapper(getPrompt(mode, key));
   return `IMPORTANT: You MUST respond with ONLY a valid JSON object. No explanations, no markdown, no thinking process - JUST the raw JSON.
 
 CRITICAL - type field MUST be EXACTLY one of these values (no other values allowed):
@@ -84,17 +94,17 @@ ${mode.observation_types.map(t => `  - "${t.id}": ${t.description}`).join('\n')}
 Output format (JSON):
 {
   "type": "${mode.observation_types[0].id}",
-  "title": "${stripPlaceholderWrapper(p.xml_title_placeholder)}",
-  "subtitle": "${stripPlaceholderWrapper(p.xml_subtitle_placeholder)}",
-  "facts": ["${stripPlaceholderWrapper(p.xml_fact_placeholder)}", "${stripPlaceholderWrapper(p.xml_fact_placeholder)}"],
-  "narrative": "${stripPlaceholderWrapper(p.xml_narrative_placeholder)}",
-  "concepts": ["${stripPlaceholderWrapper(p.xml_concept_placeholder)}"],
-  "files_read": ["${stripPlaceholderWrapper(p.xml_file_placeholder)}"],
-  "files_modified": ["${stripPlaceholderWrapper(p.xml_file_placeholder)}"]
+  "title": "${placeholder('xml_title_placeholder')}",
+  "subtitle": "${placeholder('xml_subtitle_placeholder')}",
+  "facts": ["${placeholder('xml_fact_placeholder')}", "${placeholder('xml_fact_placeholder')}"],
+  "narrative": "${placeholder('xml_narrative_placeholder')}",
+  "concepts": ["${placeholder('xml_concept_placeholder')}"],
+  "files_read": ["${placeholder('xml_file_placeholder')}"],
+  "files_modified": ["${placeholder('xml_file_placeholder')}"]
 }
 
-${p.field_guidance}
-${p.concept_guidance}`;
+${getPrompt(mode, 'field_guidance')}
+${getPrompt(mode, 'concept_guidance')}`;
 }
 
 function buildObservationFormatSection(mode: ModeConfig, format: OutputFormat): string {
@@ -103,7 +113,7 @@ function buildObservationFormatSection(mode: ModeConfig, format: OutputFormat): 
 
 function buildObservationFormatWithFooter(mode: ModeConfig, format: OutputFormat): string {
   const section = buildObservationFormatSection(mode, format);
-  return format === 'json' ? `${section}\n\n${mode.prompts.footer}` : section;
+  return format === 'json' ? `${section}\n\n${getPrompt(mode, 'footer')}` : section;
 }
 
 /**
@@ -136,15 +146,15 @@ function buildSessionContextHeader(userPrompt: string): string {
  * it: every generation, session and user then shares one cacheable start.
  */
 function observerInstructions(mode: ModeConfig, format: OutputFormat = 'xml'): string {
-  const text = `${mode.prompts.system_identity}
+  const text = `${getPrompt(mode, 'system_identity')}
 
-${mode.prompts.observer_role}
+${getPrompt(mode, 'observer_role')}
 
-${mode.prompts.spatial_awareness}
+${getPrompt(mode, 'spatial_awareness')}
 
-${mode.prompts.recording_focus}
+${getPrompt(mode, 'recording_focus')}
 
-${mode.prompts.skip_guidance}
+${getPrompt(mode, 'skip_guidance')}
 
 ${buildObservationFormatWithFooter(mode, format)}`;
   return format === 'json' ? asJsonInstructions(text) : text;
@@ -162,7 +172,7 @@ ${wrapPriorContext(priorContext)}
 
 ${buildSessionContextHeader(userPrompt)}
 
-${mode.prompts.header_memory_start}`;
+${getPrompt(mode, 'header_memory_start')}`;
 }
 
 export function buildInitPromptJson(project: string, sessionId: string, userPrompt: string, mode: ModeConfig): string {
@@ -170,7 +180,7 @@ export function buildInitPromptJson(project: string, sessionId: string, userProm
 
 ${buildSessionContextHeader(userPrompt)}
 
-${mode.prompts.header_memory_start}`;
+${getPrompt(mode, 'header_memory_start')}`;
 }
 
 /**
@@ -544,25 +554,25 @@ export function buildSummaryPrompt(session: SDKSession, mode: ModeConfig): strin
 • Do NOT use <observation> tags. <observation> output will be DISCARDED and cause a system error.
 • The ONLY accepted root tag is <summary>. Any other root tag is a protocol violation.
 
-${mode.prompts.header_summary_checkpoint}
-${mode.prompts.summary_instruction}
+${getPrompt(mode, 'header_summary_checkpoint')}
+${getPrompt(mode, 'summary_instruction')}
 
-${mode.prompts.summary_context_label}
+${getPrompt(mode, 'summary_context_label')}
 ${lastAssistantMessage}
 ${hasRedactionMarker(lastAssistantMessage) ? `\n${REDACTION_MARKER_HINT}\n` : ''}
-${mode.prompts.summary_format_instruction}
+${getPrompt(mode, 'summary_format_instruction')}
 <summary>
-  <request>${mode.prompts.xml_summary_request_placeholder}</request>
-  <investigated>${mode.prompts.xml_summary_investigated_placeholder}</investigated>
-  <learned>${mode.prompts.xml_summary_learned_placeholder}</learned>
-  <completed>${mode.prompts.xml_summary_completed_placeholder}</completed>
-  <next_steps>${mode.prompts.xml_summary_next_steps_placeholder}</next_steps>
-  <notes>${mode.prompts.xml_summary_notes_placeholder}</notes>
+  <request>${getPrompt(mode, 'xml_summary_request_placeholder')}</request>
+  <investigated>${getPrompt(mode, 'xml_summary_investigated_placeholder')}</investigated>
+  <learned>${getPrompt(mode, 'xml_summary_learned_placeholder')}</learned>
+  <completed>${getPrompt(mode, 'xml_summary_completed_placeholder')}</completed>
+  <next_steps>${getPrompt(mode, 'xml_summary_next_steps_placeholder')}</next_steps>
+  <notes>${getPrompt(mode, 'xml_summary_notes_placeholder')}</notes>
 </summary>
 
 REMINDER: Your response MUST use <summary> as the root tag, NOT <observation>.
 If there is genuinely nothing to summarize, reply with exactly <skip_summary reason="nothing durable" /> instead of an empty response or prose.
-${mode.prompts.summary_footer}`;
+${getPrompt(mode, 'summary_footer')}`;
 }
 
 export function buildSummaryPromptJson(session: SDKSession, mode: ModeConfig): string {
@@ -576,10 +586,10 @@ export function buildSummaryPromptJson(session: SDKSession, mode: ModeConfig): s
   return `IMPORTANT: You MUST respond with ONLY a valid JSON object. No explanations, no markdown, no thinking process - JUST the raw JSON.
 OUTPUT FORMAT: Return compact single-line JSON without any line breaks, indentation, or extra whitespace.
 
-${mode.prompts.header_summary_checkpoint}
-${mode.prompts.summary_instruction}
+${getPrompt(mode, 'header_summary_checkpoint')}
+${getPrompt(mode, 'summary_instruction')}
 
-${mode.prompts.summary_context_label}
+${getPrompt(mode, 'summary_context_label')}
 ${lastAssistantMessage}
 
 Required JSON format (respond with ONLY this structure as compact single-line JSON):
@@ -589,7 +599,7 @@ CRITICAL: Your entire response must be a single valid JSON object on one line. D
 This is a session summary, not an observation: do NOT return observation fields (type, title, subtitle, facts, narrative, concepts, files_read, files_modified).
 If there is genuinely nothing to summarize, return exactly {"skip":true}.
 
-${asJsonInstructions(mode.prompts.summary_footer)}`;
+${asJsonInstructions(getPrompt(mode, 'summary_footer'))}`;
 }
 
 export function buildContinuationPrompt(
@@ -609,14 +619,14 @@ export function buildContinuationPromptJson(userPrompt: string, promptNumber: nu
 function buildContinuationPromptInternal(userPrompt: string, mode: ModeConfig, format: OutputFormat, priorContext: string = ''): string {
   return `${observerInstructions(mode, format)}
 
-${mode.prompts.continuation_greeting}
+${getPrompt(mode, 'continuation_greeting')}
 ${wrapPriorContext(priorContext)}
 
 ${buildSessionContextHeader(userPrompt)}
 
-${format === 'json' ? asJsonInstructions(mode.prompts.continuation_instruction) : mode.prompts.continuation_instruction}
+${format === 'json' ? asJsonInstructions(getPrompt(mode, 'continuation_instruction')) : getPrompt(mode, 'continuation_instruction')}
 
-${mode.prompts.header_memory_continued}`;
+${getPrompt(mode, 'header_memory_continued')}`;
 }
 
 /** The user-request block buildInitPrompt and buildContinuationPrompt embed. */
