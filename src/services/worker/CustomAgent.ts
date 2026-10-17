@@ -30,23 +30,37 @@ import {
   isAbortError,
   type WorkerRef
 } from './agents/index.js';
-import { get_encoding } from 'tiktoken';
+import { createRequire } from 'node:module';
+import type { Tiktoken } from 'tiktoken';
+
+// tiktoken is external (wasm sidecar) and the worker bundle is shared by every
+// hook, which may run from a plugin cache without node_modules. Load it on first
+// use so only Custom context truncation depends on it.
+const _require = typeof __filename !== 'undefined'
+  ? createRequire(__filename)
+  : createRequire(import.meta.url);
 
 // Context window management constants
-const tokenEncoder = get_encoding('o200k_base');
+let tokenEncoder: Tiktoken | undefined;
 const textDecoder = new TextDecoder();
 
+function getTokenEncoder(): Tiktoken {
+  tokenEncoder ??= (_require('tiktoken') as typeof import('tiktoken')).get_encoding('o200k_base');
+  return tokenEncoder;
+}
+
 function estimateTokenCount(text: string): number {
-  return tokenEncoder.encode_ordinary(text).length;
+  return getTokenEncoder().encode_ordinary(text).length;
 }
 
 function truncateToTokenLimit(text: string, maxTokens: number): string {
-  const tokens = tokenEncoder.encode_ordinary(text);
+  const encoder = getTokenEncoder();
+  const tokens = encoder.encode_ordinary(text);
   if (tokens.length <= maxTokens) {
     return text;
   }
 
-  return textDecoder.decode(tokenEncoder.decode(tokens.slice(0, Math.max(1, maxTokens))));
+  return textDecoder.decode(encoder.decode(tokens.slice(0, Math.max(1, maxTokens))));
 }
 
 // Protocol types
