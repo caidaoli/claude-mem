@@ -56,6 +56,8 @@ export const en = {
   // Prompt Card
   prompt: {
     prompt: 'Prompt',
+    showMore: 'Show more',
+    showLess: 'Show less',
   },
 
   // Theme Toggle

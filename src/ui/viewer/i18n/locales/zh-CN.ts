@@ -58,6 +58,8 @@ export const zhCN: TranslationKeys = {
   // Prompt Card
   prompt: {
     prompt: '提示',
+    showMore: '展开',
+    showLess: '收起',
   },
 
   // Theme Toggle
