@@ -4,6 +4,8 @@ export const zhCN: TranslationKeys = {
   // Header
   header: {
     allProjects: '所有项目',
+    myWork: '我的工作',
+    myWorkTitle: '打开本地工作和审查队列',
     documentation: '文档',
     followX: '关注我们的 X',
     joinDiscord: '加入我们的 Discord 社区',

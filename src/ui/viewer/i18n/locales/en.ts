@@ -2,6 +2,8 @@ export const en = {
   // Header
   header: {
     allProjects: 'All Projects',
+    myWork: 'My Work',
+    myWorkTitle: 'Open your local work and review queue',
     documentation: 'Documentation',
     followX: 'Follow us on X',
     joinDiscord: 'Join our Discord community',

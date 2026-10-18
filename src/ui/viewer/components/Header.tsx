@@ -39,6 +39,7 @@ export function Header({
   return (
     <div className="header">
       <div className="header-main">
+        <a href="/" className="local-work-link" title={t.header.myWorkTitle}>{t.header.myWork}</a>
         <h1>
           <div style={{ position: 'relative', display: 'inline-block' }}>
             <img src="claude-mem-logomark.webp" alt="" className={`logomark ${isProcessing ? 'spinning' : ''}`} />
