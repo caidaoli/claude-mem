@@ -11,25 +11,26 @@
   <script type="module" src="/work-view/app.js"></script>
 </head>
 <body data-mode="live">
-  <a class="skip" href="#main">Skip to my work</a>
+  <a class="skip" href="#main" data-i18n="skip">Skip to my work</a>
   <header class="app-header">
     <a class="brand" href="#cards" data-route aria-label="Claude-Mem My Work"><img src="/work-view/assets/cmem-mark.svg" width="35" height="35" alt=""></a>
-    <nav aria-label="Main"><button type="button" class="workspace-link" id="workspace-personal" aria-pressed="true">My Work</button><button type="button" class="workspace-link" id="workspace-team" aria-pressed="false">TeamBrain</button><a href="/viewer">Memory &amp; settings</a></nav>
-    <div class="local-state"><span class="connection" id="connection" data-state="connecting" role="status"><span class="connection-dot" aria-hidden="true"></span><span id="connection-label">Connecting locally…</span></span></div>
+    <nav aria-label="Main"><button type="button" class="workspace-link" id="workspace-personal" aria-pressed="true" data-i18n="myWork">My Work</button><button type="button" class="workspace-link" id="workspace-team" aria-pressed="false" data-i18n="teamBrain">TeamBrain</button><a href="/viewer" data-i18n="memorySettings">Memory &amp; settings</a></nav>
+    <label class="language-control"><span class="sr-only" data-i18n="language">Language</span><select id="language-select" aria-label="Language"><option value="en">English</option><option value="zh-CN">中文</option></select></label>
+    <div class="local-state"><span class="connection" id="connection" data-state="connecting" role="status"><span class="connection-dot" aria-hidden="true"></span><span id="connection-label" data-i18n="connecting">Connecting locally…</span></span></div>
 
   </header>
 
   <main id="main" class="page" tabindex="-1">
     <div id="personal-workspace">
     <div class="page-heading" id="personal-heading">
-      <div><p class="eyebrow">Your workspace, at a glance</p><h1>My Work</h1><p class="subtitle">Your requests. What landed. What needs you.</p></div>
-      <div class="view-switch" role="group" aria-label="Work view"><button type="button" data-view="cards" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>Cards</span></button><button type="button" data-view="list" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 5h13M8 12h13M8 19h13"/><path d="M3 5h.01M3 12h.01M3 19h.01" stroke-width="3"/></svg><span>List</span></button><button type="button" data-view="agents" aria-pressed="false">Agents</button></div>
+      <div><p class="eyebrow" data-i18n="workspaceEyebrow">Your workspace, at a glance</p><h1 data-i18n="myWork">My Work</h1><p class="subtitle" data-i18n="workspaceSubtitle">Your requests. What landed. What needs you.</p></div>
+      <div class="view-switch" role="group" aria-label="Work view" data-i18n-aria="workView"><button type="button" data-view="cards" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span data-i18n="cards">Cards</span></button><button type="button" data-view="list" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 5h13M8 12h13M8 19h13"/><path d="M3 5h.01M3 12h.01M3 19h.01" stroke-width="3"/></svg><span data-i18n="list">List</span></button><button type="button" data-view="agents" aria-pressed="false" data-i18n="agents">Agents</button></div>
     </div>
     <div class="toolbar" id="personal-toolbar" role="search">
-      <label class="search-field"><img src="/work-view/assets/icons/search.svg" width="22" height="22" alt=""><span class="sr-only">Search requests and agents</span><input id="search" type="search" placeholder="Search requests or agents" autocomplete="off"></label>
-      <label><span class="sr-only">Project</span><select id="project-filter" aria-label="Filter by project"><option value="">All projects</option></select></label>
-      <label><span class="sr-only">Time range</span><select id="time-range"><option value="day">Past 24 hours</option><option value="week">Past 7 days</option><option value="all">All recorded work</option></select></label>
-      <label class="sort-field"><span>Sort</span><select id="sort" aria-label="Sort requests"><option value="attention">Attention first</option><option value="latest">Latest update</option><option value="oldest">Oldest update</option><option value="title">Request A–Z</option></select></label>
+      <label class="search-field"><img src="/work-view/assets/icons/search.svg" width="22" height="22" alt=""><span class="sr-only" data-i18n="search">Search requests and agents</span><input id="search" type="search" data-i18n-placeholder="search" placeholder="Search requests or agents" autocomplete="off"></label>
+      <label><span class="sr-only" data-i18n="project">Project</span><select id="project-filter" aria-label="Filter by project" data-i18n-aria="project"><option value="" data-i18n="allProjects">All projects</option></select></label>
+      <label><span class="sr-only" data-i18n="timeRange">Time range</span><select id="time-range"><option value="day" data-i18n="day">Past 24 hours</option><option value="week" data-i18n="week">Past 7 days</option><option value="all" data-i18n="allWork">All recorded work</option></select></label>
+      <label class="sort-field"><span data-i18n="sort">Sort</span><select id="sort" aria-label="Sort requests" data-i18n-aria="sortRequests"><option value="attention" data-i18n="attention">Attention first</option><option value="latest" data-i18n="latest">Latest update</option><option value="oldest" data-i18n="oldest">Oldest update</option><option value="title" data-i18n="titleAZ">Request A–Z</option></select></label>
     </div>
     <nav class="status-tabs" aria-label="Filter work" id="status-tabs"></nav>
     <div id="updates-banner"></div><div id="scope-trail"></div>
@@ -38,25 +39,25 @@
       <div id="work-grid" class="work-grid"></div>
       <details id="unlinked-work" class="unlinked-note" hidden><summary id="unlinked-count"></summary><div id="unlinked-items"></div></details>
     </section>
-    <footer class="page-footer"><div><p id="source-note">Reading saved requests from this computer…</p><p id="reading-note">Working, reported complete, and human checked are separate states.</p><p><span id="sync-state">Cloud sync: checking configuration…</span> · <span id="received-time">Waiting for the local connection…</span></p></div><div class="connect-options" aria-label="Optional connections"><button type="button" data-connect="Claude.ai">Connect Claude.ai ↗</button><button type="button" data-connect="ChatGPT">Connect ChatGPT ↗</button></div></footer>
+    <footer class="page-footer"><div><p id="source-note" data-i18n="sourceNote">Reading saved requests from this computer…</p><p id="reading-note" data-i18n="readingNote">Working, reported complete, and human checked are separate states.</p><p><span id="sync-state" data-i18n="cloudChecking">Cloud sync: checking configuration…</span> · <span id="received-time" data-i18n="waitingConnection">Waiting for the local connection…</span></p></div><div class="connect-options" aria-label="Optional connections" data-i18n-aria="optionalConnections"><button type="button" data-connect="Claude.ai" data-i18n="connectClaude">Connect Claude.ai ↗</button><button type="button" data-connect="ChatGPT" data-i18n="connectChatGPT">Connect ChatGPT ↗</button></div></footer>
     </div>
     <section id="team-workspace" class="team-view" hidden aria-labelledby="team-heading">
       <header class="team-page-heading">
-        <div><p class="team-kicker">Optional shared workspace</p><h1 id="team-heading">TeamBrain</h1><p class="team-intro">See the work your team chose to share, and the next step you can help with.</p></div>
-        <span class="team-local-note">Your personal work stays separate.</span>
+      <div><p class="team-kicker" data-i18n="teamOptional">Optional shared workspace</p><h1 id="team-heading" data-i18n="teamBrain">TeamBrain</h1><p class="team-intro" data-i18n="teamIntro">See the work your team chose to share, and the next step you can help with.</p></div>
+        <span class="team-local-note" data-i18n="personalSeparate">Your personal work stays separate.</span>
       </header>
       <div class="team-connection">
-        <p id="team-health" data-state="idle" role="status">Check your connection to see shared work.</p>
-        <p id="team-received">No shared update received in this visit.</p>
+        <p id="team-health" data-state="idle" role="status" data-i18n="checkConnection">Check your connection to see shared work.</p>
+        <p id="team-received" data-i18n="noSharedVisit">No shared update received in this visit.</p>
         <p id="team-last-error" hidden></p>
       </div>
       <section id="team-setup" class="team-setup" aria-labelledby="team-setup-heading">
-        <div class="team-setup-intro"><p class="team-kicker">Get connected</p><h2 id="team-setup-heading">Choose how to join your team.</h2><p>TeamBrain adds a shared view beside My Work. Each member chooses what to share; opening this page does not upload your local work.</p></div>
+        <div class="team-setup-intro"><p class="team-kicker" data-i18n="getConnected">Get connected</p><h2 id="team-setup-heading" data-i18n="chooseTeam">Choose how to join your team.</h2><p data-i18n="teamSetupIntro">TeamBrain adds a shared view beside My Work. Each member chooses what to share; opening this page does not upload your local work.</p></div>
         <div class="team-setup-options">
-          <article class="team-setup-option"><span class="team-option-number" aria-hidden="true">01</span><h3>Start a team</h3><p>Set up a team account in CMEM Cloud, check the available plan, and invite the people you work with.</p><a class="team-primary" href="https://cmem.ai/teambrain/start" target="_blank" rel="noopener noreferrer">Set up a team ↗</a><p class="team-option-note">Plan eligibility and current pricing are shown during setup. This page does not start a subscription.</p></article>
-          <article class="team-setup-option"><span class="team-option-number" aria-hidden="true">02</span><h3>Use an existing invitation</h3><p>Ask a team owner for an invite link, then run this command in a terminal on this computer:</p><pre class="team-join-command"><code>npx claude-mem teambrain join '&lt;invite-link&gt;'</code></pre><p class="team-option-note">Sign in and approve this device. An installation already connected to another account must resolve that account choice first.</p><button id="team-refresh" type="button" class="team-secondary">Refresh connection</button></article>
+          <article class="team-setup-option"><span class="team-option-number" aria-hidden="true">01</span><h3 data-i18n="startTeam">Start a team</h3><p data-i18n="startTeamDesc">Set up a team account in CMEM Cloud, check the available plan, and invite the people you work with.</p><a class="team-primary" href="https://cmem.ai/teambrain/start" target="_blank" rel="noopener noreferrer" data-i18n="setupTeam">Set up a team ↗</a><p class="team-option-note" data-i18n="pricingNote">Plan eligibility and current pricing are shown during setup. This page does not start a subscription.</p></article>
+          <article class="team-setup-option"><span class="team-option-number" aria-hidden="true">02</span><h3 data-i18n="existingInvite">Use an existing invitation</h3><p data-i18n="inviteDesc">Ask a team owner for an invite link, then run this command in a terminal on this computer:</p><pre class="team-join-command"><code>npx claude-mem teambrain join '&lt;invite-link&gt;'</code></pre><p class="team-option-note" data-i18n="approveDevice">Sign in and approve this device. An installation already connected to another account must resolve that account choice first.</p><button id="team-refresh" type="button" class="team-secondary" data-i18n="refresh">Refresh connection</button></article>
         </div>
-        <div class="team-setup-footnote"><h3>What connects here</h3><p>This panel reads shared lists, tasks and findings through your approved CMEM connection. Claude.ai and ChatGPT setup remains separate. TeamBrain does not assign work, send replies, or sync your private review notes.</p><p><a href="https://cmem.ai/teambrain/app" target="_blank" rel="noopener noreferrer">Already a member? Open your team account ↗</a></p></div>
+        <div class="team-setup-footnote"><h3 data-i18n="whatConnects">What connects here</h3><p data-i18n="connectsDesc">This panel reads shared lists, tasks and findings through your approved CMEM connection. Claude.ai and ChatGPT setup remains separate. TeamBrain does not assign work, send replies, or sync your private review notes.</p><p><a href="https://cmem.ai/teambrain/app" target="_blank" rel="noopener noreferrer" data-i18n="openTeam">Already a member? Open your team account ↗</a></p></div>
       </section>
       <section id="team-connected" hidden aria-labelledby="shared-work-heading">
         <div class="team-context">

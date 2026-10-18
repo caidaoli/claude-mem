@@ -1,9 +1,10 @@
 import { activityFor, cleanText, relativeTime, requestElapsed, STATUS } from './view-model.js';
 import { effectiveStatus } from './presentation.js';
+import { t, locale } from './i18n.js';
 
 export const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 const esc = escapeHTML;
-const labels = { working: 'In progress', needs: 'Needs you', ready: 'Ready to check', checked: 'Checked' };
+const labels = { working: 'working', needs: 'needs', ready: 'ready', checked: 'checked' };
 const chevron = '<svg class="chevron" viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="m9 5 7 7-7 7" stroke="currentColor" stroke-width="1.7"/></svg>';
 // Worktree checkouts record "repo/worktree"; people know the repo.
 const projectLabel = project => String(project || 'Unknown project').split('/')[0];
@@ -31,7 +32,7 @@ export function parsePersonalRoute(hash) {
 export function badge(row) {
   const status = effectiveStatus(row);
   const shape = status === 'needs' ? '!' : ['ready', 'checked'].includes(status) ? '✓' : '';
-  return `<span class="status status-${esc(status)}"><span class="status-icon" aria-hidden="true">${shape}</span>${esc(labels[status] || row.sourceLabel || STATUS[status]?.label || 'Recorded update')}</span>`;
+  return `<span class="status status-${esc(status)}"><span class="status-icon" aria-hidden="true">${shape}</span>${esc(labels[status] ? t(labels[status]) : row.sourceLabel || STATUS[status]?.label || t('unknown'))}</span>`;
 }
 const time = updated => {
   const epoch = Number(updated) || 0;
@@ -54,7 +55,7 @@ function nextCopy(row) {
   if (effectiveStatus(row) === 'checked') return { label: 'Checked locally', text: 'You reviewed this version. New work will need a fresh check.' };
   const summary = String(row.activity || '').replace(/\s+/g, ' ').trim();
   const next = String(row.next || '').replace(/\s+/g, ' ').trim();
-  return next && next !== summary ? { label: effectiveStatus(row) === 'needs' ? 'Needs you' : effectiveStatus(row) === 'ready' ? 'Ready to check' : 'Next step', text: next } : null;
+  return next && next !== summary ? { label: effectiveStatus(row) === 'needs' ? t('needs') : effectiveStatus(row) === 'ready' ? t('ready') : (locale() === 'zh-CN' ? '下一步' : 'Next step'), text: next } : null;
 }
 export function requestCards(rows, state) {
   return rows.map(row => {
@@ -64,7 +65,7 @@ export function requestCards(rows, state) {
       <div class="request-card-meta">${badge(row)}<span>${time(row.updated)}${state.unread?.has(row.id) ? '<span class="new-dot">New update</span>' : ''}</span></div>
       <div class="request-card-body"><div class="request-card-copy"><h2>${esc(row.title)}</h2><p class="request-card-summary">${esc(row.activity)}</p>${copyNote(row)}</div></div>
       <div class="request-card-context"><div class="request-contributors" aria-label="Contributors">${contributors(row.contributors)}</div><span class="card-project" title="${esc((row.projects || [row.project]).join(' · '))}">${esc(projectNames(row))}</span></div>
-      <div class="request-card-footer${next ? '' : ' no-next'}">${next ? `<div><span class="card-next-label">${esc(next.label)}</span><p>${esc(next.text)}</p></div>` : ''}<span class="open-label">${status === 'ready' ? 'Review result' : status === 'needs' ? 'Read handoff' : 'Open request'} ${chevron}</span></div>
+      <div class="request-card-footer${next ? '' : ' no-next'}">${next ? `<div><span class="card-next-label">${esc(next.label)}</span><p>${esc(next.text)}</p></div>` : ''}<span class="open-label">${status === 'ready' ? (locale() === 'zh-CN' ? '检查结果' : 'Review result') : status === 'needs' ? (locale() === 'zh-CN' ? '阅读交接内容' : 'Read handoff') : (locale() === 'zh-CN' ? '打开请求' : 'Open request')} ${chevron}</span></div>
     </a></article>`;
   }).join('');
 }
