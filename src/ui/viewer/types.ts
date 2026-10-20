@@ -24,6 +24,7 @@ export interface Summary {
   session_id: string;
   memory_session_id?: string;
   project: string;
+  merged_into_project?: string | null;
   platform_source: string;
   request?: string;
   investigated?: string;
@@ -113,6 +114,7 @@ export interface Settings {
   CLAUDE_MEM_OPENAI_COMPAT_MODEL?: string;
   CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER?: string;
   CLAUDE_MEM_QUOTA_FALLBACK_MODEL?: string;
+  CLAUDE_MEM_QUOTA_FALLBACK_AUTH_METHOD?: string;
 
   // Custom Provider Configuration
   CLAUDE_MEM_CUSTOM_API_URL?: string;

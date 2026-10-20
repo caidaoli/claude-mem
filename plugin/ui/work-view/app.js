@@ -3,14 +3,16 @@ import { relativeTime, requestElapsed } from './view-model.js';
 import { presentWork, effectiveStatus, statusCategory, contentSignature, handoffText, scopeWork, sortWork } from './presentation.js';
 import { personalRoute, parsePersonalRoute, requestCards, requestList, agentCards, requestPage, workstreamPage } from './request-views.js';
 import { getConnectionStatus } from './live-status.js';
+import { t, locale, setLocale, applyStaticTranslations } from './i18n.js';
 
 const $ = id => document.getElementById(id);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const state = { rows: [], unlinked: [], loaded: false, failed: false, snapshot: null, filter: 'all', query: '', range: 'day', project: '', sort: 'attention', view: 'cards', from: 'cards', requestId: null, workId: null, agentId: null, pending: null, signature: '', lastReceived: 0, sourceConnected: false, changed: new Set(), unread: new Set(), previousCounts: {}, busy: false, toastTimer: null };
 const connection = { transportConnected: false, reconnecting: false, lastEventAt: null, sourceConnected: null, lastSuccessfulCheckAt: null, lastSuccessfulCheckReceivedAt: null };
-const labels = { all: 'All', needs: 'Needs you', working: 'In progress', quiet: 'No recent update', ready: 'Ready to check', checked: 'Checked', blocked: 'Blocked', todo: 'To do', unknown: 'Update recorded', closed: 'Closed', other: 'Other states' };
+const labelKeys = { all: 'all', needs: 'needs', working: 'working', quiet: 'quiet', ready: 'ready', checked: 'checked', blocked: 'blocked', todo: 'todo', unknown: 'unknown', closed: 'closed', other: 'other' };
+const labels = new Proxy({}, { get: (_, key) => t(labelKeys[key] || key) });
 const rowById = id => state.rows.find(row => row.id === id);
-const closeButton = '<button type="button" class="dialog-close" data-close aria-label="Close dialog">×</button>';
+const closeButton = () => `<button type="button" class="dialog-close" data-close aria-label="${t('close')}">×</button>`;
 // Existing bookmarked memory routes continue to open the preserved viewer.
 if (/^#\/?(?:sessions(?:\/|$)|session\/|observation\/|summary\/)/.test(location.hash)) location.replace(`/viewer${location.hash}`);
 function announce(text) { $('announcement').textContent = ''; requestAnimationFrame(() => { $('announcement').textContent = text; }); }
@@ -23,7 +25,7 @@ function render() {
   const projects = [...new Set(state.rows.flatMap(row => row.projects?.length ? row.projects : [row.project]).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   if (state.project && !projects.includes(state.project)) state.project = '';
   $('project-filter').hidden = false;
-  $('project-filter').innerHTML = '<option value="">All projects</option>' + projects.map(project => `<option value="${esc(project)}" ${state.project === project ? 'selected' : ''}>${esc(project)}</option>`).join('');
+  $('project-filter').innerHTML = `<option value="">${t('allProjects')}</option>` + projects.map(project => `<option value="${esc(project)}" ${state.project === project ? 'selected' : ''}>${esc(project)}</option>`).join('');
   const scoped = scopedRows();
   const counts = Object.fromEntries(Object.keys(labels).map(key => [key, key === 'all' ? scoped.length : 0]));
   for (const row of scoped) {
@@ -35,9 +37,9 @@ function render() {
   state.previousCounts = counts;
   const rows = visibleRows();
   $('work-heading').textContent = state.filter === 'all' ? 'All work' : labels[state.filter];
-  $('view-count').textContent = state.loaded ? `${rows.length} request${rows.length === 1 ? '' : 's'}` : 'Connecting…';
-  const emptyTitle = !state.loaded ? state.failed ? 'Waiting for local work' : 'Loading your local work…' : state.query ? 'No matching work' : 'No requests here yet';
-  const emptyText = !state.loaded ? state.failed ? 'Keep this page open to reconnect, or open the memory viewer to inspect the worker.' : 'Reading saved requests from this computer.' : state.query ? 'Try another request, project or contributor.' : 'Recorded human requests appear here as your tools save work. You can also explore your existing memory below.';
+  $('view-count').textContent = state.loaded ? `${rows.length} ${locale() === 'zh-CN' ? '个请求' : `request${rows.length === 1 ? '' : 's'}`}` : t('connecting');
+  const emptyTitle = !state.loaded ? state.failed ? t('waiting') : t('loading') : state.query ? t('noMatch') : t('noRequests');
+  const emptyText = !state.loaded ? state.failed ? t('reconnect') : t('reading') : state.query ? t('tryAnother') : t('recordedRequests');
   const detail = state.view === 'request';
   $('work-heading').parentElement.hidden = detail;
   $('personal-heading').hidden = detail;
@@ -51,24 +53,24 @@ function render() {
     const row = rowById(state.requestId);
     const work = row?.workstreams.find(item => item.id === state.workId);
     const route = work ? personalRoute('request', { ...state, workId: null }) : personalRoute(state.from, { ...state, requestId: null, workId: null });
-    trail = `<a class="back-button" href="${esc(route)}" data-route>← ${work ? 'Back to request' : 'Back to My Work'}</a>`;
-    html = row ? work ? workstreamPage(row, work) : requestPage(row, state) : '<div class="empty-work"><h3>This request is outside the loaded history</h3><p>Return to My Work to see the current requests.</p></div>';
+    trail = `<a class="back-button" href="${esc(route)}" data-route>← ${work ? t('backRequest') : t('backMyWork')}</a>`;
+    html = row ? work ? workstreamPage(row, work) : requestPage(row, state) : `<div class="empty-work"><h3>${t('outsideHistory')}</h3><p>${t('returnMyWork')}</p></div>`;
   } else {
     if (state.agentId) {
       const agent = state.rows.flatMap(row => row.contributors || []).find(agent => agent.id === state.agentId);
-      trail = `<div class="agent-scope"><a class="back-button" href="${esc(personalRoute('agents', { ...state, agentId: null }))}" data-route>← All agents</a><span>${esc(agent?.label || 'Contributor')}</span></div>`;
+      trail = `<div class="agent-scope"><a class="back-button" href="${esc(personalRoute('agents', { ...state, agentId: null }))}" data-route>← ${t('allAgents')}</a><span>${esc(agent?.label || t('contributor'))}</span></div>`;
     }
     html = rows.length ? state.view === 'list' ? requestList(rows, state) : state.view === 'agents' && !state.agentId ? agentCards(rows, state) : requestCards(rows, state)
-      : `<div class="empty-work"><h3>${emptyTitle}</h3><p>${emptyText}</p><a class="source-link" href="/viewer">Open memory &amp; settings →</a></div>`;
+      : `<div class="empty-work"><h3>${emptyTitle}</h3><p>${emptyText}</p><a class="source-link" href="/viewer">${t('openMemory')}</a></div>`;
   }
   $('scope-trail').innerHTML = trail;
   $('work-grid').className = !detail && (state.view === 'cards' || state.agentId) ? 'work-grid request-grid' : !detail && state.view === 'agents' ? 'agent-grid' : '';
   $('work-grid').innerHTML = html;
   for (const element of document.querySelectorAll('details[data-updates]')) if (open.has(element.dataset.updates)) element.open = true;
-  $('reading-note').textContent = 'Working, reported complete, and human checked are separate states. Your review closes the loop.';
+  $('reading-note').textContent = t('readingNote');
   $('unlinked-work').hidden = detail || !state.unlinked.length;
-  $('unlinked-count').textContent = `${state.unlinked.length} work records need a linked human request`;
-  $('unlinked-items').innerHTML = '<p>These records stay separate because their original human request was not captured or linked. Explore their source in the memory viewer.</p><a class="source-link" href="/viewer">Explore recorded memory →</a>';
+  $('unlinked-count').textContent = locale() === 'zh-CN' ? `${state.unlinked.length} 条工作记录缺少关联的人类请求` : `${state.unlinked.length} work records need a linked human request`;
+  $('unlinked-items').innerHTML = locale() === 'zh-CN' ? `<p>这些记录保持独立，因为原始人类请求未被捕获或关联。请在记忆查看器中查看来源。</p><a class="source-link" href="/viewer">${t('exploreMemory')}</a>` : '<p>These records stay separate because their original human request was not captured or linked. Explore their source in the memory viewer.</p><a class="source-link" href="/viewer">Explore recorded memory →</a>';
   state.changed.clear();
 }
 function dialog(id, content, html) { $(content).innerHTML = html; $(id).showModal(); }
@@ -76,7 +78,7 @@ function markRead(id) { state.unread.delete(id); const element = [...document.qu
 function evidenceList(row) { return `<ul>${(row.evidence.length ? row.evidence : ['No separate test evidence was recorded. Inspect the source before checking this result.']).map(text => `<li>${esc(text)}</li>`).join('')}</ul>`; }
 function openReview(id) {
   const row = rowById(id); if (!row) return; markRead(id);
-  dialog('review-dialog', 'review-content', `<div class="dialog-body"><div class="dialog-top"><span class="dialog-eyebrow">Recorded result · your review</span>${closeButton}</div><h2 id="review-title">${esc(row.title)}</h2><p class="dialog-intro">${esc(row.outcome)}</p><section class="evidence-box"><h3>Recorded evidence</h3>${evidenceList(row)}</section><p class="dialog-note">Checking saves a local note that you looked at this version. It does not certify correctness or change the agent’s work. New substantive updates need another check.</p>${row.review?.available === false ? '<p role="alert">Local review storage is unavailable. Your source work remains readable and unchanged.</p>' : ''}<div class="dialog-actions"><button type="button" class="button-secondary" data-detail="${esc(id)}">View original request</button><button type="button" class="button-primary" data-check="${esc(id)}" ${row.review?.available === false ? 'disabled' : ''}>Mark checked</button></div></div>`);
+  dialog('review-dialog', 'review-content', `<div class="dialog-body"><div class="dialog-top"><span class="dialog-eyebrow">${t('recordedResult')}</span>${closeButton()}</div><h2 id="review-title">${esc(row.title)}</h2><p class="dialog-intro">${esc(row.outcome)}</p><section class="evidence-box"><h3>${t('evidence')}</h3>${evidenceList(row)}</section><p class="dialog-note">${t('reviewNote')}</p>${row.review?.available === false ? `<p role="alert">${t('localReviewUnavailable')}</p>` : ''}<div class="dialog-actions"><button type="button" class="button-secondary" data-detail="${esc(id)}">${t('originalRequest')}</button><button type="button" class="button-primary" data-check="${esc(id)}" ${row.review?.available === false ? 'disabled' : ''}>${t('markChecked')}</button></div></div>`);
 }
 function openDetail(id) {
   if (!rowById(id)) return;
@@ -138,7 +140,7 @@ async function saveReview(id, checked) {
 }
 function openConnection(service) {
   const name = service === 'ChatGPT' ? 'ChatGPT' : 'Claude.ai';
-  dialog('connect-dialog', 'connect-content', `<div class="dialog-body"><div class="dialog-top"><span class="dialog-eyebrow">Optional CMEM Cloud setup</span>${closeButton}</div><h2 id="connection-title">Bring your memory to ${name}.</h2><p class="dialog-intro">Continue to the existing CMEM connection setup, sign in, and choose ${name}. The setup explains how to connect your chat app and local memory.</p><p class="dialog-note">Cloud sync can upload your saved prompts and observation narratives. Review the setup and sharing scope before enabling it. This local panel stays available without connecting.</p><div class="dialog-actions"><button type="button" class="button-secondary" data-close>Keep working locally</button><a class="button-primary" href="https://cmem.ai/connect?from=local-work" target="_blank" rel="noopener noreferrer">Continue to connection setup ↗</a></div></div>`);
+  dialog('connect-dialog', 'connect-content', `<div class="dialog-body"><div class="dialog-top"><span class="dialog-eyebrow">${locale() === 'zh-CN' ? '可选 CMEM Cloud 设置' : 'Optional CMEM Cloud setup'}</span>${closeButton()}</div><h2 id="connection-title">${locale() === 'zh-CN' ? `将记忆连接到 ${name}` : `Bring your memory to ${name}.`}</h2><p class="dialog-intro">${locale() === 'zh-CN' ? `继续现有的 CMEM 连接设置，登录并选择 ${name}。设置流程会说明如何连接聊天应用和本地记忆。` : `Continue to the existing CMEM connection setup, sign in, and choose ${name}. The setup explains how to connect your chat app and local memory.`}</p><p class="dialog-note">${locale() === 'zh-CN' ? '云同步可能上传保存的提示和观察记录。启用前请查看设置与共享范围。本地面板无需连接也可以使用。' : 'Cloud sync can upload your saved prompts and observation narratives. Review the setup and sharing scope before enabling it. This local panel stays available without connecting.'}</p><div class="dialog-actions"><button type="button" class="button-secondary" data-close>${locale() === 'zh-CN' ? '继续使用本地功能' : 'Keep working locally'}</button><a class="button-primary" href="https://cmem.ai/connect?from=local-work" target="_blank" rel="noopener noreferrer">${locale() === 'zh-CN' ? '继续连接设置 ↗' : 'Continue to connection setup ↗'}</a></div></div>`);
 }
 function isReading() { return state.view === 'request' || state.busy || window.scrollY > 220 || !!document.querySelector('dialog[open], .work-card details[open]') || !!document.activeElement?.closest('#work-grid, .search-field, .status-tabs, #personal-toolbar, .view-switch'); }
 function apply(snapshot, force = false) {
@@ -158,6 +160,10 @@ function apply(snapshot, force = false) {
 }
 function renderConnection() {
   const status = getConnectionStatus({ ...connection, now: performance.now(), wallNow: Date.now() });
+  const connectionCopy = locale() === 'zh-CN' ? {
+    connecting: ['正在连接本地动态', '等待这台电脑的更新。'], reconnecting: ['正在重新连接本地动态', '连接中断。显示最近收到的工作，等待本地动态恢复。'], stale: ['本地动态已过期', '本地更新已停止到达。显示最近收到的工作。'], unavailable: ['本地来源不可用', '已连接，但暂时无法读取保存的工作。显示最近收到的工作。'], live: ['实时更新', '更新正在从这台电脑到达。每张卡片会显示工作最近更新的时间。'],
+  }[status.state] : null;
+  if (connectionCopy) { status.label = connectionCopy[0]; status.detail = connectionCopy[1]; }
   $('connection').dataset.state = status.state;
   $('connection').title = status.tooltip;
   if ($('connection-label').textContent !== status.label) $('connection-label').textContent = status.label;
@@ -276,3 +282,8 @@ window.addEventListener('pageshow', event => { if (event.persisted) location.rel
 
 setupTeamView();
 $('workspace-personal').addEventListener('click', () => { history.replaceState(null, '', personalRoute(state.view, state)); });
+applyStaticTranslations();
+const languageSelect = $('language-select');
+languageSelect.value = locale();
+languageSelect.addEventListener('change', event => setLocale(event.target.value));
+window.addEventListener('claude-mem-locale-change', () => { applyStaticTranslations(); languageSelect.value = locale(); render(); });

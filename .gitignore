@@ -56,3 +56,7 @@ AGENTS.md
 
 # Local session report artifacts (not part of distribution)
 reports/
+
+# Python bytecode (Hermes provider and tests)
+__pycache__/
+*.pyc

@@ -1,20 +1,21 @@
 import { relativeTime } from './view-model.js';
+import { t, locale } from './i18n.js';
 
 const $ = id => document.getElementById(id);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const field = (pairs, names) => names.map(name => pairs?.find(pair => pair[0] === name)?.[1]).find(value => typeof value === 'string' && value.trim()) || '';
-const statusLabel = value => ({ doing: 'In progress', 'in-progress': 'In progress', todo: 'To do', blocked: 'Blocked', 'needs-you': 'Needs you', 'needs-input': 'Needs you', 'waiting-on-user': 'Needs you', 'awaiting-approval': 'Needs you' })[String(value || '').toLowerCase()] || (value || 'Status not recorded');
-const detailLabel = key => ({ human_summary: 'Update', progress: 'Progress', next: 'Next', next_step: 'Next', outcome: 'Outcome', result: 'Result' })[key] || key;
+const statusLabel = value => ({ doing: t('working'), 'in-progress': t('working'), todo: t('todo'), blocked: t('blocked'), 'needs-you': t('needs'), 'needs-input': t('needs'), 'waiting-on-user': t('needs'), 'awaiting-approval': t('needs') })[String(value || '').toLowerCase()] || (value || (locale() === 'zh-CN' ? '未记录状态' : 'Status not recorded'));
+const detailLabel = key => ({ human_summary: locale() === 'zh-CN' ? '更新' : 'Update', progress: locale() === 'zh-CN' ? '进度' : 'Progress', next: locale() === 'zh-CN' ? '下一步' : 'Next', next_step: locale() === 'zh-CN' ? '下一步' : 'Next', outcome: locale() === 'zh-CN' ? '结果' : 'Outcome', result: locale() === 'zh-CN' ? '结果' : 'Result' })[key] || key;
 
 export function sharingDescription(team) {
-  if (!team.broadcasting) return 'You are viewing shared work. Sharing from this computer is off.';
-  const scope = team.projects === null ? 'all projects' : team.projects?.length ? team.projects.join(', ') : 'no projects selected';
-  return `Your sharing setting is on for ${scope}.`;
+  if (!team.broadcasting) return locale() === 'zh-CN' ? '你正在查看共享工作。这台电脑已关闭共享。' : 'You are viewing shared work. Sharing from this computer is off.';
+  const scope = team.projects === null ? t('allProjects').toLowerCase() : team.projects?.length ? team.projects.join(', ') : (locale() === 'zh-CN' ? '未选择项目' : 'no projects selected');
+  return locale() === 'zh-CN' ? `共享设置已开启，范围：${scope}。` : `Your sharing setting is on for ${scope}.`;
 }
 
 const timeMarkup = (value, prefix = 'Updated') => {
   const epoch = typeof value === 'number' ? value : Date.parse(value);
-  if (!Number.isFinite(epoch) || epoch <= 0) return '<span class="team-task-time">Time not recorded</span>';
+  if (!Number.isFinite(epoch) || epoch <= 0) return `<span class="team-task-time">${locale() === 'zh-CN' ? '未记录时间' : 'Time not recorded'}</span>`;
   return `<time data-team-time="${epoch}" data-time-prefix="${prefix}" datetime="${new Date(epoch).toISOString()}" title="${esc(new Date(epoch).toLocaleString())}">${prefix} ${esc(relativeTime(epoch))}</time>`;
 };
 const findingLabel = value => ({ collision: 'Overlapping work', delegation: 'Handoff', gap: 'Missing context' })[value] || String(value || 'Finding').replace(/[-_]/g, ' ');
@@ -41,16 +42,16 @@ const openTeamTasks = list => list.tasks.filter(task => !terminalTaskStates.has(
 // A task summary is not a parent request lifecycle or a human review state.
 export function teamTaskActivity(list) {
   const open = openTeamTasks(list);
-  const count = `${open.length} open ${open.length === 1 ? 'task' : 'tasks'}`;
-  if (list.closed) return { state: 'closed', label: 'List closed', count };
+  const count = locale() === 'zh-CN' ? `${open.length} 个未完成任务` : `${open.length} open ${open.length === 1 ? 'task' : 'tasks'}`;
+  if (list.closed) return { state: 'closed', label: locale() === 'zh-CN' ? '列表已关闭' : 'List closed', count };
   const statuses = new Set(open.map(task => normalizedTaskStatus(task.status)));
   for (const [state, label, aliases] of [
-    ['needs', 'Tasks: Needs you', ['needs-you', 'needs-input', 'needs-human', 'waiting-on-user', 'awaiting-approval']],
-    ['blocked', 'Tasks: Blocked', ['blocked']],
-    ['working', 'Tasks: In progress', ['doing', 'in-progress', 'working', 'active']],
-    ['todo', 'Tasks: To do', ['todo', 'to-do', 'queued', 'pending']],
+    ['needs', locale() === 'zh-CN' ? '任务：需要你处理' : 'Tasks: Needs you', ['needs-you', 'needs-input', 'needs-human', 'waiting-on-user', 'awaiting-approval']],
+    ['blocked', locale() === 'zh-CN' ? '任务：已阻塞' : 'Tasks: Blocked', ['blocked']],
+    ['working', locale() === 'zh-CN' ? '任务：进行中' : 'Tasks: In progress', ['doing', 'in-progress', 'working', 'active']],
+    ['todo', locale() === 'zh-CN' ? '任务：待开始' : 'Tasks: To do', ['todo', 'to-do', 'queued', 'pending']],
   ]) if (aliases.some(status => statuses.has(status))) return { state, label, count };
-  return { state: 'quiet', label: open.length ? 'Task status not recorded' : 'No open tasks', count };
+  return { state: 'quiet', label: open.length ? (locale() === 'zh-CN' ? '未记录任务状态' : 'Task status not recorded') : (locale() === 'zh-CN' ? '没有未完成任务' : 'No open tasks'), count };
 }
 
 export function teamCardHtml(list, findings = new Map(), members = new Map(), open = false) {
@@ -217,6 +218,10 @@ export function setupTeamView() {
     if (state.selected) void loadBoard();
   });
   window.addEventListener('pagehide', stop);
+  window.addEventListener('claude-mem-locale-change', () => {
+    paintHealth();
+    if (state.active) renderBoard();
+  });
   window.addEventListener('popstate', () => {
     const active = location.hash === '#teambrain';
     if (active !== state.active) show(active, false);

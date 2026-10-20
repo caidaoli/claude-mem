@@ -750,6 +750,20 @@ export function ContextSettingsModal({
               )}
 
               <FormField
+                label={t.settings.claudeCredentialFallback}
+                tooltip={t.settings.claudeCredentialFallbackTooltip}
+              >
+                <select
+                  value={formState.CLAUDE_MEM_QUOTA_FALLBACK_AUTH_METHOD || ''}
+                  onChange={(e) => updateSetting('CLAUDE_MEM_QUOTA_FALLBACK_AUTH_METHOD', e.target.value)}
+                >
+                  <option value="">{t.settings.claudeCredentialFallbackOff}</option>
+                  <option value="subscription">{t.settings.claudeCredentialFallbackSubscription}</option>
+                  <option value="api-key">{t.settings.claudeCredentialFallbackApiKey}</option>
+                </select>
+              </FormField>
+
+              <FormField
                 label={t.settings.claudeCodePath}
                 tooltip={t.settings.claudeCodePathTooltip}
               >
