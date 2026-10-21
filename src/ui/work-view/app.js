@@ -3,11 +3,11 @@ import { relativeTime, requestElapsed } from './view-model.js';
 import { presentWork, effectiveStatus, statusCategory, contentSignature, handoffText, scopeWork, sortWork } from './presentation.js';
 import { personalRoute, parsePersonalRoute, requestCards, requestList, agentCards, requestPage, workstreamPage } from './request-views.js';
 import { getConnectionStatus } from './live-status.js';
-import { t, locale, setLocale, applyStaticTranslations } from './i18n.js';
+import { t, locale, dateLocale, setLocale, applyStaticTranslations } from './i18n.js';
 
 const $ = id => document.getElementById(id);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const state = { rows: [], unlinked: [], loaded: false, failed: false, snapshot: null, filter: 'all', query: '', range: 'day', project: '', sort: 'attention', view: 'cards', from: 'cards', requestId: null, workId: null, agentId: null, pending: null, signature: '', lastReceived: 0, sourceConnected: false, changed: new Set(), unread: new Set(), previousCounts: {}, busy: false, toastTimer: null };
+const state = { rows: [], unlinked: [], loaded: false, failed: false, snapshot: null, filter: 'all', query: '', range: 'day', project: '', sort: 'attention', view: 'cards', from: 'cards', requestId: null, workId: null, agentId: null, pending: null, applied: null, sync: null, signature: '', lastReceived: 0, sourceConnected: false, changed: new Set(), unread: new Set(), previousCounts: {}, busy: false, toastTimer: null };
 const connection = { transportConnected: false, reconnecting: false, lastEventAt: null, sourceConnected: null, lastSuccessfulCheckAt: null, lastSuccessfulCheckReceivedAt: null };
 const labelKeys = { all: 'all', needs: 'needs', working: 'working', quiet: 'quiet', ready: 'ready', checked: 'checked', blocked: 'blocked', todo: 'todo', unknown: 'unknown', closed: 'closed', other: 'other' };
 const labels = new Proxy({}, { get: (_, key) => t(labelKeys[key] || key) });
@@ -36,7 +36,7 @@ function render() {
   $('status-tabs').innerHTML = Object.entries(labels).filter(([key]) => ['all', 'needs', 'working', 'quiet', 'ready', 'checked'].includes(key) || key === state.filter || (key !== 'other' && counts[key])).map(([key, label]) => `<button type="button" class="status-tab" data-filter="${key}" aria-pressed="${state.filter === key}">${label}<span class="tab-count${state.previousCounts[key] != null && state.previousCounts[key] !== counts[key] ? ' changed' : ''}">${counts[key]}</span></button>`).join('');
   state.previousCounts = counts;
   const rows = visibleRows();
-  $('work-heading').textContent = state.filter === 'all' ? 'All work' : labels[state.filter];
+  $('work-heading').textContent = state.filter === 'all' ? t('allWorkHeading') : labels[state.filter];
   $('view-count').textContent = state.loaded ? `${rows.length} ${locale() === 'zh-CN' ? '个请求' : `request${rows.length === 1 ? '' : 's'}`}` : t('connecting');
   const emptyTitle = !state.loaded ? state.failed ? t('waiting') : t('loading') : state.query ? t('noMatch') : t('noRequests');
   const emptyText = !state.loaded ? state.failed ? t('reconnect') : t('reading') : state.query ? t('tryAnother') : t('recordedRequests');
@@ -75,7 +75,7 @@ function render() {
 }
 function dialog(id, content, html) { $(content).innerHTML = html; $(id).showModal(); }
 function markRead(id) { state.unread.delete(id); const element = [...document.querySelectorAll('.work-card')].find(card => card.dataset.id === id); element?.querySelector('.new-dot')?.remove(); }
-function evidenceList(row) { return `<ul>${(row.evidence.length ? row.evidence : ['No separate test evidence was recorded. Inspect the source before checking this result.']).map(text => `<li>${esc(text)}</li>`).join('')}</ul>`; }
+function evidenceList(row) { return `<ul>${(row.evidence.length ? row.evidence : [t('noEvidence')]).map(text => `<li>${esc(text)}</li>`).join('')}</ul>`; }
 function openReview(id) {
   const row = rowById(id); if (!row) return; markRead(id);
   dialog('review-dialog', 'review-content', `<div class="dialog-body"><div class="dialog-top"><span class="dialog-eyebrow">${t('recordedResult')}</span>${closeButton()}</div><h2 id="review-title">${esc(row.title)}</h2><p class="dialog-intro">${esc(row.outcome)}</p><section class="evidence-box"><h3>${t('evidence')}</h3>${evidenceList(row)}</section><p class="dialog-note">${t('reviewNote')}</p>${row.review?.available === false ? `<p role="alert">${t('localReviewUnavailable')}</p>` : ''}<div class="dialog-actions"><button type="button" class="button-secondary" data-detail="${esc(id)}">${t('originalRequest')}</button><button type="button" class="button-primary" data-check="${esc(id)}" ${row.review?.available === false ? 'disabled' : ''}>${t('markChecked')}</button></div></div>`);
@@ -112,7 +112,7 @@ window.addEventListener('popstate', () => {
 });
 function toast(message, undo = null) {
   clearTimeout(state.toastTimer); $('toast').hidden = false;
-  $('toast').innerHTML = `<span>${esc(message)}</span>${undo ? '<button type="button" id="undo-check">Undo</button>' : ''}<button class="toast-dismiss" type="button" id="dismiss-toast" aria-label="Dismiss notification">×</button>`;
+  $('toast').innerHTML = `<span>${esc(message)}</span>${undo ? `<button type="button" id="undo-check">${esc(t('undo'))}</button>` : ''}<button class="toast-dismiss" type="button" id="dismiss-toast" aria-label="${esc(t('dismiss'))}">×</button>`;
   if (undo) $('undo-check').onclick = undo;
   $('dismiss-toast').onclick = () => { $('toast').hidden = true; };
   if (!undo) state.toastTimer = setTimeout(() => { $('toast').hidden = true; }, 8000);
@@ -129,11 +129,11 @@ async function saveReview(id, checked) {
   state.busy = true; document.querySelectorAll('[data-check],[data-undo]').forEach(button => { button.disabled = true; });
   try {
     const response = await fetch('/api/work-view/review', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestId: id, expectedFingerprint: row.contentFingerprint, checked }) });
-    if (response.status === 409) { $('review-dialog').close(); await refresh(true); focusCurrentWork(id); toast('This work changed while you were reading. Review the latest version before checking.'); return; }
-    if (!response.ok) throw new Error('The local review could not be saved. Try again.');
+    if (response.status === 409) { $('review-dialog').close(); await refresh(true); focusCurrentWork(id); toast(t('changedWhileReading')); return; }
+    if (!response.ok) throw new Error(t('reviewSaveFailed'));
     const snapshot = await response.json(); $('review-dialog').close(); accept(snapshot, true);
-    toast(checked ? 'Checked locally. Your review is saved.' : 'Check undone. The result is ready to review.', checked ? () => saveReview(id, false) : null);
-    announce(checked ? 'Result checked. Undo remains available on the card.' : 'Check undone.');
+    toast(t(checked ? 'checkSaved' : 'checkUndone'), checked ? () => saveReview(id, false) : null);
+    announce(t(checked ? 'announceChecked' : 'announceUndone'));
     focusCurrentWork(id);
   } catch (error) { toast(error.message); }
   finally { state.busy = false; document.querySelectorAll('[data-check],[data-undo]').forEach(button => { button.disabled = false; }); }
@@ -142,11 +142,14 @@ function openConnection(service) {
   const name = service === 'ChatGPT' ? 'ChatGPT' : 'Claude.ai';
   dialog('connect-dialog', 'connect-content', `<div class="dialog-body"><div class="dialog-top"><span class="dialog-eyebrow">${locale() === 'zh-CN' ? '可选 CMEM Cloud 设置' : 'Optional CMEM Cloud setup'}</span>${closeButton()}</div><h2 id="connection-title">${locale() === 'zh-CN' ? `将记忆连接到 ${name}` : `Bring your memory to ${name}.`}</h2><p class="dialog-intro">${locale() === 'zh-CN' ? `继续现有的 CMEM 连接设置，登录并选择 ${name}。设置流程会说明如何连接聊天应用和本地记忆。` : `Continue to the existing CMEM connection setup, sign in, and choose ${name}. The setup explains how to connect your chat app and local memory.`}</p><p class="dialog-note">${locale() === 'zh-CN' ? '云同步可能上传保存的提示和观察记录。启用前请查看设置与共享范围。本地面板无需连接也可以使用。' : 'Cloud sync can upload your saved prompts and observation narratives. Review the setup and sharing scope before enabling it. This local panel stays available without connecting.'}</p><div class="dialog-actions"><button type="button" class="button-secondary" data-close>${locale() === 'zh-CN' ? '继续使用本地功能' : 'Keep working locally'}</button><a class="button-primary" href="https://cmem.ai/connect?from=local-work" target="_blank" rel="noopener noreferrer">${locale() === 'zh-CN' ? '继续连接设置 ↗' : 'Continue to connection setup ↗'}</a></div></div>`);
 }
+function pendingBanner() {
+  $('updates-banner').innerHTML = `<div class="updates-banner"><span><strong>${esc(t('updatesReady'))}</strong> ${esc(t('placeSaved'))}</span><button type="button" id="apply-updates">${esc(t('showUpdates'))}</button></div>`;
+  $('apply-updates').onclick = () => { if (state.pending) apply(state.pending, true); focusCurrentWork(state.requestId); announce(t('updatesApplied')); };
+}
 function isReading() { return state.view === 'request' || state.busy || window.scrollY > 220 || !!document.querySelector('dialog[open], .work-card details[open]') || !!document.activeElement?.closest('#work-grid, .search-field, .status-tabs, #personal-toolbar, .view-switch'); }
 function apply(snapshot, force = false) {
   if (!force && state.rows.length && isReading()) {
-    state.pending = snapshot; $('updates-banner').innerHTML = '<div class="updates-banner"><span><strong>New work updates are ready.</strong> Your place is saved.</span><button type="button" id="apply-updates">Show updates</button></div>';
-    $('apply-updates').onclick = () => { if (state.pending) apply(state.pending, true); focusCurrentWork(state.requestId); announce('New work updates applied.'); };
+    state.pending = snapshot; pendingBanner();
     return;
   }
   const previous = new Map(state.rows.map(row => [row.id, contentSignature(row)]));
@@ -156,14 +159,10 @@ function apply(snapshot, force = false) {
     if (state.rows.length && (!content.has(row.id) || content.get(row.id) !== row.contentFingerprint)) state.unread.add(row.id);
     if (state.rows.length) state.changed.add(row.id);
   }
-  state.rows = result.rows; state.unlinked = result.unlinked; state.pending = null; $('updates-banner').replaceChildren(); render();
+  state.rows = result.rows; state.unlinked = result.unlinked; state.applied = snapshot; state.pending = null; $('updates-banner').replaceChildren(); render();
 }
 function renderConnection() {
   const status = getConnectionStatus({ ...connection, now: performance.now(), wallNow: Date.now() });
-  const connectionCopy = locale() === 'zh-CN' ? {
-    connecting: ['正在连接本地动态', '等待这台电脑的更新。'], reconnecting: ['正在重新连接本地动态', '连接中断。显示最近收到的工作，等待本地动态恢复。'], stale: ['本地动态已过期', '本地更新已停止到达。显示最近收到的工作。'], unavailable: ['本地来源不可用', '已连接，但暂时无法读取保存的工作。显示最近收到的工作。'], live: ['实时更新', '更新正在从这台电脑到达。每张卡片会显示工作最近更新的时间。'],
-  }[status.state] : null;
-  if (connectionCopy) { status.label = connectionCopy[0]; status.detail = connectionCopy[1]; }
   $('connection').dataset.state = status.state;
   $('connection').title = status.tooltip;
   if ($('connection-label').textContent !== status.label) $('connection-label').textContent = status.label;
@@ -179,7 +178,8 @@ function health(source) {
   }
   renderConnection();
 }
-function received() { state.lastReceived = Date.now(); $('received-time').textContent = `Last received ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`; }
+function paintReceived() { if (state.lastReceived) $('received-time').textContent = t('lastReceived', { time: new Date(state.lastReceived).toLocaleTimeString(dateLocale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }); }
+function received() { state.lastReceived = Date.now(); paintReceived(); }
 function accept(snapshot, force = false, fromEvent = false) {
   state.loaded = true; state.snapshot = snapshot;
   received();
@@ -193,7 +193,7 @@ function accept(snapshot, force = false, fromEvent = false) {
 async function refresh(force = false) {
   const previousEvent = connection.lastEventAt;
   const response = await fetch('/api/work-view', { cache: 'no-store' });
-  if (!response.ok) throw new Error('Local work could not be loaded.');
+  if (!response.ok) throw new Error(t('localLoadFailed'));
   const snapshot = await response.json();
   if (connection.lastEventAt !== previousEvent) {
     if (force && state.snapshot) apply(state.pending || state.snapshot, true);
@@ -219,11 +219,11 @@ document.addEventListener('click', async event => {
     try {
       if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
       await navigator.clipboard.writeText(text);
-      $('handoff-feedback').textContent = 'Handoff copied. Paste it into the agent or conversation you choose.';
-      announce('Handoff copied. Nothing was sent.');
+      $('handoff-feedback').textContent = t('handoffCopied');
+      announce(t('handoffAnnounce'));
     } catch {
       const area = $('handoff-text'); area.hidden = false; area.value = text; area.focus(); area.select();
-      $('handoff-feedback').textContent = 'Clipboard unavailable. Copy the selected handoff text below.';
+      $('handoff-feedback').textContent = t('clipboardUnavailable');
     }
   }
   if (target.dataset.check) await saveReview(target.dataset.check, true);
@@ -231,9 +231,9 @@ document.addEventListener('click', async event => {
   if (target.dataset.connect) openConnection(target.dataset.connect);
   if (target.hasAttribute('data-close')) target.closest('dialog').close();
   if (target.dataset.evidenceKind) {
-    const pre = target.closest('[data-evidence-record]')?.querySelector('pre') || $('raw-evidence'); if (!pre) return; pre.hidden = false; pre.textContent = 'Loading recorded source…';
+    const pre = target.closest('[data-evidence-record]')?.querySelector('pre') || $('raw-evidence'); if (!pre) return; pre.hidden = false; pre.textContent = t('loadingSource');
     try { const response = await fetch(`/api/work-view/evidence/${encodeURIComponent(target.dataset.evidenceKind)}/${encodeURIComponent(target.dataset.evidenceId)}`); if (!response.ok) throw new Error(); pre.textContent = JSON.stringify(await response.json(), null, 2); }
-    catch { pre.textContent = 'This source record is no longer available.'; }
+    catch { pre.textContent = t('sourceUnavailable'); }
   }
 });
 document.addEventListener('toggle', event => { if (event.target.matches('details[open][data-updates]')) markRead(event.target.dataset.updates); }, true);
@@ -244,6 +244,7 @@ $('sort').addEventListener('change', event => { state.sort = event.target.value;
 for (const item of document.querySelectorAll('dialog')) item.addEventListener('click', event => { if (event.target === item) { const rect = item.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) item.close(); } });
 Object.assign(state, parsePersonalRoute(location.hash)); syncControls();
 if (location.hash !== '#teambrain') history.replaceState(null, '', personalRoute(state.view, state));
+applyStaticTranslations(); document.documentElement.lang = locale();
 render();
 refresh().catch(() => { state.failed = true; renderConnection(); render(); });
 const stream = new EventSource('/api/work-view/events');
@@ -276,14 +277,20 @@ const ageTimer = setInterval(() => {
   const aged = presentWork(state.snapshot, state.rows).rows;
   if (aged.some((row, index) => row.status !== state.rows[index]?.status)) apply(state.snapshot);
 }, 60000);
-fetch('/api/sync/status', { cache: 'no-store' }).then(response => response.ok ? response.json() : Promise.reject()).then(sync => { $('sync-state').textContent = sync.configured ? 'Cloud sync configured · local viewing remains independent' : 'Cloud sync not connected · optional'; }).catch(() => { $('sync-state').textContent = 'Cloud sync status unavailable · local viewing remains independent'; });
+function paintSync() { if (state.sync) $('sync-state').textContent = t(state.sync); }
+fetch('/api/sync/status', { cache: 'no-store' }).then(response => response.ok ? response.json() : Promise.reject()).then(sync => { state.sync = sync.configured ? 'syncConfigured' : 'syncOff'; }).catch(() => { state.sync = 'syncUnavailable'; }).then(paintSync);
 window.addEventListener('pagehide', () => { stream.close(); clearInterval(timer); clearInterval(ageTimer); });
 window.addEventListener('pageshow', event => { if (event.persisted) location.reload(); });
 
 setupTeamView();
 $('workspace-personal').addEventListener('click', () => { history.replaceState(null, '', personalRoute(state.view, state)); });
-applyStaticTranslations();
 const languageSelect = $('language-select');
 languageSelect.value = locale();
 languageSelect.addEventListener('change', event => setLocale(event.target.value));
-window.addEventListener('claude-mem-locale-change', () => { applyStaticTranslations(); languageSelect.value = locale(); render(); });
+// Rows carry text computed in the language they were built in, so rebuild them from the applied snapshot.
+window.addEventListener('claude-mem-locale-change', () => {
+  languageSelect.value = locale();
+  if (state.applied) state.rows = presentWork(state.applied, state.rows).rows;
+  if (state.pending) pendingBanner();
+  renderConnection(); paintReceived(); paintSync(); render();
+});

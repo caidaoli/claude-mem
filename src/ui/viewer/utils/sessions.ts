@@ -1,5 +1,6 @@
 import type { SessionCatalogEntry, StreamEvent } from '../types';
 import { API_ENDPOINTS } from '../constants/api';
+import { en, type TranslationKeys } from '../i18n/locales/en';
 
 /**
  * A session is identified by (platform_source, content_session_id): the same
@@ -84,30 +85,37 @@ export function parseViewRoute(hash: string): ViewRoute {
 }
 
 /** User-facing reason for a refused session delete, by the worker's status code. */
-export function describeSessionDeleteFailure(status: number): string {
+export function describeSessionDeleteFailure(
+  status: number,
+  messages: TranslationKeys['deleteFailure'] = en.deleteFailure,
+): string {
   if (status === 409) {
-    return 'Not deleted: this session is still running, or holds memories synced from another device (delete those there).';
+    return messages.sessionBusy;
   }
   if (status === 503) {
-    return 'Not deleted: cloud sync is unavailable, so the delete could not be recorded for your other devices. Try again once sync reconnects.';
+    return messages.syncUnavailable;
   }
   if (status === 404) {
-    return 'Not deleted: this session is already gone.';
+    return messages.sessionGone;
   }
-  return `Not deleted: the worker answered HTTP ${status}.`;
+  return messages.httpStatus.replace('{status}', String(status));
 }
 
 /**
  * Delete a session and everything captured in it through the worker's
  * sync-safe endpoint. Rejects with a user-facing message.
  */
-export async function deleteSession(ref: SessionRef, fetchImpl: typeof fetch = fetch): Promise<void> {
+export async function deleteSession(
+  ref: SessionRef,
+  fetchImpl: typeof fetch = fetch,
+  messages: TranslationKeys['deleteFailure'] = en.deleteFailure,
+): Promise<void> {
   const url = `${API_ENDPOINTS.SESSIONS}/${encodeURIComponent(ref.platformSource)}/${encodeURIComponent(ref.contentSessionId)}`;
   const response = await fetchImpl(url, { method: 'DELETE' }).catch(() => {
-    throw new Error('Not deleted: the claude-mem worker could not be reached.');
+    throw new Error(messages.unreachable);
   });
   if (!response.ok) {
-    throw new Error(describeSessionDeleteFailure(response.status));
+    throw new Error(describeSessionDeleteFailure(response.status, messages));
   }
 }
 

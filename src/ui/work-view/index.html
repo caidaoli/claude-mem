@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>My Work · claude-mem</title>
+  <title data-i18n="pageTitle">My Work · claude-mem</title>
   <link rel="icon" href="/work-view/assets/cmem-mark.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/work-view/styles.css">
   <link rel="stylesheet" href="/work-view/team-styles.css">
@@ -13,9 +13,9 @@
 <body data-mode="live">
   <a class="skip" href="#main" data-i18n="skip">Skip to my work</a>
   <header class="app-header">
-    <a class="brand" href="#cards" data-route aria-label="Claude-Mem My Work"><img src="/work-view/assets/cmem-mark.svg" width="35" height="35" alt=""></a>
-    <nav aria-label="Main"><button type="button" class="workspace-link" id="workspace-personal" aria-pressed="true" data-i18n="myWork">My Work</button><button type="button" class="workspace-link" id="workspace-team" aria-pressed="false" data-i18n="teamBrain">TeamBrain</button><a href="/viewer" data-i18n="memorySettings">Memory &amp; settings</a></nav>
-    <label class="language-control"><span class="sr-only" data-i18n="language">Language</span><select id="language-select" aria-label="Language"><option value="en">English</option><option value="zh-CN">中文</option></select></label>
+    <a class="brand" href="#cards" data-route aria-label="Claude-Mem My Work" data-i18n-aria="brandLabel"><img src="/work-view/assets/cmem-mark.svg" width="35" height="35" alt=""></a>
+    <nav aria-label="Main" data-i18n-aria="mainNav"><button type="button" class="workspace-link" id="workspace-personal" aria-pressed="true" data-i18n="myWork">My Work</button><button type="button" class="workspace-link" id="workspace-team" aria-pressed="false" data-i18n="teamBrain">TeamBrain</button><a href="/viewer" data-i18n="memorySettings">Memory &amp; settings</a></nav>
+    <label class="language-control"><span class="sr-only" data-i18n="language">Language</span><select id="language-select" aria-label="Language" data-i18n-aria="language"><option value="en">English</option><option value="zh-CN">中文</option></select></label>
     <div class="local-state"><span class="connection" id="connection" data-state="connecting" role="status"><span class="connection-dot" aria-hidden="true"></span><span id="connection-label" data-i18n="connecting">Connecting locally…</span></span></div>
 
   </header>
@@ -28,11 +28,11 @@
     </div>
     <div class="toolbar" id="personal-toolbar" role="search">
       <label class="search-field"><img src="/work-view/assets/icons/search.svg" width="22" height="22" alt=""><span class="sr-only" data-i18n="search">Search requests and agents</span><input id="search" type="search" data-i18n-placeholder="search" placeholder="Search requests or agents" autocomplete="off"></label>
-      <label><span class="sr-only" data-i18n="project">Project</span><select id="project-filter" aria-label="Filter by project" data-i18n-aria="project"><option value="" data-i18n="allProjects">All projects</option></select></label>
+      <label><span class="sr-only" data-i18n="project">Project</span><select id="project-filter" aria-label="Filter by project" data-i18n-aria="filterProject"><option value="" data-i18n="allProjects">All projects</option></select></label>
       <label><span class="sr-only" data-i18n="timeRange">Time range</span><select id="time-range"><option value="day" data-i18n="day">Past 24 hours</option><option value="week" data-i18n="week">Past 7 days</option><option value="all" data-i18n="allWork">All recorded work</option></select></label>
       <label class="sort-field"><span data-i18n="sort">Sort</span><select id="sort" aria-label="Sort requests" data-i18n-aria="sortRequests"><option value="attention" data-i18n="attention">Attention first</option><option value="latest" data-i18n="latest">Latest update</option><option value="oldest" data-i18n="oldest">Oldest update</option><option value="title" data-i18n="titleAZ">Request A–Z</option></select></label>
     </div>
-    <nav class="status-tabs" aria-label="Filter work" id="status-tabs"></nav>
+    <nav class="status-tabs" aria-label="Filter work" data-i18n-aria="filterWork" id="status-tabs"></nav>
     <div id="updates-banner"></div><div id="scope-trail"></div>
     <section class="work-section" aria-labelledby="work-heading">
       <div class="section-heading sr-only"><h2 id="work-heading" tabindex="-1">All work</h2><span id="view-count"></span></div>
@@ -62,14 +62,14 @@
       <section id="team-connected" hidden aria-labelledby="shared-work-heading">
         <div class="team-context">
           <div class="team-identity"><h2 id="team-name">Shared work</h2><span id="team-seat-count"></span></div>
-          <div class="team-tools"><label class="sr-only" for="team-select">Team</label><select id="team-select"></select><a id="team-manage" href="https://cmem.ai/teambrain/app" target="_blank" rel="noopener noreferrer">Team settings ↗</a><button type="button" class="team-secondary" id="team-refresh-connected">Refresh</button></div>
+          <div class="team-tools"><label class="sr-only" for="team-select" data-i18n="team">Team</label><select id="team-select"></select><a id="team-manage" href="https://cmem.ai/teambrain/app" target="_blank" rel="noopener noreferrer" data-i18n="teamSettings">Team settings ↗</a><button type="button" class="team-secondary" id="team-refresh-connected" data-i18n="refreshShort">Refresh</button></div>
           <p id="team-sharing"></p>
         </div>
-        <div class="team-controls"><label class="team-search-label"><span class="sr-only">Search shared work, people and projects</span><input id="team-search" type="search" placeholder="Search shared work, people or projects"></label><label><span class="sr-only">Filter shared work by project</span><select id="team-project" aria-label="Filter shared work by project" hidden></select></label></div>
+        <div class="team-controls"><label class="team-search-label"><span class="sr-only" data-i18n="searchSharedLabel">Search shared work, people and projects</span><input id="team-search" type="search" data-i18n-placeholder="searchShared" placeholder="Search shared work, people or projects"></label><label><span class="sr-only" data-i18n="filterShared">Filter shared work by project</span><select id="team-project" aria-label="Filter shared work by project" data-i18n-aria="filterShared" hidden></select></label></div>
         <div id="team-updates"></div>
-        <div class="team-section-heading"><h2 id="shared-work-heading" tabindex="-1">Shared work</h2><span id="team-count"></span></div>
+        <div class="team-section-heading"><h2 id="shared-work-heading" tabindex="-1" data-i18n="sharedWork">Shared work</h2><span id="team-count"></span></div>
         <div id="team-cards" class="request-grid"></div>
-        <p class="team-footnote">Recorded team activity, not a presence signal. Continue with your teammate or in the source conversation. Private review notes stay on this computer.</p>
+        <p class="team-footnote" data-i18n="recordedTeam">Recorded team activity, not a presence signal. Continue with your teammate or in the source conversation. Private review notes stay on this computer.</p>
       </section>
     </section>
   </main>

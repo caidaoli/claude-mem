@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { SessionCatalogEntry } from '../types';
 import { formatDate } from '../utils/formatters';
 import { SessionCardMenu } from './SessionCardMenu';
+import { useI18n } from '../i18n';
 
 interface SessionCardProps {
   session: SessionCatalogEntry;
@@ -11,15 +12,18 @@ interface SessionCardProps {
 }
 
 export function SessionCard({ session, onOpen, onDelete }: SessionCardProps) {
+  const { t } = useI18n();
   const [menuOpen, setMenuOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const name = session.custom_title || session.project;
   const date = formatDate(session.started_at_epoch);
-  const memoriesLabel = session.item_count === 1 ? '1 memory' : `${session.item_count} memories`;
+  const memoriesLabel = session.item_count === 1
+    ? t.sessions.oneMemory
+    : t.sessions.memories.replace('{count}', String(session.item_count));
 
   const handleDelete = async () => {
-    if (!window.confirm(`Delete this session and everything captured in it (${memoriesLabel})? This cannot be undone.`)) return;
+    if (!window.confirm(t.sessions.confirmDelete.replace('{memories}', memoriesLabel))) return;
     setIsDeleting(true);
     setFailure(null);
     try {
@@ -60,8 +64,8 @@ export function SessionCard({ session, onOpen, onDelete }: SessionCardProps) {
               e.stopPropagation();
               setMenuOpen(prev => !prev);
             }}
-            aria-label="Session actions"
-            title="Session actions"
+            aria-label={t.sessions.actions}
+            title={t.sessions.actions}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
               <circle cx="12" cy="5" r="1.5"></circle>

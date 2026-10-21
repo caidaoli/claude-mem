@@ -5,6 +5,7 @@ import { FeedItem } from '../types';
 import type { DeletableItemType } from '../utils/feed-deletion';
 import { categoryOf, countByCategory } from '../utils/category';
 import { sessionKey, type SessionRef } from '../utils/sessions';
+import { useI18n } from '../i18n';
 
 interface SessionDetailPageProps {
   /** View tabs, rendered at the top of the scrolling column. */
@@ -25,6 +26,7 @@ interface SessionDetailPageProps {
 export function SessionDetailPage({
   tabs, session, title, items, isLoading, hasMore, loadError, onLoadMore, onDeleted, onBack,
 }: SessionDetailPageProps) {
+  const { t } = useI18n();
   const [activeCategories, setActiveCategories] = useState<Set<string>>(new Set());
   const currentSessionKey = sessionKey(session);
 
@@ -56,7 +58,7 @@ export function SessionDetailPage({
       {tabs}
       <div className="session-detail-header">
         <button className="session-detail-back" onClick={onBack}>
-          ← Back to sessions
+          {t.sessions.backToSessions}
         </button>
         <div className="session-detail-title-group">
           {title && <span className="session-detail-title">{title}</span>}

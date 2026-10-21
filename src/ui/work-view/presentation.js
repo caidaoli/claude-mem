@@ -1,4 +1,5 @@
 import { buildModel, cleanText, activityFor, agentIcon, STATUS } from './view-model.js';
+import { t } from './i18n.js';
 
 // Local source text is always enough to render this view. Generated copy is
 // preferred when present; while newer work is being summarized, the last good
@@ -22,27 +23,27 @@ export function presentWork(snapshot, previous = [], now = Date.now()) {
     })).filter((item, index, all) => item.text && all.findIndex(other => other.text === item.text) === index).slice(0, 8);
     const hasCopy = Boolean(request.humanCopy?.title) && ['current', 'outdated'].includes(request.copyState);
     const status = ({ 'in-progress': 'working', 'needs-you': 'needs', done: 'ready' })[request.status] || request.status;
-    const activity = hasCopy ? request.summary : updates[0]?.text || cleanText(request.original?.text, 300) || 'No progress update has been recorded.';
+    const activity = hasCopy ? request.summary : updates[0]?.text || cleanText(request.original?.text, 300) || t('noProgress');
     const next = hasCopy ? request.next : cleanText(items.find(item => item.nextStep?.text)?.nextStep?.text, 300)
-      || (status === 'ready' ? 'Read the reported result and recorded evidence.' : status === 'needs' ? 'Read the handoff, then continue in the original work conversation.' : 'Follow the latest recorded activity.');
+      || t(status === 'ready' ? 'nextReady' : status === 'needs' ? 'nextNeeds' : 'nextFollow');
     return {
       ...request, status, sourceLabel: STATUS[request.status]?.label, activity, summary: activity, next, contributors,
-      stage: cleanText(request.stageSourceText || (hasCopy ? request.stage : ''), 80) || 'Not recorded',
+      stage: cleanText(request.stageSourceText || (hasCopy ? request.stage : ''), 80) || t('notRecorded'),
       workstreams: request.workstreams.map(stream => {
         const original = originals.get(request.id)?.workstreams?.find(item => item.id === stream.id);
         const current = hasCopy ? request.humanCopy?.workstreams?.find(item => item.id === stream.id) : null;
         const recorded = activityFor(stream, null, 20);
         return { ...stream,
-          title: cleanText(current?.title || original?.title || stream.items?.[0]?.title, 115) || 'Supporting work',
-          summary: cleanText(current?.summary || recorded[0]?.detail || recorded[0]?.title, 300) || 'No detailed update recorded.',
+          title: cleanText(current?.title || original?.title || stream.items?.[0]?.title, 115) || t('supportingWork'),
+          summary: cleanText(current?.summary || recorded[0]?.detail || recorded[0]?.title, 300) || t('noDetailedUpdate'),
           contributors: (stream.agentIds || []).map(id => contributors.find(agent => agent.id === id)).filter(Boolean),
         };
       }),
       title: hasCopy ? request.title : cleanText(originals.get(request.id)?.title || request.original?.text, 220),
-      agent: agent?.label || 'Contributor not recorded',
-      role: request.agentIds.length > 1 ? `${request.agentIds.length} contributors` : 'Recorded work',
+      agent: agent?.label || t('contributorNotRecorded'),
+      role: request.agentIds.length > 1 ? t('contributorCount', { count: request.agentIds.length }) : t('recordedWork'),
       icon: platformIcon?.replace('/assets/', '/work-view/assets/') ?? null,
-      project: request.project || 'Local project', updates,
+      project: request.project || t('localProject'), updates,
       evidence: [...items.map(item => cleanText(item.outcome?.text, 500)).filter(Boolean), ...updates.map(item => item.text)].filter((text, index, all) => all.indexOf(text) === index).slice(0, 8),
       outcome: cleanText(items.find(item => item.outcome?.text)?.outcome?.text, 1000) || activity,
     };

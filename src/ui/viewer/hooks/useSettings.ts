@@ -103,7 +103,7 @@ export function useSettings() {
       .catch(error => {
         console.error('Failed to load settings:', error);
         if (!active) return;
-        setLoadError(`Could not load settings: ${error instanceof Error ? error.message : String(error)}`);
+        setLoadError(error instanceof Error ? error.message : String(error));
       });
     return () => { active = false; };
   }, [loadAttempt]);

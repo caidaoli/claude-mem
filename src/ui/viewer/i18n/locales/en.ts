@@ -16,6 +16,7 @@ export const en = {
     noItems: 'No items to display',
     loadingMore: 'Loading more...',
     noMoreItems: 'No more items to load',
+    retry: 'Retry',
   },
 
   // Welcome Card
@@ -75,7 +76,7 @@ export const en = {
     source: 'Source:',
     project: 'Project:',
     closeEsc: 'Close (Esc)',
-    errorLoadingPreview: 'Error loading preview:',
+    errorLoadingPreview: 'Failed to load preview',
     // Loading section
     loading: 'Loading',
     loadingDesc: 'How many observations to inject',
@@ -228,8 +229,11 @@ export const en = {
     fileReadGate: 'Block full-file reads',
     fileReadGateDesc: 'Send Claude to smart_outline/smart_unfold and past observations instead of reading whole code files of 32 KB and up that have history',
     loadingSettings: 'Loading settings…',
+    loadFailed: 'Could not load settings: {error}',
     retry: 'Retry',
     saving: 'Saving...',
+    saved: '✓ Saved',
+    saveError: '✗ Error: {error}',
     save: 'Save',
   },
 
@@ -298,6 +302,103 @@ export const en = {
     components: 'Components:',
     selectNone: 'Select none',
     selectAll: 'Select all',
+    unknownError: 'Unknown error',
+    fetchFailed: 'Failed to fetch logs: {status}',
+    clearFailed: 'Failed to clear logs: {status}',
+    clearTimedOut: 'Clear request timed out; its outcome is unknown. Displaying current logs.',
+    clearTimedOutUnrefreshed: 'Clear request timed out; its outcome is unknown and current logs could not be refreshed. Try Refresh.',
+    // Keyed by the level and component tags the logger writes.
+    levelLabels: {
+      DEBUG: 'Debug',
+      INFO: 'Info',
+      WARN: 'Warn',
+      ERROR: 'Error',
+    },
+    componentLabels: {
+      HOOK: 'Hook',
+      WORKER: 'Worker',
+      SDK: 'SDK',
+      PARSER: 'Parser',
+      DB: 'DB',
+      SYSTEM: 'System',
+      HTTP: 'HTTP',
+      SESSION: 'Session',
+      CHROMA: 'Chroma',
+      OTHER: 'Other',
+    },
+  },
+
+  // View Tabs
+  viewTabs: {
+    label: 'View',
+    timeline: 'Timeline',
+    sessions: 'Sessions',
+  },
+
+  // Session list, card and detail page
+  sessions: {
+    retry: 'Retry',
+    loadFailed: 'Could not load sessions: {error}',
+    loading: 'Loading sessions…',
+    empty: 'No sessions to display',
+    loadingOlder: 'Loading older sessions…',
+    oneMemory: '1 memory',
+    memories: '{count} memories',
+    confirmDelete: 'Delete this session and everything captured in it ({memories})? This cannot be undone.',
+    actions: 'Session actions',
+    open: 'Open',
+    delete: 'Delete',
+    backToSessions: '← Back to sessions',
+  },
+
+  // Category Filter
+  categoryFilter: {
+    filterTo: 'Filter to {category}',
+    count: '{filtered} of {total}',
+    // Keyed by CATEGORY_ORDER (utils/category.ts).
+    categories: {
+      prompt: 'Prompt',
+      summary: 'Summary',
+      discovery: 'Discovery',
+      decision: 'Decision',
+      bugfix: 'Bugfix',
+      feature: 'Feature',
+      refactor: 'Refactor',
+      change: 'Change',
+      security_alert: 'Security Alert',
+      security_note: 'Security Note',
+      other: 'Other',
+    },
+  },
+
+  // Delete Button
+  deleteButton: {
+    confirm: 'Delete this {item}? This cannot be undone.',
+    label: 'Delete {item}',
+    // Keyed by DeletableItemType (utils/feed-deletion.ts).
+    items: {
+      observation: 'observation',
+      summary: 'session summary',
+    },
+  },
+
+  // Refused deletes (utils/feed-deletion.ts, utils/sessions.ts)
+  deleteFailure: {
+    unreachable: 'Not deleted: the claude-mem worker could not be reached.',
+    httpStatus: 'Not deleted: the worker answered HTTP {status}.',
+    syncUnavailable: 'Not deleted: cloud sync is unavailable, so the delete could not be recorded for your other devices. Try again once sync reconnects.',
+    itemSyncedOrGone: 'Not deleted: this memory was synced from another device (delete it there), or it is already gone.',
+    sessionBusy: 'Not deleted: this session is still running, or holds memories synced from another device (delete those there).',
+    sessionGone: 'Not deleted: this session is already gone.',
+  },
+
+  // Terminal Preview
+  terminal: {
+    disableWrap: 'Disable word wrap (scroll horizontally)',
+    enableWrap: 'Enable word wrap',
+    wrap: 'Wrap',
+    scroll: 'Scroll',
+    loadingPreview: 'Loading preview...',
   },
 
   // App-level

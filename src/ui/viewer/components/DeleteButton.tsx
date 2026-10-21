@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { deleteFeedItem, type DeletableItemType } from '../utils/feed-deletion';
+import { useI18n } from '../i18n';
 
 interface DeleteButtonProps {
   itemType: DeletableItemType;
@@ -7,26 +8,25 @@ interface DeleteButtonProps {
   onDeleted: (itemType: DeletableItemType, id: number) => void;
 }
 
-const CONFIRM_LABELS: Record<DeletableItemType, string> = {
-  observation: 'observation',
-  summary: 'session summary',
-};
-
 /**
  * Trash-icon button that deletes a feed item after a confirmation prompt. A
  * refused delete (synced from another device, cloud sync unavailable, worker
  * down) is shown inline next to the button instead of failing silently.
  */
 export function DeleteButton({ itemType, id, onDeleted }: DeleteButtonProps) {
+  const { t } = useI18n();
   const [isDeleting, setIsDeleting] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
+  const itemLabel = t.deleteButton.items[itemType];
+  const label = t.deleteButton.label.replace('{item}', itemLabel);
+
   const handleClick = async () => {
-    if (!window.confirm(`Delete this ${CONFIRM_LABELS[itemType]}? This cannot be undone.`)) return;
+    if (!window.confirm(t.deleteButton.confirm.replace('{item}', itemLabel))) return;
     setIsDeleting(true);
     setFailure(null);
     try {
-      await deleteFeedItem(itemType, id);
+      await deleteFeedItem(itemType, id, fetch, t.deleteFailure);
       onDeleted(itemType, id);
     } catch (error) {
       setFailure(error instanceof Error ? error.message : String(error));
@@ -40,8 +40,8 @@ export function DeleteButton({ itemType, id, onDeleted }: DeleteButtonProps) {
         className="card-delete-btn"
         onClick={handleClick}
         disabled={isDeleting}
-        title={`Delete ${CONFIRM_LABELS[itemType]}`}
-        aria-label={`Delete ${CONFIRM_LABELS[itemType]}`}
+        title={label}
+        aria-label={label}
       >
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <polyline points="3 6 5 6 21 6"></polyline>

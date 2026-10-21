@@ -1,3 +1,5 @@
+import { t } from './i18n.js';
+
 // Connection freshness is measured on the browser's monotonic clock. Server
 // wall time is displayed as evidence, never used as an agent-presence signal.
 export const LOCAL_FEED_STALE_AFTER_MS = 35_000; // Two 15-second heartbeats + margin.
@@ -39,39 +41,39 @@ export function getConnectionStatus({
   const clockSkew = successfulCheckAt !== null && Number.isFinite(wallNow) && sourceAgeMs !== null
     && Math.abs(wallNow - Date.parse(successfulCheckAt) - sourceAgeMs) > 60_000;
   let state = 'connecting';
-  let label = 'Connecting to local feed';
-  let detail = 'Waiting for updates from this computer.';
+  let label = t('feedConnecting');
+  let detail = t('feedConnectingDetail');
   let tone = 'neutral';
 
   if (!transportConnected) {
     if (reconnecting && eventAgeMs !== null && eventAgeMs > threshold) {
-      state = 'stale'; label = 'Local feed stale'; tone = 'warning';
-      detail = 'Reconnecting to this computer. No fresh update has arrived; showing the last received work.';
+      state = 'stale'; label = t('feedStale'); tone = 'warning';
+      detail = t('feedStaleReconnecting');
     } else if (reconnecting) {
-      state = 'reconnecting'; label = 'Reconnecting to local feed'; tone = 'warning';
-      detail = 'Connection interrupted. Showing the last received work while the local feed reconnects.';
+      state = 'reconnecting'; label = t('feedReconnecting'); tone = 'warning';
+      detail = t('feedReconnectingDetail');
     }
   } else if (eventAgeMs === null || eventAgeMs > threshold) {
     if (lastEventAt !== null) {
-      state = 'stale'; label = 'Local feed stale'; tone = 'warning';
-      detail = 'Local updates have stopped arriving. Showing the last received work.';
+      state = 'stale'; label = t('feedStale'); tone = 'warning';
+      detail = t('feedStaleDetail');
     }
   } else if (sourceConnected === false) {
-    state = 'unavailable'; label = 'Local source unavailable'; tone = 'warning';
-    detail = 'Connected, but saved work cannot be read right now. Showing the last received work.';
+    state = 'unavailable'; label = t('feedUnavailable'); tone = 'warning';
+    detail = t('feedUnavailableDetail');
   } else if (sourceConnected === true && successfulCheckAt !== null && sourceAgeMs !== null) {
     if (sourceAgeMs > threshold) {
-      state = 'stale'; label = 'Local feed stale'; tone = 'warning';
-      detail = 'Connected, but the saved work has not been refreshed. Showing the last received work.';
+      state = 'stale'; label = t('feedStale'); tone = 'warning';
+      detail = t('feedSourceStaleDetail');
     } else {
-      state = 'live'; label = 'Live updates'; tone = 'positive';
-      detail = 'Updates are arriving from this computer. Each card shows when its work was last updated.';
+      state = 'live'; label = t('feedLive'); tone = 'positive';
+      detail = t('feedLiveDetail');
     }
   }
 
-  const tooltip = `Last successful local check: ${successfulCheckAt ?? 'not yet confirmed'}. `
-    + (clockSkew ? 'Source and browser clocks differ; freshness uses received heartbeats. ' : '')
-    + 'Connection status does not indicate an agent is running.';
+  const tooltip = t('lastCheck', { at: successfulCheckAt ?? t('notConfirmed') })
+    + (clockSkew ? t('clockSkew') : '')
+    + t('notAgentSignal');
   return { state, label, detail, tone, isLive: state === 'live', eventAgeMs, sourceAgeMs,
     lastSuccessfulCheckAt: successfulCheckAt, clockSkew, staleAfterMs: threshold, tooltip };
 }

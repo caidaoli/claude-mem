@@ -3,6 +3,7 @@ import { SessionCatalogEntry } from '../types';
 import { SessionCard } from './SessionCard';
 import { catalogEntryRef, sessionKey, type SessionRef } from '../utils/sessions';
 import { UI } from '../constants/ui';
+import { useI18n } from '../i18n';
 
 interface SessionListProps {
   header: React.ReactNode;
@@ -17,6 +18,7 @@ interface SessionListProps {
 }
 
 export function SessionList({ header, sessions, isLoading, hasMore, loadError, onOpen, onDelete, onLoadMore }: SessionListProps) {
+  const { t } = useI18n();
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const onLoadMoreRef = useRef(onLoadMore);
 
@@ -45,8 +47,8 @@ export function SessionList({ header, sessions, isLoading, hasMore, loadError, o
       <div className="session-list-content">
         {header}
         {loadError && <div className="card-delete-error" role="alert">
-          {loadError}
-          {!isLoading && <button onClick={onLoadMore}>Retry</button>}
+          {t.sessions.loadFailed.replace('{error}', () => loadError)}
+          {!isLoading && <button onClick={onLoadMore}>{t.sessions.retry}</button>}
         </div>}
         {sessions.map(session => {
           const ref = catalogEntryRef(session);
@@ -61,11 +63,11 @@ export function SessionList({ header, sessions, isLoading, hasMore, loadError, o
         })}
         {sessions.length === 0 && !loadError && (
           <div className="session-list-empty">
-            {isLoading ? 'Loading sessions…' : 'No sessions to display'}
+            {isLoading ? t.sessions.loading : t.sessions.empty}
           </div>
         )}
         {isLoading && sessions.length > 0 && (
-          <div className="session-list-empty">Loading older sessions…</div>
+          <div className="session-list-empty">{t.sessions.loadingOlder}</div>
         )}
         {hasMore && !isLoading && !loadError && sessions.length > 0 && (
           <div ref={loadMoreRef} style={{ height: '20px', margin: '10px 0' }} />

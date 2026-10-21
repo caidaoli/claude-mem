@@ -284,7 +284,7 @@ export function App() {
   async function handleDeleteSession(session: SessionRef): Promise<void> {
     const key = sessionKey(session);
     const deletionVersion = sessionDeletionVersionsRef.current.get(key) ?? 0;
-    await deleteSession(session);
+    await deleteSession(session, fetch, t.deleteFailure);
     // The stream may have already delivered this delete, followed by a new
     // live row recreating the session. Its HTTP acknowledgment must not delete
     // that newer incarnation a second time.

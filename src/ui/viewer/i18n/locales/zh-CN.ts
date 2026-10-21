@@ -18,6 +18,7 @@ export const zhCN: TranslationKeys = {
     noItems: '没有可显示的项目',
     loadingMore: '加载更多...',
     noMoreItems: '没有更多项目了',
+    retry: '重试',
   },
 
   // Welcome Card
@@ -77,7 +78,7 @@ export const zhCN: TranslationKeys = {
     source: '来源：',
     project: '项目：',
     closeEsc: '关闭 (Esc)',
-    errorLoadingPreview: '加载预览出错：',
+    errorLoadingPreview: '加载预览失败',
     // Loading section
     loading: '加载配置',
     loadingDesc: '注入多少条观察记录',
@@ -229,8 +230,11 @@ export const zhCN: TranslationKeys = {
     fileReadGate: '拦截整文件读取',
     fileReadGateDesc: '对 32 KB 及以上且已有历史记录的代码文件，引导 Claude 使用 smart_outline/smart_unfold 和过往观察记录，而不是读取整个文件',
     loadingSettings: '正在加载设置…',
+    loadFailed: '无法加载设置：{error}',
     retry: '重试',
     saving: '保存中...',
+    saved: '✓ 已保存',
+    saveError: '✗ 出错：{error}',
     save: '保存',
   },
 
@@ -299,6 +303,100 @@ export const zhCN: TranslationKeys = {
     components: '组件：',
     selectNone: '取消全选',
     selectAll: '全选',
+    unknownError: '未知错误',
+    fetchFailed: '获取日志失败：{status}',
+    clearFailed: '清除日志失败：{status}',
+    clearTimedOut: '清除请求超时，结果未知。正在显示当前日志。',
+    clearTimedOutUnrefreshed: '清除请求超时，结果未知，且无法刷新当前日志。请尝试刷新。',
+    levelLabels: {
+      DEBUG: '调试',
+      INFO: '信息',
+      WARN: '警告',
+      ERROR: '错误',
+    },
+    componentLabels: {
+      HOOK: 'Hook',
+      WORKER: 'Worker',
+      SDK: 'SDK',
+      PARSER: '解析器',
+      DB: 'DB',
+      SYSTEM: '系统',
+      HTTP: 'HTTP',
+      SESSION: '会话',
+      CHROMA: 'Chroma',
+      OTHER: '其他',
+    },
+  },
+
+  // View Tabs
+  viewTabs: {
+    label: '视图',
+    timeline: '时间线',
+    sessions: '会话',
+  },
+
+  // Session list, card and detail page
+  sessions: {
+    retry: '重试',
+    loadFailed: '无法加载会话：{error}',
+    loading: '正在加载会话…',
+    empty: '没有可显示的会话',
+    loadingOlder: '正在加载更早的会话…',
+    oneMemory: '1 条记忆',
+    memories: '{count} 条记忆',
+    confirmDelete: '确定删除此会话及其中记录的所有内容（{memories}）吗？此操作不可撤销。',
+    actions: '会话操作',
+    open: '打开',
+    delete: '删除',
+    backToSessions: '← 返回会话列表',
+  },
+
+  // Category Filter
+  categoryFilter: {
+    filterTo: '按“{category}”筛选',
+    count: '{filtered} / {total}',
+    categories: {
+      prompt: '提示',
+      summary: '摘要',
+      discovery: '发现',
+      decision: '决策',
+      bugfix: 'Bug 修复',
+      feature: '新功能',
+      refactor: '重构',
+      change: '变更',
+      security_alert: '安全警报',
+      security_note: '安全备注',
+      other: '其他',
+    },
+  },
+
+  // Delete Button
+  deleteButton: {
+    confirm: '确定删除这条{item}吗？此操作不可撤销。',
+    label: '删除{item}',
+    items: {
+      observation: '观察记录',
+      summary: '会话摘要',
+    },
+  },
+
+  // Refused deletes (utils/feed-deletion.ts, utils/sessions.ts)
+  deleteFailure: {
+    unreachable: '未删除：无法连接 claude-mem Worker。',
+    httpStatus: '未删除：Worker 返回了 HTTP {status}。',
+    syncUnavailable: '未删除：云同步不可用，删除操作无法同步到你的其他设备。请在同步恢复连接后重试。',
+    itemSyncedOrGone: '未删除：这条记忆是从其他设备同步来的（请在那台设备上删除），或者它已经不存在了。',
+    sessionBusy: '未删除：此会话仍在运行，或包含从其他设备同步来的记忆（请在那些设备上删除）。',
+    sessionGone: '未删除：此会话已经不存在了。',
+  },
+
+  // Terminal Preview
+  terminal: {
+    disableWrap: '关闭自动换行（水平滚动）',
+    enableWrap: '开启自动换行',
+    wrap: '换行',
+    scroll: '滚动',
+    loadingPreview: '正在加载预览...',
   },
 
   // App-level

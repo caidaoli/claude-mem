@@ -49,7 +49,7 @@ export function ObservationCard({ observation, onDeleted }: ObservationCardProps
       <div className="card-header">
         <div className="card-header-left">
           <span className={`card-type type-${observation.type}`}>
-            {observation.type}
+            {(t.categoryFilter.categories as Record<string, string>)[observation.type] ?? observation.type}
           </span>
           <span className={`card-source source-${observation.platform_source || 'claude'}`}>
             {observation.platform_source || 'claude'}

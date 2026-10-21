@@ -1,4 +1,5 @@
 import type { FeedItemType, StreamEvent } from '../types';
+import { en, type TranslationKeys } from '../i18n/locales/en';
 
 /**
  * Rows the viewer offers to delete. Prompts are left out: deleting one shifts
@@ -15,14 +16,17 @@ const DELETE_ENDPOINTS: Record<DeletableItemType, string> = {
 const FEED_ITEM_TYPES: readonly FeedItemType[] = ['observation', 'summary', 'prompt'];
 
 /** User-facing reason for a refused delete, by the worker's status code. */
-export function describeDeleteFailure(status: number): string {
+export function describeDeleteFailure(
+  status: number,
+  messages: TranslationKeys['deleteFailure'] = en.deleteFailure,
+): string {
   if (status === 404) {
-    return 'Not deleted: this memory was synced from another device (delete it there), or it is already gone.';
+    return messages.itemSyncedOrGone;
   }
   if (status === 503) {
-    return 'Not deleted: cloud sync is unavailable, so the delete could not be recorded for your other devices. Try again once sync reconnects.';
+    return messages.syncUnavailable;
   }
-  return `Not deleted: the worker answered HTTP ${status}.`;
+  return messages.httpStatus.replace('{status}', String(status));
 }
 
 /**
@@ -33,12 +37,13 @@ export async function deleteFeedItem(
   itemType: DeletableItemType,
   id: number,
   fetchImpl: typeof fetch = fetch,
+  messages: TranslationKeys['deleteFailure'] = en.deleteFailure,
 ): Promise<void> {
   const response = await fetchImpl(`${DELETE_ENDPOINTS[itemType]}/${id}`, { method: 'DELETE' }).catch(() => {
-    throw new Error('Not deleted: the claude-mem worker could not be reached.');
+    throw new Error(messages.unreachable);
   });
   if (!response.ok) {
-    throw new Error(describeDeleteFailure(response.status));
+    throw new Error(describeDeleteFailure(response.status, messages));
   }
 }
 

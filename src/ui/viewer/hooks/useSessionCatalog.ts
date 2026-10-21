@@ -85,7 +85,7 @@ export function useSessionCatalog() {
     } catch (error) {
       if (requestSeq === requestSeqRef.current) {
         failedModeRef.current = mode;
-        setLoadError(`Could not load sessions: ${error instanceof Error ? error.message : String(error)}`);
+        setLoadError(error instanceof Error ? error.message : String(error));
       }
     } finally {
       if (requestSeq === requestSeqRef.current) {

@@ -1,5 +1,6 @@
 import React from 'react';
-import { CATEGORY_ORDER, labelForCategory } from '../utils/category';
+import { CATEGORY_ORDER } from '../utils/category';
+import { useI18n } from '../i18n';
 
 interface CategoryFilterProps {
   categoryCounts: Record<string, number>;
@@ -18,6 +19,7 @@ export function CategoryFilter({
   totalCount,
   totalIsPartial,
 }: CategoryFilterProps) {
+  const { t } = useI18n();
   const presentCategories = CATEGORY_ORDER.filter(category => (categoryCounts[category] ?? 0) > 0);
 
   if (presentCategories.length === 0) {
@@ -32,14 +34,16 @@ export function CategoryFilter({
             key={category}
             className={`console-filter-chip ${activeCategories.has(category) ? 'active' : ''}`}
             onClick={() => onToggle(category)}
-            title={`Filter to ${labelForCategory(category)}`}
+            title={t.categoryFilter.filterTo.replace('{category}', t.categoryFilter.categories[category])}
           >
-            {labelForCategory(category)} ({categoryCounts[category]})
+            {t.categoryFilter.categories[category]} ({categoryCounts[category]})
           </button>
         ))}
       </div>
       <span className="category-filter-count">
-        {filteredCount} of {totalCount}{totalIsPartial ? '+' : ''}
+        {t.categoryFilter.count
+          .replace('{filtered}', String(filteredCount))
+          .replace('{total}', `${totalCount}${totalIsPartial ? '+' : ''}`)}
       </span>
     </div>
   );

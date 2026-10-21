@@ -1,3 +1,5 @@
+import { t, everyTranslation } from './i18n.js';
+
 // Display rules shared by the browser and focused regression tests.
 // Text comes from recorded work; we never infer completion or live presence.
 const STALE_MS = 6 * 60 * 60 * 1000;
@@ -20,27 +22,27 @@ export function cleanText(value, max = 150) {
 }
 
 export function projectLabel(project) {
-  return String(project || 'Unknown project').split('/')[0];
+  return String(project || t('unknownProject')).split('/')[0];
 }
 
 export function relativeTime(value, now = Date.now()) {
   const epoch = typeof value === 'number' ? value : Date.parse(value);
-  if (!Number.isFinite(epoch) || epoch <= 0) return 'Time not recorded';
+  if (!Number.isFinite(epoch) || epoch <= 0) return t('timeNotRecorded');
   const age = Math.max(0, now - epoch);
-  if (age < 60000) return 'Just now';
-  if (age < 3600000) return `${Math.floor(age / 60000)}m ago`;
-  if (age < 86400000) return `${Math.floor(age / 3600000)}h ago`;
-  if (age < 172800000) return 'Yesterday';
-  return `${Math.floor(age / 86400000)}d ago`;
+  if (age < 60000) return t('justNow');
+  if (age < 3600000) return t('minutesAgo', { n: Math.floor(age / 60000) });
+  if (age < 86400000) return t('hoursAgo', { n: Math.floor(age / 3600000) });
+  if (age < 172800000) return t('yesterday');
+  return t('daysAgo', { n: Math.floor(age / 86400000) });
 }
 
 export function requestElapsed(request, now = Date.now()) {
-  if (!Number.isFinite(request.startedAtEpoch) || request.startedAtEpoch <= 0) return 'Not recorded';
+  if (!Number.isFinite(request.startedAtEpoch) || request.startedAtEpoch <= 0) return t('notRecorded');
   const end = request.completedAtEpoch || now;
   const minutes = Math.max(0, Math.floor((end - request.startedAtEpoch) / 60000));
-  if (minutes < 1) return 'Just started';
+  if (minutes < 1) return t('justStarted');
   const days = Math.floor(minutes / 1440), hours = Math.floor(minutes / 60) % 24;
-  return days ? `${days}d ${hours}h` : hours ? `${hours}h ${minutes % 60}m` : `${minutes}m`;
+  return days ? t('elapsedDays', { days, hours }) : hours ? t('elapsedHours', { hours, minutes: minutes % 60 }) : t('elapsedMinutes', { minutes });
 }
 
 // Update only clock text so an open source disclosure and the reader's scroll
@@ -74,15 +76,17 @@ export function statusFor(items, now = Date.now()) {
   return 'unknown';
 }
 
+// Labels resolve on read so they follow the current language.
+const statusEntry = (key, rank) => ({ get label() { return t(key); }, rank });
 export const STATUS = {
-  'needs-you': { label: 'Needs you', rank: 0 },
-  blocked: { label: 'Blocked', rank: 1 },
-  'in-progress': { label: 'In progress', rank: 2 },
-  quiet: { label: 'No recent update', rank: 1 },
-  done: { label: 'Done', rank: 5 },
-  todo: { label: 'To do', rank: 3 },
-  unknown: { label: 'Update recorded', rank: 4 },
-  closed: { label: 'Closed', rank: 6 },
+  'needs-you': statusEntry('needs', 0),
+  blocked: statusEntry('blocked', 1),
+  'in-progress': statusEntry('working', 2),
+  quiet: statusEntry('quiet', 1),
+  done: statusEntry('done', 5),
+  todo: statusEntry('todo', 3),
+  unknown: statusEntry('unknown', 4),
+  closed: statusEntry('closed', 6),
 };
 
 function nextFor(items, status) {
@@ -95,7 +99,7 @@ function nextFor(items, status) {
     const text = cleanText(first, 125);
     if (text) return text;
   }
-  return status === 'done' ? 'Marked complete.' : status === 'quiet' ? 'No newer progress recorded.' : status === 'todo' ? 'Waiting to begin.' : 'No next step recorded yet.';
+  return t(status === 'done' ? 'markedComplete' : status === 'quiet' ? 'noNewerProgress' : status === 'todo' ? 'waitingToBegin' : 'noNextStepYet');
 }
 
 export function buildModel(snapshot, now = Date.now()) {
@@ -111,18 +115,18 @@ export function buildModel(snapshot, now = Date.now()) {
     const copy = request.humanCopy;
     const title = cleanText(copy?.title || request.title || request.original.text, 115);
     const streams = (request.workstreams || []).map(stream => ({
-      ...stream, title: cleanText(copy?.workstreams?.find(item => item.id === stream.id)?.title, 115) || 'Supporting work',
+      ...stream, title: cleanText(copy?.workstreams?.find(item => item.id === stream.id)?.title, 115) || t('supportingWork'),
       status: statusFor(stream.items || [], now),
-      summary: cleanText(copy?.workstreams?.find(item => item.id === stream.id)?.summary, 220) || 'A readable summary is being prepared from the recorded work.',
+      summary: cleanText(copy?.workstreams?.find(item => item.id === stream.id)?.summary, 220) || t('preparingSummary'),
       activity: [...(stream.activity || [])].sort((a, b) => b.atEpoch - a.atEpoch),
     }));
     const projects = request.projects || [...new Set(items.map(item => item.project).filter(Boolean))];
     const agentIds = request.agentIds || [...new Set(items.map(item => item.agentId).filter(Boolean))];
     return {
       ...request, title, status,
-      next: cleanText(copy?.next || copy?.summary, 240) || 'A readable update is being prepared.',
-      summary: cleanText(copy?.summary, 300) || 'A readable summary is being prepared from the recorded work.',
-      stage: cleanText(copy?.stage, 40) || 'Not recorded yet',
+      next: cleanText(copy?.next || copy?.summary, 240) || t('preparingUpdate'),
+      summary: cleanText(copy?.summary, 300) || t('preparingSummary'),
+      stage: cleanText(copy?.stage, 40) || t('notRecordedYet'),
       copyState: copy?.state || 'pending', items, workstreams: streams,
       project: projects[0] || '', projects, agentIds,
       updated: request.updatedAtEpoch || Math.max(0, ...items.map(item => item.lastUpdateEpoch || 0)),
@@ -147,7 +151,8 @@ export function normalizeRequestSort(value) {
 const comparableCopy = value => typeof value === 'string'
   ? value.replace(/\s+/g, ' ').trim().replace(/(?:…|\.{3})+$/, '').trim()
   : '';
-const nextCopyFallbacks = new Set(['A readable update is being prepared.', 'No next step recorded yet.']);
+// Fallback copy in any language, so a request built before a language switch still matches.
+const nextCopyFallbacks = new Set(['preparingUpdate', 'noNextStepYet'].flatMap(everyTranslation));
 
 export function requestCardCopy(request) {
   const summary = request.summary ?? '';
@@ -163,7 +168,7 @@ export function requestCardCopy(request) {
   }
   return {
     summary, next,
-    nextLabel: ['done', 'closed'].includes(request.status) ? 'Outcome' : request.status === 'needs-you' ? 'Needs you' : 'Next step',
+    nextLabel: t(['done', 'closed'].includes(request.status) ? 'outcome' : request.status === 'needs-you' ? 'needs' : 'nextStep'),
   };
 }
 

@@ -3,6 +3,7 @@ import type { Settings } from '../types';
 import { TerminalPreview } from './TerminalPreview';
 import { useContextPreview } from '../hooks/useContextPreview';
 import { useI18n } from '../i18n';
+import type { TranslationKeys } from '../i18n/locales/en';
 import { DEFAULT_SETTINGS } from '../constants/settings';
 import { isClaudeMemObserverBaseUrl } from '../utils/observer-endpoint';
 import { CLAUDE_AUTH_METHODS, DEFAULT_CLAUDE_AUTH_METHOD } from '../utils/claude-auth-method';
@@ -24,6 +25,14 @@ interface ContextSettingsModalProps {
 
 export function saveStatusClass(saveStatus: string): string {
   return saveStatus.includes('✗') ? 'error' : saveStatus.includes('✓') ? 'success' : '';
+}
+
+/** useSettings reports save progress as fixed English strings; show them in the UI language. */
+function localizeSaveStatus(saveStatus: string, t: TranslationKeys['settings']): string {
+  if (saveStatus === 'Saving...') return t.saving;
+  if (saveStatus === '✓ Saved') return t.saved;
+  const error = /^✗ Error: (.*)$/s.exec(saveStatus);
+  return error ? t.saveError.replace('{error}', () => error[1]) : saveStatus;
 }
 
 function CollapsibleSection({
@@ -246,7 +255,7 @@ export function ContextSettingsModal({
             <div className="preview-content">
               {error ? (
                 <div style={{ color: 'var(--color-accent-error)' }}>
-                  {t.settings.errorLoadingPreview} {error}
+                  {t.settings.errorLoadingPreview}
                 </div>
               ) : (
                 <TerminalPreview content={preview} isLoading={isLoading} />
@@ -840,13 +849,13 @@ export function ContextSettingsModal({
           <div className="save-status">
             {loadError ? (
               <span className="error" role="alert">
-                {loadError}{' '}
+                {t.settings.loadFailed.replace('{error}', () => loadError)}{' '}
                 <button type="button" onClick={onRetryLoad}>{t.settings.retry}</button>
               </span>
             ) : !isLoaded ? (
               <span>{t.settings.loadingSettings}</span>
             ) : (
-              saveStatus && <span className={saveStatusClass(saveStatus)}>{saveStatus}</span>
+              saveStatus && <span className={saveStatusClass(saveStatus)}>{localizeSaveStatus(saveStatus, t.settings)}</span>
             )}
           </div>
           <button

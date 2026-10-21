@@ -87,7 +87,7 @@ export function Feed({ items, header, onLoadMore, onDeleted, isLoading, hasMore,
         {loadError && !isLoading && (
           <div role="alert" style={{ textAlign: 'center', padding: '20px' }}>
             <p>{loadError}</p>
-            <button onClick={onLoadMore}>Retry</button>
+            <button onClick={onLoadMore}>{t.feed.retry}</button>
           </div>
         )}
         {hasMore && !isLoading && !loadError && (
