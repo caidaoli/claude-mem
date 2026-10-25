@@ -418,7 +418,7 @@ export function App() {
       </button>
 
       <button
-        className="cleanup-toggle-btn"
+        className="console-toggle-btn cleanup-toggle-btn"
         onClick={toggleCleanupModal}
         title={t.app.memoryMaintenance}
       >
