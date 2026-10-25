@@ -5,6 +5,7 @@
 import { getConnectionStatus, type ConnectionStatus } from './connection-status.ts'
 import { conflictReason, readReviewResponse, type ReviewResult } from './review-response.ts'
 import { toWorkModel } from './to-work-model.ts'
+import { subscribeLocale } from '../i18n/translate.ts'
 import type { MappedWorkModel, WorkDataSource, WorkModel } from './work-data-source.ts'
 import type { WorkViewSnapshot, WorkViewSource } from './work-view-api-types.ts'
 
@@ -176,16 +177,18 @@ export const localSource: WorkDataSource = {
 
     // Re-reads connection freshness every second: "live" expires on its own when messages stop.
     const connectionTimer = setInterval(reportConnection, CONNECTION_TICK_MS)
-    // Ages recorded activity (running-for, quiet after 6h) without a synthetic source event.
-    const agingTimer = setInterval(() => {
-      if (latestSnapshot) sendIfChanged(withConnection(toWorkModel(latestSnapshot, Date.now())))
-    }, AGING_TICK_MS)
+    // Ages recorded activity (running-for, quiet after 6h) without a synthetic source event; a language switch
+    // re-derives it at once because the model carries display times.
+    const remap = () => { if (latestSnapshot) sendIfChanged(withConnection(toWorkModel(latestSnapshot, Date.now()))) }
+    const agingTimer = setInterval(remap, AGING_TICK_MS)
+    const stopLocale = subscribeLocale(remap)
 
     return () => {
       clearTimeout(reopenTimer)
       stream.close()
       clearInterval(connectionTimer)
       clearInterval(agingTimer)
+      stopLocale()
     }
   },
 }

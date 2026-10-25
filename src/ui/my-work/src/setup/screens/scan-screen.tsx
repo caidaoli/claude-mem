@@ -1,5 +1,6 @@
 import { CheckIcon } from 'lucide-react'
 import { AgentMark } from '@/components/brand'
+import { intlLocale, t } from '@/i18n'
 import { agentToolFor, type SetupScanPhase, type SetupScanView } from '../setup-data'
 import { scanAgentStatus } from '../setup-scan-status'
 import { PageHeading } from './shared'
@@ -27,35 +28,35 @@ export function ScanScreen({ scan, onImproveProductChange, preferenceError, onRe
   const detected = scan.agents.filter((agent) => agent.detected)
   return (
     <section aria-labelledby="scan-title">
-      <PageHeading id="scan-title" title="Checking your AI usage." lead={detected.map((agent) => agent.label).join(' · ') || undefined} />
+      <PageHeading id="scan-title" title={t('Checking your AI usage.')} lead={detected.map((agent) => agent.label).join(' · ') || undefined} />
       <div className="panel is-memory scan-panel">
-        <ul className="scan-agents" aria-label="Agents found on this computer">
+        <ul className="scan-agents" aria-label={t('Agents found on this computer')}>
           {detected.map((agent) => {
             const status = scanAgentStatus(agent)
             return (
               <li key={agent.id} className={status.note ? 'cannot-run' : undefined}>
                 <span className="check" aria-hidden="true"><CheckIcon strokeWidth={3} /></span>
                 <AgentMark tool={agentToolFor(agent.id)} className="mark" />
-                <span>{agent.label} <span className="detected">({status.label})</span></span>
-                <span className="count">{agent.prompts.toLocaleString('en-US')} prompts</span>
+                <span>{agent.label} <span className="detected">({t(status.label)})</span></span>
+                <span className="count">{t('{count} prompts', { count: agent.prompts.toLocaleString(intlLocale()) })}</span>
                 {status.note && <span className="scan-agent-note">{status.note}</span>}
               </li>
             )
           })}
         </ul>
         <div className="scan-meter">
-          <progress max={100} value={scan.percent} aria-label="Scan progress">{scan.percent}%</progress>
+          <progress max={100} value={scan.percent} aria-label={t('Scan progress')}>{scan.percent}%</progress>
           <span className="scan-percent" aria-hidden="true">{scan.percent}%</span>
         </div>
         <label className="scan-improve-product">
           <input type="checkbox" checked={scan.improveProduct} disabled={scan.phase === 'uploading'} onChange={(event) => onImproveProductChange(event.target.checked)} />
-          <span>Help make claude-mem smarter for everyone with my anonymized setup results</span>
+          <span>{t('Help make claude-mem smarter for everyone with my anonymized setup results')}</span>
         </label>
-        <p className="scan-status" role="status" aria-live="polite">{STATUS[scan.phase]}</p>
+        <p className="scan-status" role="status" aria-live="polite">{t(STATUS[scan.phase])}</p>
         {preferenceError && <p className="scan-error" role="alert">{preferenceError}</p>}
         {scan.error && <p className="scan-error" role="alert">{scan.error}</p>}
-        {retryError && <p className="scan-error" role="alert">{retryError}</p>}
-        {scan.phase === 'failed' && <button type="button" className="scan-retry" onClick={onRetry} disabled={retrying}>{retrying ? 'Starting again…' : 'Try again'}</button>}
+        {retryError && <p className="scan-error" role="alert">{t(retryError)}</p>}
+        {scan.phase === 'failed' && <button type="button" className="scan-retry" onClick={onRetry} disabled={retrying}>{retrying ? t('Starting again…') : t('Try again')}</button>}
       </div>
     </section>
   )

@@ -4,6 +4,7 @@
 import { CheckIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { CmemMark } from '@/components/brand'
+import { t } from '@/i18n'
 import { EMPTY_SETUP_DATA, localSetupSource, SETUP_TOOLS, type SetupData, type SetupSource } from './setup-data'
 import { choiceLocked, guardStep, initialFlowState, nextAfterSavings, progressItemFor, type MemoryBranch, type SetupFlowState, type SetupStep } from './setup-flow'
 import { CheckoutScreen } from './screens/checkout-screen'
@@ -38,12 +39,12 @@ function ProgressBar({ step, branch, showCheckout }: { step: SetupStep; branch: 
   const items = [['memory', 'Memory'], ['savings', 'Token Savings'], ...(branch === 'go' && showCheckout ? [['checkout', 'Checkout']] : []), ['finish', 'Finish Setup']]
   const currentIndex = items.findIndex(([id]) => id === current)
   return (
-    <nav aria-label="Setup progress">
+    <nav aria-label={t('Setup progress')}>
       <ol className="progress">
         {items.map(([id, label], index) => (
           <li key={id} className={index < currentIndex ? 'is-done' : index === currentIndex ? 'is-current' : undefined} aria-current={index === currentIndex ? 'step' : undefined}>
             <span className="dot" aria-hidden="true">{index < currentIndex && <CheckIcon strokeWidth={3} />}</span>
-            {label}
+            {t(label)}
           </li>
         ))}
       </ol>
@@ -68,7 +69,7 @@ export default function SetupPage({ onComplete }: { onComplete: () => void }) {
     try { await source.setImproveProduct(checked) } catch (error) {
       if (revision !== preferenceRevision.current) return
       setImproveProduct(null)
-      setPreferenceError(`Could not save this choice: ${error instanceof Error ? error.message : String(error)}`)
+      setPreferenceError(error instanceof Error ? error.message : String(error))
     }
   }
 
@@ -159,7 +160,7 @@ export default function SetupPage({ onComplete }: { onComplete: () => void }) {
   const installerFailed = data.installer?.stage === 'failed'
 
   const screens: Record<SetupStep, () => ReactNode> = {
-    scan: () => <ScanScreen scan={{ ...data.scan, improveProduct: improveProduct ?? data.scan.improveProduct }} onImproveProductChange={(checked) => void changeImproveProduct(checked)} preferenceError={preferenceError} onRetry={() => void retryScan()} retrying={retrying} retryError={retryError} />,
+    scan: () => <ScanScreen scan={{ ...data.scan, improveProduct: improveProduct ?? data.scan.improveProduct }} onImproveProductChange={(checked) => void changeImproveProduct(checked)} preferenceError={preferenceError && t('Could not save this choice: {error}', { error: preferenceError })} onRetry={() => void retryScan()} retrying={retrying} retryError={retryError} />,
     reveal: () => <RevealScreen agents={data.scan.agents} reveal={data.reveal} extraction={data.extraction} recentPrompts={data.recentPrompts} onContinue={() => update({ revealContinued: true }, 'choice')} />,
     choice: () => <ChoiceScreen branch={flow.branch} onChoose={(branch) => update({ branch, memoryBilling: branch === 'go' ? 'hosted' : 'existing', choiceContinued: true, savingsComplete: false, checkoutReviewed: false, setupComplete: false, finishTools: [] }, 'savings')} />,
     savings: () => (
@@ -185,14 +186,14 @@ export default function SetupPage({ onComplete }: { onComplete: () => void }) {
 
   return (
     <div className="cmem-setup" data-step={step}>
-      <a className="skip" href="#setup-main">Skip to content</a>
+      <a className="skip" href="#setup-main">{t('Skip to content')}</a>
       <header className="setup-header">
         <span className="brand" role="img" aria-label="CMEM"><CmemMark /></span>
         <ProgressBar step={step} branch={flow.branch} showCheckout={!flow.alreadyPro} />
       </header>
       <main id="setup-main" ref={main} tabIndex={-1} className={`setup-main step-${step}${['scan', 'reveal', 'choice', 'savings', 'workspace'].includes(step) ? ' is-centered' : ''}`}>
         {handOffError && <p className="scan-error" role="alert">{handOffError}</p>}
-        {installerFailed && <p className="scan-error" role="alert">Setup stopped in the terminal: {data.installer?.error ?? 'the installer did not say why.'} Run <code>npx claude-mem install</code> again to restart setup.</p>}
+        {installerFailed && <p className="scan-error" role="alert">{t('Setup stopped in the terminal: {reason}', { reason: data.installer?.error ?? t('the installer did not say why.') })} {t('Run')} <code>npx claude-mem install</code> {t('again to restart setup.')}</p>}
         {screens[step]()}
       </main>
     </div>

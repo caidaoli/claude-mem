@@ -9,8 +9,10 @@ import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ClassicViewerLink, DeviceFreshness, GitHubStars, LiveIndicator, WorkspaceContext, type Workspace } from '@/components/bits'
+import { LanguageSwitcher } from '@/components/language-switcher'
 import { CmemMark } from '@/components/brand'
 import { RequestDetail } from '@/components/request-detail'
+import { t, useLocale } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { MyGoals } from '@/pages/my-goals'
 import { MyRules } from '@/pages/my-rules'
@@ -59,12 +61,12 @@ function TeamSwitch({ team, onChange }: { team: boolean; onChange: (team: boolea
     <Req ids={['R9.1', 'R9.4']}>
       <HoverCard openDelay={100}>
         <HoverCardTrigger asChild>
-          <Button variant={team ? 'secondary' : 'ghost'} size="sm" className={cn('px-2 text-xs', team && 'bg-accent text-accent-foreground hover:bg-accent')} onClick={() => onChange(!team)}><UsersIcon />Team</Button>
+          <Button variant={team ? 'secondary' : 'ghost'} size="sm" className={cn('px-2 text-xs', team && 'bg-accent text-accent-foreground hover:bg-accent')} onClick={() => onChange(!team)}><UsersIcon />{t('Team')}</Button>
         </HoverCardTrigger>
         <HoverCardContent className="w-64 space-y-2 text-xs">
           <p className="font-medium">TeamBrain</p>
-          <p className="text-muted-foreground">See everyone’s requests on one board, with who asked and where work collides.</p>
-          {!team && <Button size="sm" className="w-full">Start team plan</Button>}
+          <p className="text-muted-foreground">{t('See everyone’s requests on one board, with who asked and where work collides.')}</p>
+          {!team && <Button size="sm" className="w-full">{t('Start team plan')}</Button>}
         </HoverCardContent>
       </HoverCard>
     </Req>
@@ -77,6 +79,8 @@ setActiveWorkDataSource(ACTIVE_SOURCE)
 
 const SetupPage = lazy(() => import('@/setup/setup-page'))
 export default function App() {
+  // A language switch re-renders the whole tree from here.
+  useLocale()
   // Only the explicit installer handoff opens setup. Missing state on an
   // existing installation must never lock My Work behind checkout.
   const [page, setPage] = useState<Page>(() => new URLSearchParams(window.location.search).get('setup') === '1' ? 'setup' : 'work')
@@ -107,9 +111,9 @@ function WorkApp() {
     <div className="flex min-h-svh items-center justify-center p-4 text-foreground">
       <Empty className="max-w-md border bg-card/60">
         <EmptyHeader>
-          {load.state === 'loading' ? <><Spinner /><EmptyTitle>Reading local work…</EmptyTitle></> : (
+          {load.state === 'loading' ? <><Spinner /><EmptyTitle>{t('Reading local work…')}</EmptyTitle></> : (
             <>
-              <EmptyTitle>Can't read local work right now</EmptyTitle>
+              <EmptyTitle>{t("Can't read local work right now")}</EmptyTitle>
               <EmptyDescription>{load.error}</EmptyDescription>
             </>
           )}
@@ -153,21 +157,21 @@ function LoadedApp() {
             <div className="min-h-svh pb-20 text-foreground md:pb-0">
               {/* Wireframe controls: not part of the product. */}
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border/70 bg-card/50 px-4 py-1.5 text-xs whitespace-nowrap md:px-6">
-                {sample && <Badge variant="outline" className="font-normal">Wireframe · sample data</Badge>}
+                {sample && <Badge variant="outline" className="font-normal">{t('Wireframe · sample data')}</Badge>}
                 {sample && <Req ids={['R13.1']}>
                   <ToggleGroup type="single" size="sm" variant="outline" spacing={1} className="flex-nowrap" value={workspace.mode} onValueChange={(mode) => mode && setWorkspace({ ...workspace, mode: mode as Workspace['mode'], connected: mode === 'web' || workspace.connected })}>
-                    <ToggleGroupItem value="home" className="h-7 text-xs">At home<span className="hidden md:inline">· localhost:37777</span></ToggleGroupItem>
-                    <ToggleGroupItem value="web" className="h-7 text-xs">On the go<span className="hidden md:inline">· cmem.ai</span></ToggleGroupItem>
+                    <ToggleGroupItem value="home" className="h-7 text-xs">{t('At home')}<span className="hidden md:inline">· localhost:37777</span></ToggleGroupItem>
+                    <ToggleGroupItem value="web" className="h-7 text-xs">{t('On the go')}<span className="hidden md:inline">· cmem.ai</span></ToggleGroupItem>
                   </ToggleGroup>
                 </Req>}
                 <div className="ml-auto flex items-center gap-3">
                   <div className="flex items-center gap-1.5">
                     <Switch id="dark-mode" checked={dark} onCheckedChange={setDark} />
-                    <Label htmlFor="dark-mode" className="text-xs">Dark</Label>
+                    <Label htmlFor="dark-mode" className="text-xs">{t('Dark')}</Label>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <Switch id="spec-overlay" checked={showSpec} onCheckedChange={setShowSpec} />
-                    <Label htmlFor="spec-overlay" className="text-xs">Spec IDs</Label>
+                    <Label htmlFor="spec-overlay" className="text-xs">{t('Spec IDs')}</Label>
                   </div>
                 </div>
               </div>
@@ -180,12 +184,13 @@ function LoadedApp() {
                       <span className="sr-only md:not-sr-only md:text-[0.95rem] md:font-semibold md:tracking-tight">claude-mem</span>
                     </span>
                   </Req>
-                  <h1 className="text-lg font-semibold tracking-tight md:hidden">{PAGES.find((entry) => entry.id === page)!.label}</h1>
+                  <h1 className="text-lg font-semibold tracking-tight md:hidden">{t(PAGES.find((entry) => entry.id === page)!.label)}</h1>
                   <div className="ml-auto flex items-center gap-0.5 md:gap-2">
                     <TeamSwitch team={workspace.team} onChange={(team) => setWorkspace({ ...workspace, team })} />
                     <DeviceFreshness />
                     <LiveIndicator />
                     <ClassicViewerLink />
+                    <LanguageSwitcher />
                     <GitHubStars />
                   </div>
                 </div>
@@ -193,15 +198,15 @@ function LoadedApp() {
 
               <div className="mx-auto max-w-[1440px] gap-6 px-4 py-4 md:grid md:grid-cols-[52px_minmax(0,1fr)] md:px-6 md:py-6 lg:grid-cols-[168px_minmax(0,1fr)] lg:gap-8">
                 <Req ids={['R14.1', 'R3.1']} className="hidden md:block">
-                  <nav aria-label="Pages" className="sticky top-20 hidden space-y-5 md:block">
+                  <nav aria-label={t('Pages')} className="sticky top-20 hidden space-y-5 md:block">
                     {NAV_SECTIONS.map((section) => (
                       <div key={section} className="space-y-0.5">
-                        <p className="section-label hidden px-2 pb-1 lg:block">{section}</p>
+                        <p className="section-label hidden px-2 pb-1 lg:block">{t(section)}</p>
                         {PAGES.filter((entry) => entry.section === section).map(({ id, label, icon }) => (
-                          <button key={id} type="button" onClick={() => goToPage(id)} aria-current={page === id ? 'page' : undefined} title={label} className={cn('relative flex h-10 w-full items-center gap-2.5 rounded-[10px] px-1.5 text-left text-[0.9rem] transition-colors', page === id ? 'bg-accent font-medium text-accent-foreground' : 'text-foreground/85 hover:bg-card/70')}>
+                          <button key={id} type="button" onClick={() => goToPage(id)} aria-current={page === id ? 'page' : undefined} title={t(label)} className={cn('relative flex h-10 w-full items-center gap-2.5 rounded-[10px] px-1.5 text-left text-[0.9rem] transition-colors', page === id ? 'bg-accent font-medium text-accent-foreground' : 'text-foreground/85 hover:bg-card/70')}>
                             <NavTile icon={icon} active={page === id} />
-                            <span className="hidden lg:inline">{label}</span>
-                            {id === 'work' && yourMoveCount > 0 && <span className="absolute top-0.5 right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground lg:static lg:ml-auto lg:h-5 lg:min-w-5 lg:text-[11px]" aria-label={`${yourMoveCount} need you`}>{yourMoveCount}</span>}
+                            <span className="hidden lg:inline">{t(label)}</span>
+                            {id === 'work' && yourMoveCount > 0 && <span className="absolute top-0.5 right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground lg:static lg:ml-auto lg:h-5 lg:min-w-5 lg:text-[11px]" aria-label={t('{count} need you', { count: yourMoveCount })}>{yourMoveCount}</span>}
                           </button>
                         ))}
                       </div>
@@ -217,10 +222,10 @@ function LoadedApp() {
               </div>
 
               <Req ids={['R11.1', 'R14.1']} className="md:hidden">
-                <nav aria-label="Pages" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-3 border-t border-border/70 bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden">
+                <nav aria-label={t('Pages')} className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-3 border-t border-border/70 bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden">
                   {PAGES.map(({ id, label, icon }) => (
                     <button key={id} type="button" onClick={() => goToPage(id)} aria-current={page === id ? 'page' : undefined} className={cn('relative flex h-[68px] flex-col items-center justify-center gap-1 text-[11px]', page === id ? 'font-semibold text-accent-foreground' : 'text-muted-foreground')}>
-                      <NavTile icon={icon} active={page === id} />{label}
+                      <NavTile icon={icon} active={page === id} />{t(label)}
                       {id === 'work' && yourMoveCount > 0 && <span className="absolute top-2 left-[calc(50%+6px)] flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">{yourMoveCount}</span>}
                     </button>
                   ))}

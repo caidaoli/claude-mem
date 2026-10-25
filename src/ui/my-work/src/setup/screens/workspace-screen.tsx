@@ -1,9 +1,10 @@
 import { ArrowRightIcon, SearchIcon } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { intlLocale, t } from '@/i18n'
 import type { MemoryResult } from '../setup-data'
 import { prefersReducedMotion } from '../format'
 
-const formatDay = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+const formatDay = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString(intlLocale(), { month: 'short', day: 'numeric', year: 'numeric' })
 
 /** `saved` is the text last written to memory, as observation `savedId`; an edit replaces that copy when the note loses focus. */
 interface KeptNote { record: MemoryResult; text: string; saved: string; savedId: number }
@@ -16,8 +17,8 @@ function ResultCard({ record, note, onDiscard, onKeep, onEdit, onSave }: { recor
       {note ? (
         <>
           <p className="source">{source}</p>
-          <textarea value={note.text} maxLength={4000} aria-label={`Edit note: ${record.title}`} onChange={(event) => onEdit?.(event.target.value)} onBlur={onSave} />
-          <div className="footer"><div className="card-actions"><button type="button" className="text-action" onClick={onDiscard}>Discard</button></div></div>
+          <textarea value={note.text} maxLength={4000} aria-label={t('Edit note: {title}', { title: record.title })} onChange={(event) => onEdit?.(event.target.value)} onBlur={onSave} />
+          <div className="footer"><div className="card-actions"><button type="button" className="text-action" onClick={onDiscard}>{t('Discard')}</button></div></div>
         </>
       ) : (
         <>
@@ -25,8 +26,8 @@ function ResultCard({ record, note, onDiscard, onKeep, onEdit, onSave }: { recor
           <div className="footer">
             <p className="source">{source}</p>
             <div className="card-actions">
-              <button type="button" className="text-action" onClick={onDiscard}>Discard</button>
-              <button type="button" className="secondary" onClick={onKeep}>Keep as note</button>
+              <button type="button" className="text-action" onClick={onDiscard}>{t('Discard')}</button>
+              <button type="button" className="secondary" onClick={onKeep}>{t('Keep as note')}</button>
             </div>
           </div>
         </>
@@ -48,7 +49,8 @@ export function WorkspaceScreen({ suggestions, search, keepNote, forgetNote, onC
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<MemoryResult[]>([])
   const [notes, setNotes] = useState<KeptNote[]>([])
-  const [status, setStatus] = useState('Your projects, sessions and decisions. In one place.')
+  // English text and its placeholder values, translated when rendered.
+  const [status, setStatus] = useState<[string, Record<string, string | number>?]>(['Your projects, sessions and decisions. In one place.'])
   const searched = results.length > 0 || notes.length > 0
 
   useEffect(() => {
@@ -59,20 +61,20 @@ export function WorkspaceScreen({ suggestions, search, keepNote, forgetNote, onC
   const run = async (text: string) => {
     const trimmed = text.trim()
     if (!trimmed) { inputRef.current?.focus(); return }
-    setStatus('Searching your memory…')
+    setStatus(['Searching your memory…'])
     let found: MemoryResult[]
     try { found = (await search(trimmed)).filter((record) => !notes.some((note) => note.record.id === record.id)) }
-    catch (error) { setStatus(error instanceof Error ? error.message : String(error)); return }
+    catch (error) { setStatus([error instanceof Error ? error.message : String(error)]); return }
     setResults(found)
-    setStatus(found.length === 0 ? 'No matching memories found.' : found.length === 1 ? '1 memory found across your projects.' : `${found.length} memories found across your projects.`)
+    setStatus(found.length === 0 ? ['No matching memories found.'] : [found.length === 1 ? '{count} memory found across your projects.' : '{count} memories found across your projects.', { count: found.length }])
   }
   const submit = (event: FormEvent) => { event.preventDefault(); void run(query) }
-  const discard = (id: string) => { setResults((current) => current.filter((record) => record.id !== id)); setStatus('Removed from this view.'); inputRef.current?.focus() }
+  const discard = (id: string) => { setResults((current) => current.filter((record) => record.id !== id)); setStatus(['Removed from this view.']); inputRef.current?.focus() }
   // A kept note is a new memory; the result it came from is never changed.
   const save = async (record: MemoryResult, text: string, message: string): Promise<number | null> => {
     let id: number
-    try { id = await keepNote(record, text) } catch (error) { setStatus(error instanceof Error ? error.message : String(error)); return null }
-    setStatus(message)
+    try { id = await keepNote(record, text) } catch (error) { setStatus([error instanceof Error ? error.message : String(error)]); return null }
+    setStatus([message])
     return id
   }
   const keep = async (record: MemoryResult) => {
@@ -90,49 +92,49 @@ export function WorkspaceScreen({ suggestions, search, keepNote, forgetNote, onC
     setNotes((current) => current.map((entry) => entry.record.id === note.record.id ? { ...entry, saved: note.text, savedId } : entry))
     if (savedId === note.savedId) return
     try { await forgetNote(note.savedId) } catch (error) {
-      setStatus(`Note saved, but its earlier copy is still in your memory: ${error instanceof Error ? error.message : String(error)}`)
+      setStatus(['Note saved, but its earlier copy is still in your memory: {error}', { error: error instanceof Error ? error.message : String(error) }])
     }
   }
 
   return (
     <section aria-labelledby="workspace-title" className={searched ? 'has-results' : undefined}>
       <div className="page-heading">
-        <h1 id="workspace-title" tabIndex={-1}>Hi, I remember stuff so you don’t have to.</h1>
-        <p className="lead">Everything you’ve done in Claude-Mem is right here at your fingertips.</p>
+        <h1 id="workspace-title" tabIndex={-1}>{t('Hi, I remember stuff so you don’t have to.')}</h1>
+        <p className="lead">{t('Everything you’ve done in Claude-Mem is right here at your fingertips.')}</p>
       </div>
       <form ref={formRef} className="workspace-search" onSubmit={submit}>
         {searched && <SearchIcon aria-hidden="true" className="size-7 shrink-0 text-[#5b5fd6]" />}
-        <label className="sr-only" htmlFor="workspace-query">Search your memory across projects</label>
-        <input ref={inputRef} id="workspace-query" type="search" placeholder="What’s next?" maxLength={200} autoComplete="off" value={query} onChange={(event) => setQuery(event.target.value)} />
+        <label className="sr-only" htmlFor="workspace-query">{t('Search your memory across projects')}</label>
+        <input ref={inputRef} id="workspace-query" type="search" placeholder={t('What’s next?')} maxLength={200} autoComplete="off" value={query} onChange={(event) => setQuery(event.target.value)} />
         <span className="divider" aria-hidden="true" />
-        <button className="primary" type="submit">Search <ArrowRightIcon aria-hidden="true" /></button>
+        <button className="primary" type="submit">{t('Search')} <ArrowRightIcon aria-hidden="true" /></button>
       </form>
       {!searched && suggestions.length > 0 && (
-        <div className="query-options" aria-label="Search suggestions">
+        <div className="query-options" aria-label={t('Search suggestions')}>
           {suggestions.map((suggestion) => <button key={suggestion} type="button" onClick={() => { setQuery(suggestion); void run(suggestion) }}>{suggestion}</button>)}
         </div>
       )}
-      <p className="workspace-status" role="status" aria-live="polite">{status}</p>
+      <p className="workspace-status" role="status" aria-live="polite">{t(...status)}</p>
       {results.length > 0 && (
-        <div className="workspace-results" aria-label="Memory search results">
+        <div className="workspace-results" aria-label={t('Memory search results')}>
           {results.map((record) => <ResultCard key={record.id} record={record} onDiscard={() => discard(record.id)} onKeep={() => void keep(record)} />)}
         </div>
       )}
       {notes.length > 0 && (
         <section aria-labelledby="notes-title">
-          <h2 id="notes-title" className="notes-title">Kept notes</h2>
+          <h2 id="notes-title" className="notes-title">{t('Kept notes')}</h2>
           <div className="kept-notes">
             {notes.map((note) => (
               <ResultCard key={note.record.id} record={note.record} note={note}
                 onEdit={(text) => setNotes((current) => current.map((entry) => entry.record.id === note.record.id ? { ...entry, text } : entry))}
                 onSave={() => void saveEdit(note)}
-                onDiscard={() => { setNotes((current) => current.filter((entry) => entry.record.id !== note.record.id)); setStatus('Note removed.'); inputRef.current?.focus() }} />
+                onDiscard={() => { setNotes((current) => current.filter((entry) => entry.record.id !== note.record.id)); setStatus(['Note removed.']); inputRef.current?.focus() }} />
             ))}
           </div>
         </section>
       )}
       <div className="actions is-centered workspace-finish">
-        <button type="button" className="primary" onClick={onContinue}>Continue <ArrowRightIcon aria-hidden="true" /></button>
+        <button type="button" className="primary" onClick={onContinue}>{t('Continue')} <ArrowRightIcon aria-hidden="true" /></button>
       </div>
     </section>
   )

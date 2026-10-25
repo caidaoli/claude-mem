@@ -6,9 +6,11 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/h
 import { Progress } from '@/components/ui/progress'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { t } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { Req } from '@/spec/req'
 import { agentById, deviceById, isSampleHref, measuredEstimate, SAMPLE_DEVICES, useWorkModel, type Device, type LiveState, type Request, type Run, type SkillRun } from '@/data'
+import type { ConnectionStatus } from '@/live/connection-status'
 import type { AutoRefresh } from '@/live/work-data-source'
 import { AgentMark } from './brand'
 
@@ -25,13 +27,13 @@ export function AgentIcon({ agentId, withDevice = false }: { agentId: string; wi
       <Tooltip>
         <TooltipTrigger asChild>
           <span className="inline-flex min-w-0 items-center gap-1.5">
-            <span className="flex size-7 shrink-0 items-center justify-center rounded-lg border bg-card" aria-label={`${agent.name}, ${agent.role}, on ${device.name}`}>
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-lg border bg-card" aria-label={t('{agent}, {role}, on {device}', { agent: t(agent.name), role: t(agent.role), device: t(device.name) })}>
               <AgentMark tool={agent.tool} className="size-4" />
             </span>
-            {withDevice && <Req ids={['R13.4']}><span className="truncate text-xs text-muted-foreground">{agent.name} · {agent.role} · {device.name}</span></Req>}
+            {withDevice && <Req ids={['R13.4']}><span className="truncate text-xs text-muted-foreground">{t(agent.name)} · {t(agent.role)} · {t(device.name)}</span></Req>}
           </span>
         </TooltipTrigger>
-        <TooltipContent>{agent.name} · {agent.role} · on {device.name}</TooltipContent>
+        <TooltipContent>{t('{agent} · {role} · on {device}', { agent: t(agent.name), role: t(agent.role), device: t(device.name) })}</TooltipContent>
       </Tooltip>
     </Req>
   )
@@ -62,7 +64,7 @@ export function StateBadge({ state }: { state: LiveState }) {
           'bg-idle-foreground': state === 'idle',
           'bg-shipped-foreground': state === 'shipped',
         })} />
-        {STATE_LABEL[state]}
+        {t(STATE_LABEL[state])}
       </Badge>
     </Req>
   )
@@ -85,7 +87,7 @@ export function GoalChip({ goalId, onOpen }: { goalId?: string | null; onOpen?: 
         </button>
       ) : (
         // Not linked yet is not the same claim as "serves no goal".
-        <span className="inline-flex min-h-6 items-center gap-1.5 self-start text-xs text-muted-foreground/80 italic">{goalId === null ? 'No goal' : 'Goal not linked yet'}</span>
+        <span className="inline-flex min-h-6 items-center gap-1.5 self-start text-xs text-muted-foreground/80 italic">{goalId === null ? t('No goal') : t('Goal not linked yet')}</span>
       )}
     </Req>
   )
@@ -101,7 +103,7 @@ export function NextMove({ next, className }: { next: Request['next']; className
         <span className={cn('mt-px flex size-5 shrink-0 items-center justify-center rounded-full', human ? 'bg-attention' : 'bg-muted')}>
           {human ? <UserIcon className="size-3" /> : <BotIcon className="size-3" />}
         </span>
-        <span><span className="sr-only">{human ? 'Your move: ' : 'Agent’s move: '}</span>{next.text}</span>
+        <span><span className="sr-only">{human ? t('Your move: ') : t('Agent’s move: ')}</span>{t(next.text)}</span>
       </div>
     </Req>
   )
@@ -110,9 +112,9 @@ export function NextMove({ next, className }: { next: Request['next']; className
 /** What the last memory review covered: "2 of 3 workstreams reviewed". */
 export function reviewCoverage(request: Request) {
   const { coverage, readings, reviewedAt } = request.progress
-  if (!readings) return 'Not reviewed yet'
-  if (!coverage) return `reviewed ${reviewedAt}`
-  return `${coverage.reviewed} of ${coverage.total} workstream${coverage.total === 1 ? '' : 's'} reviewed ${reviewedAt}`
+  if (!readings) return t('Not reviewed yet')
+  if (!coverage) return t('reviewed {at}', { at: t(reviewedAt) })
+  return t(coverage.total === 1 ? '{reviewed} of {total} workstream reviewed {at}' : '{reviewed} of {total} workstreams reviewed {at}', { reviewed: coverage.reviewed, total: coverage.total, at: t(reviewedAt) })
 }
 
 /** Progress from the last memory review (§5), with the measured-pace estimate only when it exists (decision 3). */
@@ -122,7 +124,7 @@ export function ProgressMeter({ request, compact = false }: { request: Request; 
   return (
     <Req ids={['R5.9', 'R5.6', 'R5.11']}>
       <div className="space-y-1.5">
-        <Progress value={progress.percent ?? 0} aria-label={progress.percent === null ? 'Not reviewed yet' : `${progress.percent}% complete`} className={cn('h-1.5 bg-muted', {
+        <Progress value={progress.percent ?? 0} aria-label={progress.percent === null ? t('Not reviewed yet') : t('{percent}% complete', { percent: progress.percent })} className={cn('h-1.5 bg-muted', {
           '[&_[data-slot=progress-indicator]]:bg-working-foreground/75': request.state === 'working',
           '[&_[data-slot=progress-indicator]]:bg-review-foreground/75': request.state === 'needs-check',
           '[&_[data-slot=progress-indicator]]:bg-attention-foreground/75': request.state === 'your-move',
@@ -130,7 +132,7 @@ export function ProgressMeter({ request, compact = false }: { request: Request; 
           '[&_[data-slot=progress-indicator]]:bg-shipped-foreground/75': request.state === 'shipped',
         })} />
         <div className="flex flex-wrap justify-between gap-x-2 text-xs text-muted-foreground">
-          <span>{progress.completedAt ? `Completed ${progress.completedAt}` : progress.readings ? <><span className="font-medium text-foreground/80 tabular-nums">{progress.percent}%</span>{compact ? '' : ` · ${reviewCoverage(request)}`}</> : 'Not reviewed yet'}</span>
+          <span>{progress.completedAt ? t('Completed {at}', { at: progress.completedAt }) : progress.readings ? <><span className="font-medium text-foreground/80 tabular-nums">{progress.percent}%</span>{compact ? '' : ` · ${reviewCoverage(request)}`}</> : t('Not reviewed yet')}</span>
           {!compact && estimate && <span>{estimate}</span>}
         </div>
       </div>
@@ -148,12 +150,19 @@ export function ProductLink({ href, children, className }: { href?: string; chil
       <TooltipTrigger asChild>
         <span tabIndex={0} className={cn('cursor-help', className)}>
           {children}
-          <span className="ml-2 shrink-0 rounded border border-dashed px-1.5 text-[10px] text-muted-foreground">sample</span>
+          <span className="ml-2 shrink-0 rounded border border-dashed px-1.5 text-[10px] text-muted-foreground">{t('sample')}</span>
         </span>
       </TooltipTrigger>
-      <TooltipContent>Sample link. The real page attaches when the agent records it.</TooltipContent>
+      <TooltipContent>{t('Sample link. The real page attaches when the agent records it.')}</TooltipContent>
     </Tooltip>
   )
+}
+
+/** getConnectionStatus's tooltip, rebuilt from its fields so it follows the chosen language. */
+function connectionTooltip({ lastSuccessfulCheckAt, clockSkew }: ConnectionStatus) {
+  return t('Last successful local check: {at}. ', { at: lastSuccessfulCheckAt ?? t('not yet confirmed') })
+    + (clockSkew ? t('Source and browser clocks differ; freshness uses received heartbeats. ') : '')
+    + t('Connection status does not indicate an agent is running.')
 }
 
 /**
@@ -174,13 +183,13 @@ export function LiveIndicator() {
               {live && <span className="absolute inline-flex size-full rounded-full bg-shipped-foreground/40 motion-safe:animate-ping" />}
               <span className={cn('relative inline-flex size-2 rounded-full', live ? 'bg-shipped-foreground' : connection.tone === 'warning' ? 'bg-attention-foreground' : 'bg-idle-foreground')} />
             </span>
-            {demonstration ? 'Live' : connection.label}
+            {demonstration ? t('Live') : t(connection.label)}
           </span>
         </TooltipTrigger>
         <TooltipContent className="max-w-72">
           {demonstration
-            ? mode === 'home' ? 'Streams from the local worker, localhost:37777 (demonstration)' : 'Checks cmem.ai for new sync changes every few seconds (demonstration)'
-            : <>{connection.detail} {connection.tooltip}</>}
+            ? mode === 'home' ? t('Streams from the local worker, localhost:37777 (demonstration)') : t('Checks cmem.ai for new sync changes every few seconds (demonstration)')
+            : <>{t(connection.detail)} {connectionTooltip(connection)}</>}
         </TooltipContent>
       </Tooltip>
     </Req>
@@ -195,20 +204,20 @@ export function DeviceFreshness() {
     <Req ids={['R13.8', 'R13.2']}>
       <HoverCard openDelay={100}>
         <HoverCardTrigger asChild>
-          <Button variant="ghost" size="sm" className="px-2 text-xs text-muted-foreground">{devices.length}<span className="hidden sm:inline">{devices.length === 1 ? 'machine' : 'machines'}</span><span className="sr-only sm:hidden">{devices.length === 1 ? 'machine' : 'machines'}</span></Button>
+          <Button variant="ghost" size="sm" className="px-2 text-xs text-muted-foreground">{devices.length}<span className="hidden sm:inline">{t(devices.length === 1 ? 'machine' : 'machines')}</span><span className="sr-only sm:hidden">{t(devices.length === 1 ? 'machine' : 'machines')}</span></Button>
         </HoverCardTrigger>
         <HoverCardContent className="w-64 space-y-2">
-          <p className="text-xs font-medium">Machines reporting into this view</p>
+          <p className="text-xs font-medium">{t('Machines reporting into this view')}</p>
           {devices.map((device) => (
             <div key={device.id} className="flex items-center justify-between text-xs">
               <span className="flex items-center gap-2">
                 <span className={cn('size-1.5 rounded-full', reportingNow(device) ? 'bg-shipped-foreground' : 'bg-idle-foreground')} />
-                {device.name}
+                {t(device.name)}
               </span>
-              <span className="text-muted-foreground">{device.syncedMinutesAgo !== 0 ? `synced ${device.syncedMinutesAgo} min ago` : sourceKind === 'sample' ? 'this machine' : connection.label}</span>
+              <span className="text-muted-foreground">{device.syncedMinutesAgo !== 0 ? t('synced {minutes} min ago', { minutes: device.syncedMinutesAgo }) : sourceKind === 'sample' ? t('this machine') : t(connection.label)}</span>
             </div>
           ))}
-          {sourceKind !== 'sample' && <p className="text-xs text-muted-foreground">{connection.tooltip}</p>}
+          {sourceKind !== 'sample' && <p className="text-xs text-muted-foreground">{connectionTooltip(connection)}</p>}
         </HoverCardContent>
       </HoverCard>
     </Req>
@@ -234,9 +243,9 @@ export function GitHubStars() {
   }, [])
   return (
     <Button asChild variant="outline" size="sm" className="h-7 gap-1.5 px-2 text-xs">
-      <a href={CLAUDE_MEM_REPO_URL} target="_blank" rel="noreferrer" aria-label="Star claude-mem on GitHub">
+      <a href={CLAUDE_MEM_REPO_URL} target="_blank" rel="noreferrer" aria-label={t('Star claude-mem on GitHub')}>
         <StarIcon className="size-3.5" />
-        <span className="hidden sm:inline">Star</span>
+        <span className="hidden sm:inline">{t('Star')}</span>
         {stargazerCount !== null && <span className="tabular-nums">{new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(stargazerCount)}</span>}
       </a>
     </Button>
@@ -246,8 +255,8 @@ export function GitHubStars() {
 /** The previous memory viewer, still served by the worker at /viewer. */
 export function ClassicViewerLink() {
   return (
-    <a href="/viewer" className="hidden text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline md:inline" title="Open the previous memory viewer">
-      Classic viewer
+    <a href="/viewer" className="hidden text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline md:inline" title={t('Open the previous memory viewer')}>
+      {t('Classic viewer')}
     </a>
   )
 }
@@ -267,13 +276,13 @@ export function RefreshButton({ run, ids }: { run: Run; ids: string[] }) {
     <Req ids={[...ids, 'R14.10', 'R14.11']}>
       <div className="flex w-full items-center gap-3 sm:w-auto">
         <span className="min-w-0 flex-1 text-xs leading-tight text-muted-foreground sm:text-right" aria-live="polite">
-          {state === 'queued' && <>Queued for {nextMachine.name}</>}
-          {state === 'running' && <>Running {run.label} on {runMachine.name}…</>}
-          {state === 'idle' && <>Last run {run.lastRunAt}<br />on {runMachine.name}</>}
+          {state === 'queued' && t('Queued for {machine}', { machine: nextMachine.name })}
+          {state === 'running' && t('Running {skill} on {machine}…', { skill: run.label, machine: runMachine.name })}
+          {state === 'idle' && <>{t('Last run')} {run.lastRunAt}<br />{t('on {machine}', { machine: runMachine.name })}</>}
         </span>
-        <Button variant="outline" size="sm" className="h-11 min-w-11 md:h-8 md:min-w-0" onClick={start} disabled={state !== 'idle'} aria-label={`Refresh ${run.label}`}>
+        <Button variant="outline" size="sm" className="h-11 min-w-11 md:h-8 md:min-w-0" onClick={start} disabled={state !== 'idle'} aria-label={t('Refresh {skill}', { skill: run.label })}>
           {state === 'idle' ? <RefreshCwIcon /> : <Spinner />}
-          Refresh
+          {t('Refresh')}
         </Button>
       </div>
     </Req>
@@ -287,10 +296,10 @@ export function RefreshButton({ run, ids }: { run: Run; ids: string[] }) {
  */
 export function RefreshStatus({ refresh, run, ids, label = 'Last run' }: { refresh: AutoRefresh | null; run: SkillRun | null; ids: string[]; label?: string }) {
   let text: ReactNode = null
-  if (refresh?.state === 'running') text = <span className="inline-flex items-center gap-1.5"><Spinner />Updating your goals and progress…</span>
-  else if (refresh?.error) text = refresh.state === 'waiting-for-agent' ? <>Waiting to refresh: {refresh.error}</> : <>Refresh failed: {refresh.error}</>
-  else if (refresh?.finishedAt) text = <>Last refreshed {refresh.finishedAt}</>
-  else if (run) text = <>{label} {run.lastRunAt}<br />on {run.deviceName}</>
+  if (refresh?.state === 'running') text = <span className="inline-flex items-center gap-1.5"><Spinner />{t('Updating your goals and progress…')}</span>
+  else if (refresh?.error) text = refresh.state === 'waiting-for-agent' ? t('Waiting to refresh: {error}', { error: refresh.error }) : t('Refresh failed: {error}', { error: refresh.error })
+  else if (refresh?.finishedAt) text = t('Last refreshed {at}', { at: refresh.finishedAt })
+  else if (run) text = <>{t(label)} {run.lastRunAt}<br />{t('on {machine}', { machine: t(run.deviceName) })}</>
   if (!text) return null
   return (
     <Req ids={[...ids, 'R14.10']}>

@@ -1,0 +1,22 @@
+/** zh-CN for the app shell (App.tsx, language switcher, page title), keyed by the English source text. */
+export const APP_ZH_CN: Readonly<Record<string, string>> = {
+  'My Work · claude-mem': '我的工作 · claude-mem',
+  'Language': '语言',
+  'My Work': '我的工作',
+  'My Goals': '我的目标',
+  'My Rules': '我的规则',
+  'Monitor': '跟进',
+  'Steer': '引导',
+  'Pages': '页面',
+  '{count} need you': '{count} 项需要你处理',
+  'Team': '团队',
+  'See everyone’s requests on one board, with who asked and where work collides.': '在一块看板上查看所有人的请求，包括谁提出的、哪些工作有冲突。',
+  'Start team plan': '开通团队方案',
+  'Reading local work…': '正在读取本地工作…',
+  "Can't read local work right now": '暂时无法读取本地工作',
+  'Wireframe · sample data': '线框图 · 示例数据',
+  'At home': '在家',
+  'On the go': '在外',
+  'Dark': '深色',
+  'Spec IDs': '规格编号',
+}

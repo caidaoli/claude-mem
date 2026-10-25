@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { CmemMark } from '@/components/brand'
+import { t } from '@/i18n'
 import type { SetupTool } from '../setup-data'
 import chatgptMark from '../assets/agents/chatgpt.webp'
 import claudeMark from '../assets/agents/claude.webp'
@@ -46,8 +47,8 @@ export function LaunchScreen({ tools, onDone }: { tools: SetupTool[]; onDone: ()
   }, [tools])
   return (
     <section aria-labelledby="launch-title">
-      <h1 id="launch-title" className="sr-only" tabIndex={-1}>Opening your memory workspace</h1>
-      <p className="sr-only" role="status" aria-live="polite">Bringing your tools and memory together.</p>
+      <h1 id="launch-title" className="sr-only" tabIndex={-1}>{t('Opening your memory workspace')}</h1>
+      <p className="sr-only" role="status" aria-live="polite">{t('Bringing your tools and memory together.')}</p>
       <div ref={stageRef} className="launch-stage"><span ref={brainRef} className="launch-brain"><CmemMark className="size-full" /></span></div>
     </section>
   )

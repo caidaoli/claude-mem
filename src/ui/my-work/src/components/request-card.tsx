@@ -5,6 +5,7 @@ import { Terminal, TerminalContent } from '@/components/ai-elements/terminal'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { t } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { Req } from '@/spec/req'
 import { requestById, updateRequest, useFreshlyUpdated, type Request } from '@/data'
@@ -46,7 +47,7 @@ function useAgentViewTransform(request: Request) {
 
 function ActivitySpinner({ word, settled }: { word: string; settled: boolean }) {
   const { mode } = useWorkspace()
-  const label = settled ? 'Just updated' : mode === 'web' && word !== 'Translating' ? 'Working' : word
+  const label = t(settled ? 'Just updated' : mode === 'web' && word !== 'Translating' ? 'Working' : word)
   return (
     <Req ids={['D5']}>
       <Tooltip>
@@ -77,13 +78,13 @@ export function OpenFollowUps({ request, limit }: { request: Request; limit?: nu
   return (
     <Req ids={['R5.7']}>
       <div className="space-y-1">
-        <p className="section-label">Open after ship · {open.length}</p>
+        <p className="section-label">{t('Open after ship · {count}', { count: open.length })}</p>
         <ul className="divide-y divide-border/70">
           {open.slice(0, limit).map((followUp) => (
             <li key={followUp.text} className="flex min-h-11 items-center gap-2 text-sm md:min-h-9">
-              <span className="w-12 shrink-0 text-[11px] font-medium text-muted-foreground uppercase">{followUp.tag}</span>
+              <span className="w-12 shrink-0 text-[11px] font-medium text-muted-foreground uppercase">{t(followUp.tag)}</span>
               <span className="min-w-0 flex-1 truncate">{followUp.text}</span>
-              {inStore && <Button variant="ghost" size="sm" className="h-11 shrink-0 text-xs md:h-7" onClick={(event) => { event.stopPropagation(); finish(followUp.text) }}><CheckIcon />Done</Button>}
+              {inStore && <Button variant="ghost" size="sm" className="h-11 shrink-0 text-xs md:h-7" onClick={(event) => { event.stopPropagation(); finish(followUp.text) }}><CheckIcon />{t('Done')}</Button>}
             </li>
           ))}
         </ul>
@@ -105,7 +106,7 @@ export function RequestCard({ request, onOpen, onOpenGoal }: { request: Request;
           <div className="flex min-w-0 items-center gap-2">
             <AgentIcon agentId={request.agentId} />
             <Req ids={['R5.2', 'R9.3']}>
-              <span className={cn('truncate text-xs text-muted-foreground', !team && 'sr-only')}>asked by {request.askedBy}</span>
+              <span className={cn('truncate text-xs text-muted-foreground', !team && 'sr-only')}>{t('asked by {name}', { name: t(request.askedBy) })}</span>
             </Req>
           </div>
           <div className="flex items-center gap-1.5">
@@ -124,11 +125,11 @@ export function RequestCard({ request, onOpen, onOpenGoal }: { request: Request;
             </button>
           ) : (
             <Req ids={['D5']}>
-              <button type="button" onClick={onOpen} className="text-left" aria-label="Open this request; its title is still being written">
+              <button type="button" onClick={onOpen} className="text-left" aria-label={t('Open this request; its title is still being written')}>
                 <Terminal output={request.terminal.join('\n')} isStreaming className="border-dashed border-terminal-border bg-terminal text-terminal-foreground">
                   <TerminalContent className="max-h-28 p-3.5 text-[11px] leading-relaxed">
                     <pre className="whitespace-pre-wrap text-terminal-foreground">{request.terminal.slice(-4).join('\n')}</pre>
-                    {phase === 'translating' && <Shimmer as="span" className="text-[11px] [--color-background:var(--foreground)] [--color-muted-foreground:var(--terminal-foreground)]">Writing the human title…</Shimmer>}
+                    {phase === 'translating' && <Shimmer as="span" className="text-[11px] [--color-background:var(--foreground)] [--color-muted-foreground:var(--terminal-foreground)]">{t('Writing the human title…')}</Shimmer>}
                   </TerminalContent>
                 </Terminal>
               </button>
@@ -143,9 +144,9 @@ export function RequestCard({ request, onOpen, onOpenGoal }: { request: Request;
             <GoalChip goalId={request.goalId} onOpen={onOpenGoal} />
             <Req ids={['R5.3', 'R5.4', 'R5.5']}>
               <dl className="grid grid-cols-3 gap-2 text-xs">
-                <div><dt className="text-muted-foreground">Stage</dt><dd className="mt-0.5 font-medium" title={request.stageNote}>{request.stage}</dd></div>
-                <div><dt className="text-muted-foreground">Started</dt><dd className="mt-0.5">{request.startedAt}</dd></div>
-                <div><dt className="text-muted-foreground">Running</dt><dd className="mt-0.5">{request.runningFor}</dd></div>
+                <div><dt className="text-muted-foreground">{t('Stage')}</dt><dd className="mt-0.5 font-medium" title={request.stageNote}>{t(request.stage)}</dd></div>
+                <div><dt className="text-muted-foreground">{t('Started')}</dt><dd className="mt-0.5">{t(request.startedAt)}</dd></div>
+                <div><dt className="text-muted-foreground">{t('Running')}</dt><dd className="mt-0.5">{t(request.runningFor)}</dd></div>
               </dl>
             </Req>
             <ProgressMeter request={request} />

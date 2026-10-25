@@ -7,6 +7,7 @@ import { Progress } from '@/components/ui/progress'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { AgentIcon, NextMove, ProgressMeter, RefreshButton, RefreshStatus, StateBadge, useWorkspace } from '@/components/bits'
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
+import { t } from '@/i18n'
 import { PRODUCT_ICON } from '@/lib/product-icons'
 import { cn } from '@/lib/utils'
 import { Req } from '@/spec/req'
@@ -54,16 +55,15 @@ function statusOf(goal: GoalItem, requests: Request[]): GoalStatus {
   return 'stalled'
 }
 
-const requestTitle = (request: Request) => request.title ?? 'New request, title being written'
-const timesLabel = (times: number) => times === 1 ? 'asked once' : `asked ${times}×`
-const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`
+const requestTitle = (request: Request) => request.title ?? t('New request, title being written')
+const timesLabel = (times: number) => t(times === 1 ? 'asked once' : 'asked {count}×', { count: times })
 const isReviewed = (request: Request) => request.progress.readings > 0
 
 function GoalStatusText({ status }: { status: GoalStatus }) {
   return (
     <Req ids={['R6.2']}>
       <span className={cn('inline-flex items-center gap-1.5 font-medium', GOAL_STATUS[status].text)}>
-        <span className={cn('size-1.5 rounded-full', GOAL_STATUS[status].dot)} />{GOAL_STATUS[status].label}
+        <span className={cn('size-1.5 rounded-full', GOAL_STATUS[status].dot)} />{t(GOAL_STATUS[status].label)}
       </span>
     </Req>
   )
@@ -77,18 +77,20 @@ function Rollup({ status, requests, className }: { status: GoalStatus; requests:
   const reviewed = requests.filter(isReviewed)
   const unreviewed = requests.filter((request) => !isReviewed(request))
   if (requests.length === 0) {
-    return <Req ids={['R12.1', 'R5.11']}><p className={cn('text-xs text-muted-foreground', className)}>No requests, so no progress to measure</p></Req>
+    return <Req ids={['R12.1', 'R5.11']}><p className={cn('text-xs text-muted-foreground', className)}>{t('No requests, so no progress to measure')}</p></Req>
   }
   const percent = reviewed.length ? Math.round(reviewed.reduce((sum, request) => sum + (request.progress.percent ?? 0), 0) / reviewed.length) : 0
   return (
     <Req ids={['D1', 'R5.11', 'R3.9', 'R12.1']}>
       <div className={cn('space-y-1', className)}>
-        <Progress value={percent} className={cn('h-1.5 bg-muted', GOAL_STATUS[status].meter)} aria-label={`${percent}% from ${reviewed.length} of ${requests.length} requests reviewed`} />
+        <Progress value={percent} className={cn('h-1.5 bg-muted', GOAL_STATUS[status].meter)} aria-label={t('{percent}% from {reviewed} of {count} requests reviewed', { percent, reviewed: reviewed.length, count: requests.length })} />
         <p className="text-xs text-muted-foreground">
-          {reviewed.length ? <><span className="font-medium text-foreground tabular-nums">{percent}%</span> · {reviewed.length} of {plural(requests.length, 'request')} reviewed</> : <>Not reviewed yet · 0 of {plural(requests.length, 'request')}</>}
+          {reviewed.length
+            ? <><span className="font-medium text-foreground tabular-nums">{percent}%</span> · {t(requests.length === 1 ? '{reviewed} of {count} request reviewed' : '{reviewed} of {count} requests reviewed', { reviewed: reviewed.length, count: requests.length })}</>
+            : t(requests.length === 1 ? 'Not reviewed yet · 0 of {count} request' : 'Not reviewed yet · 0 of {count} requests', { count: requests.length })}
         </p>
         {unreviewed.length > 0 && reviewed.length > 0 && (
-          <p className="truncate text-xs text-muted-foreground">Not counted: {unreviewed.map(requestTitle).join(', ')}</p>
+          <p className="truncate text-xs text-muted-foreground">{t('Not counted: {titles}', { titles: unreviewed.map(requestTitle).join(t(', ')) })}</p>
         )}
       </div>
     </Req>
@@ -138,7 +140,7 @@ function WhyItsHere({ quotes }: { quotes: Quote[] }) {
     <Req ids={['R3.8']}>
       <Collapsible>
         <CollapsibleTrigger className="group flex min-h-11 items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
-          <ChevronDownIcon className="size-4 transition-transform group-data-[state=open]:rotate-180" />Why it’s here · {plural(quotes.length, 'quote')}
+          <ChevronDownIcon className="size-4 transition-transform group-data-[state=open]:rotate-180" />{t(quotes.length === 1 ? 'Why it’s here · {count} quote' : 'Why it’s here · {count} quotes', { count: quotes.length })}
         </CollapsibleTrigger>
         <CollapsibleContent className="pt-1 pb-1"><Quotes quotes={quotes} /></CollapsibleContent>
       </Collapsible>
@@ -153,7 +155,7 @@ function WorkProduct({ requests }: { requests: Request[] }) {
   return (
     <Req ids={['R5.10', 'R12.1']}>
       <div className="space-y-2">
-        <SectionLabel>What came out of it</SectionLabel>
+        <SectionLabel>{t('What came out of it')}</SectionLabel>
         <ul className="flex flex-wrap gap-2">
           {products.map((product, index) => {
             const Icon = PRODUCT_ICON[product.kind]
@@ -161,19 +163,19 @@ function WorkProduct({ requests }: { requests: Request[] }) {
             return (
               <li key={`${index}-${product.label}`} className="max-w-full">
                 {product.href === undefined ? (
-                  <span className={cn(chip, 'bg-card')} title={`From ${product.from}`}>
+                  <span className={cn(chip, 'bg-card')} title={t('From {request}', { request: product.from })}>
                     <Icon className="size-4 shrink-0 text-muted-foreground" /><span className="truncate">{product.label}</span>
-                    <span className="shrink-0 text-xs text-muted-foreground">{product.kind}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">{t(product.kind)}</span>
                   </span>
                 ) : isSampleHref(product.href) ? (
-                  <span className={cn(chip, 'border-dashed text-muted-foreground')} title={`From ${product.from}. Sample: no real artifact yet.`}>
+                  <span className={cn(chip, 'border-dashed text-muted-foreground')} title={t('From {request}. Sample: no real artifact yet.', { request: product.from })}>
                     <Icon className="size-4 shrink-0" /><span className="truncate">{product.label}</span>
-                    <span className="shrink-0 text-xs">{product.kind} · sample</span>
+                    <span className="shrink-0 text-xs">{t('{kind} · sample', { kind: t(product.kind) })}</span>
                   </span>
                 ) : (
-                  <a href={product.href} target="_blank" rel="noreferrer" className={cn(chip, 'bg-card hover:bg-surface-cool')} title={`From ${product.from}`}>
+                  <a href={product.href} target="_blank" rel="noreferrer" className={cn(chip, 'bg-card hover:bg-surface-cool')} title={t('From {request}', { request: product.from })}>
                     <Icon className="size-4 shrink-0 text-muted-foreground" /><span className="truncate">{product.label}</span>
-                    <span className="shrink-0 text-xs text-muted-foreground">{product.kind}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">{t(product.kind)}</span>
                     <ExternalLinkIcon className="size-3.5 shrink-0 text-muted-foreground" />
                   </a>
                 )}
@@ -202,7 +204,7 @@ function PriorityItem({ goal, highlighted, onOpen }: { goal: GoalItem; highlight
             </Req>
             <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs font-normal text-muted-foreground">
               <GoalStatusText status={status} />
-              <span>· {timesLabel(goal.timesAsked)}, last {formatPromptDay(goal.latestAt)}<span className="hidden sm:inline"> · {goal.product}</span></span>
+              <span>· {t('{times}, last {day}', { times: timesLabel(goal.timesAsked), day: formatPromptDay(goal.latestAt) })}<span className="hidden sm:inline"> · {t(goal.product)}</span></span>
             </span>
             <Rollup status={status} requests={requests} className="pt-1 font-normal @2xl:hidden" />
           </span>
@@ -211,17 +213,17 @@ function PriorityItem({ goal, highlighted, onOpen }: { goal: GoalItem; highlight
         <AccordionContent className="space-y-4 pb-3 sm:pl-10 [&_a]:no-underline [&_p:not(:last-child)]:mb-0">
           {requests.length > 0 ? (
             <div className="space-y-2">
-              <SectionLabel>Requests serving it · {requests.length}</SectionLabel>
+              <SectionLabel>{t('Requests serving it · {count}', { count: requests.length })}</SectionLabel>
               {requests.map((request) => <RequestRow key={request.id} request={request} onOpen={onOpen} />)}
             </div>
           ) : (
             <Req ids={['R12.1', 'R6.3']}>
-              <NextMove next={{ who: 'human', text: 'Start a request for this. Nothing is working on it.' }} />
+              <NextMove next={{ who: 'human', text: t('Start a request for this. Nothing is working on it.') }} />
             </Req>
           )}
           {shippedBefore && (
             <Req ids={['R12.2']}>
-              <p className="text-xs text-review-foreground">You asked again on {formatPromptDay(goal.latestAt)}, after the last ship on {shippedBefore}. What shipped doesn’t cover it yet.</p>
+              <p className="text-xs text-review-foreground">{t('You asked again on {day}, after the last ship on {shipped}. What shipped doesn’t cover it yet.', { day: formatPromptDay(goal.latestAt), shipped: shippedBefore })}</p>
             </Req>
           )}
           <WorkProduct requests={requests} />
@@ -240,7 +242,7 @@ function AskRow({ ask, highlighted, onOpen }: { ask: GoalItem; highlighted: bool
     <Req ids={['R3.8']}>
       <div id={goalAnchor(ask.id)} className={cn('scroll-mt-24 space-y-1.5 px-3 pt-3 pb-1 motion-safe:transition-colors motion-safe:duration-700', highlighted && 'bg-accent')}>
         <p className="text-sm leading-snug font-medium">{ask.title}</p>
-        <p className="text-xs text-muted-foreground">{timesLabel(ask.timesAsked).replace(/^a/, 'A')}, last {formatPromptDay(ask.latestAt)} · {ask.product}</p>
+        <p className="text-xs text-muted-foreground">{t('{times}, last {day}', { times: timesLabel(ask.timesAsked).replace(/^a/, 'A'), day: formatPromptDay(ask.latestAt) })} · {t(ask.product)}</p>
         {requests.map((request) => (
           <button key={request.id} type="button" onClick={() => onOpen(request)} className="flex min-h-11 w-full items-center gap-2 rounded-md border bg-card px-2 py-1.5 text-left text-xs hover:bg-surface-cool">
             <AgentIcon agentId={request.agentId} />
@@ -248,8 +250,8 @@ function AskRow({ ask, highlighted, onOpen }: { ask: GoalItem; highlighted: bool
             <StateBadge state={request.state} />
           </button>
         ))}
-        {shippedBefore && <p className="text-xs text-review-foreground">Asked again after it shipped {shippedBefore}.</p>}
-        {requests[0]?.next.text && <p className="text-xs text-muted-foreground">Next ({requests[0].next.who === 'human' ? 'you' : 'agent'}): {requests[0].next.text}</p>}
+        {shippedBefore && <p className="text-xs text-review-foreground">{t('Asked again after it shipped {shipped}.', { shipped: shippedBefore })}</p>}
+        {requests[0]?.next.text && <p className="text-xs text-muted-foreground">{t('Next ({who}): {text}', { who: t(requests[0].next.who === 'human' ? 'you' : 'agent'), text: t(requests[0].next.text) })}</p>}
         <WhyItsHere quotes={ask.quotes} />
       </div>
     </Req>
@@ -265,22 +267,22 @@ function OpenAsks({ highlighted, onOpen }: { highlighted: string | null; onOpen:
     <Req ids={['R3.8', 'R6.3', 'R5.8']}>
       <section id="open-asks" className="scroll-mt-24 space-y-4 rounded-xl border bg-card p-4">
         <div className="space-y-0.5">
-          <h2 className="text-base font-semibold">Open asks</h2>
+          <h2 className="text-base font-semibold">{t('Open asks')}</h2>
           <Req ids={['R12.2']}>
-            <p className="text-xs text-muted-foreground">{repeated} of {openAsks.length} came up more than once. Repetition shows what keeps coming back, not what’s finished.</p>
+            <p className="text-xs text-muted-foreground">{t('{repeated} of {count} came up more than once. Repetition shows what keeps coming back, not what’s finished.', { repeated, count: openAsks.length })}</p>
           </Req>
         </div>
 
         <div className="space-y-1">
-          <h3 className="text-xs font-medium text-attention-foreground">Nothing is working on these · {unserved.length}</h3>
-          <p className="text-xs text-muted-foreground">Your move: start a request for each, or drop it.</p>
+          <h3 className="text-xs font-medium text-attention-foreground">{t('Nothing is working on these · {count}', { count: unserved.length })}</h3>
+          <p className="text-xs text-muted-foreground">{t('Your move: start a request for each, or drop it.')}</p>
           <div className="-mx-3 divide-y">
             {unserved.map((ask) => <AskRow key={ask.id} ask={ask} highlighted={highlighted === ask.id} onOpen={onOpen} />)}
           </div>
         </div>
 
         <div className="space-y-1">
-          <h3 className="text-xs font-medium text-muted-foreground">Being worked on · {served.length}</h3>
+          <h3 className="text-xs font-medium text-muted-foreground">{t('Being worked on · {count}', { count: served.length })}</h3>
           <div className="-mx-3 divide-y">
             {served.map((ask) => <AskRow key={ask.id} ask={ask} highlighted={highlighted === ask.id} onOpen={onOpen} />)}
           </div>
@@ -297,8 +299,8 @@ function NoGoal({ onOpen }: { onOpen: (request: Request) => void }) {
     <Req ids={['D1']}>
       <section id="no-goal" className="scroll-mt-24 space-y-2">
         <div className="space-y-0.5">
-          <h2 className="text-base font-semibold">No goal · {unlinked.length}</h2>
-          <p className="text-xs text-muted-foreground">Requests that serve none of your priorities: work happening outside what you said you want.</p>
+          <h2 className="text-base font-semibold">{t('No goal · {count}', { count: unlinked.length })}</h2>
+          <p className="text-xs text-muted-foreground">{t('Requests that serve none of your priorities: work happening outside what you said you want.')}</p>
         </div>
         {unlinked.map((request) => <RequestRow key={request.id} request={request} onOpen={onOpen} />)}
       </section>
@@ -316,12 +318,12 @@ function RequestStateLine({ className }: { className?: string }) {
   return (
     <Req ids={['R7.1', 'R6.2']} className={className}>
       <p className={cn('flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground', className)}>
-        <span>{goalRequests.length} requests:</span>
+        <span>{t('{count} requests:', { count: goalRequests.length })}</span>
         {STATE_ORDER.map((state) => {
           const total = goalRequests.filter((request) => request.state === state).length
           return total ? (
             <span key={state} className="inline-flex items-center gap-1 whitespace-nowrap">
-              <span className={cn('size-1.5 rounded-full', STATE_DOT[state])} /><span className="font-medium text-foreground tabular-nums">{total}</span> {STATE_SHORT[state]}
+              <span className={cn('size-1.5 rounded-full', STATE_DOT[state])} /><span className="font-medium text-foreground tabular-nums">{total}</span> {t(STATE_SHORT[state])}
             </span>
           ) : null
         })}
@@ -344,16 +346,23 @@ function Lead() {
     <Req ids={['R12.3', 'R12.2', 'R3.9']}>
       <div className="space-y-2">
         <p className="text-base leading-snug font-semibold text-balance sm:text-lg">
-          Your work is moving {count('moving')} of your top {top.length} priorities. {count('your-move')} {count('your-move') === 1 ? 'is' : 'are'} waiting on you, and {count('nothing')} {count('nothing') === 1 ? 'has' : 'have'} nothing working on it.
+          {t('Your work is moving {moving} of your top {top} priorities. {rest}', {
+            moving: count('moving'),
+            top: top.length,
+            rest: t(count('your-move') === 1 ? '{count} is waiting on you' : '{count} are waiting on you', { count: count('your-move') })
+              + t(count('nothing') === 1 ? ', and {count} has nothing working on it.' : ', and {count} have nothing working on it.', { count: count('nothing') }),
+          })}
         </p>
         <p className="hidden text-sm text-muted-foreground lg:block">
-          {unserved.length} open asks have no request yet.{mostAsked && <> The one you’ve asked for most is “{mostAsked.title}”, {mostAsked.timesAsked} times.</>}
+          {mostAsked
+            ? t('{count} open asks have no request yet. The one you’ve asked for most is “{title}”, {times} times.', { count: unserved.length, title: mostAsked.title, times: mostAsked.timesAsked })
+            : t('{count} open asks have no request yet.', { count: unserved.length })}
         </p>
         <RequestStateLine className="hidden sm:flex" />
         <Req ids={['R11.1', 'R6.3', 'D1']} className="lg:hidden">
           <div className="flex flex-wrap gap-x-5 lg:hidden">
-            <button type="button" onClick={() => jump('open-asks')} className="inline-flex min-h-11 items-center gap-1 text-sm font-medium text-attention-foreground">{unserved.length} asks with nothing on them<ArrowDownIcon className="size-4" /></button>
-            <button type="button" onClick={() => jump('no-goal')} className="inline-flex min-h-11 items-center gap-1 text-sm text-muted-foreground">{noGoal} with no goal<ArrowDownIcon className="size-4" /></button>
+            <button type="button" onClick={() => jump('open-asks')} className="inline-flex min-h-11 items-center gap-1 text-sm font-medium text-attention-foreground">{t('{count} asks with nothing on them', { count: unserved.length })}<ArrowDownIcon className="size-4" /></button>
+            <button type="button" onClick={() => jump('no-goal')} className="inline-flex min-h-11 items-center gap-1 text-sm text-muted-foreground">{t('{count} with no goal', { count: noGoal })}<ArrowDownIcon className="size-4" /></button>
           </div>
         </Req>
       </div>
@@ -367,18 +376,18 @@ function RunSource() {
   const { lastRuns, currentPeriod } = useWorkModel()
   const run = lastRuns.goals
   if (!run || !currentPeriod) throw new Error('RunSource needs a goals run')
-  const device = { name: run.deviceName }
+  const device = { name: t(run.deviceName) }
   return (
     <Req ids={['R13.1', 'R13.8', 'R14.11', 'R14.10']}>
       <p className="text-xs text-muted-foreground">
-        <span className="sm:hidden">Mapped {run.lastRunAt.toLowerCase()} on {device.name} · </span>
-        {currentPeriod.promptCount} prompts you typed in the last {currentPeriod.windowDays} days.{' '}
+        <span className="sm:hidden">{t('Mapped {at} on {device}', { at: run.lastRunAt.toLowerCase(), device: device.name })} · </span>
+        {t('{count} prompts you typed in the last {days} days.', { count: currentPeriod.promptCount, days: currentPeriod.windowDays })}{' '}
         <span className="hidden sm:inline">
           {mode === 'home'
-            ? 'Mapped on this machine from your local transcripts.'
-            : `Mapped on ${device.name} and synced. The web can’t read transcripts, so Refresh queues the next run there.`}
+            ? t('Mapped on this machine from your local transcripts.')
+            : t('Mapped on {device} and synced. The web can’t read transcripts, so Refresh queues the next run there.', { device: device.name })}
         </span>
-        {mode === 'web' && <span className="sm:hidden">Refresh queues on {device.name}.</span>}
+        {mode === 'web' && <span className="sm:hidden">{t('Refresh queues on {device}.', { device: device.name })}</span>}
       </p>
     </Req>
   )
@@ -397,8 +406,8 @@ function NowView({ onOpen, focus }: { onOpen: (request: Request) => void; focus:
           <Req ids={['R3.1', 'R3.9']}>
             <section className="order-1 space-y-2 lg:order-none">
               <div className="flex items-baseline justify-between gap-3">
-                <h2 className="shrink-0 text-base font-semibold">Top priorities</h2>
-                <span className="hidden text-right text-xs text-muted-foreground sm:inline">ranked by how recent, how often and how strongly you asked</span>
+                <h2 className="shrink-0 text-base font-semibold">{t('Top priorities')}</h2>
+                <span className="hidden text-right text-xs text-muted-foreground sm:inline">{t('ranked by how recent, how often and how strongly you asked')}</span>
               </div>
               <div className="overflow-hidden rounded-xl border bg-card">
                 <Accordion type="multiple" value={focus.openGoals} onValueChange={focus.setOpenGoals}>
@@ -407,7 +416,7 @@ function NowView({ onOpen, focus }: { onOpen: (request: Request) => void; focus:
               </div>
               {priorities.length > TOP_COUNT && <Collapsible open={focus.moreOpen} onOpenChange={focus.setMoreOpen}>
                 <CollapsibleTrigger className="group flex min-h-11 items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-                  <ChevronDownIcon className="size-4 transition-transform group-data-[state=open]:rotate-180" />{priorities.length - TOP_COUNT} more priorities
+                  <ChevronDownIcon className="size-4 transition-transform group-data-[state=open]:rotate-180" />{t('{count} more priorities', { count: priorities.length - TOP_COUNT })}
                 </CollapsibleTrigger>
                 <CollapsibleContent>
                   <div className="overflow-hidden rounded-xl border bg-card">
@@ -436,18 +445,18 @@ function MonthByMonth({ onOpenCurrent }: { onOpenCurrent: () => void }) {
     <Req ids={['R4.5', 'R12.1']}>
       <div className="space-y-3">
         <div className="space-y-0.5">
-          <h2 className="text-base font-semibold">History</h2>
-          <p className="text-sm text-muted-foreground">What you asked for most, month by month, as each owner-goals run saved it. A month closing archives its asks; it doesn’t mean they were done.</p>
+          <h2 className="text-base font-semibold">{t('History')}</h2>
+          <p className="text-sm text-muted-foreground">{t('What you asked for most, month by month, as each owner-goals run saved it. A month closing archives its asks; it doesn’t mean they were done.')}</p>
         </div>
         <div className="overflow-hidden rounded-xl border bg-card">
           <div className="hidden grid-cols-[12rem_minmax(0,1fr)_7rem_1rem] gap-3 border-b px-4 py-2 text-xs text-muted-foreground sm:grid">
-            <span>Month</span><span>Top priority that month</span><span className="text-right">Your prompts</span><span />
+            <span>{t('Month')}</span><span>{t('Top priority that month')}</span><span className="text-right">{t('Your prompts')}</span><span />
           </div>
           <button type="button" onClick={onOpenCurrent} className="grid min-h-16 w-full grid-cols-[minmax(0,1fr)_1rem] items-center gap-3 border-b px-4 py-3 text-left hover:bg-surface-cool sm:grid-cols-[12rem_minmax(0,1fr)_7rem_1rem]">
             <span className="contents max-sm:flex max-sm:min-w-0 max-sm:flex-col max-sm:gap-0.5">
-              <span className="text-sm font-semibold whitespace-nowrap">{currentPeriod.label} <span className="ml-1 text-xs font-medium text-muted-foreground">Current</span></span>
-              <span className="line-clamp-2 text-sm sm:truncate">{priorities[0]?.title ?? 'No priorities recorded'}</span>
-              <span className="text-xs text-muted-foreground sm:text-right sm:text-sm">{currentPeriod.promptCount}<span className="sm:hidden"> prompts · open this month</span></span>
+              <span className="text-sm font-semibold whitespace-nowrap">{currentPeriod.label} <span className="ml-1 text-xs font-medium text-muted-foreground">{t('Current')}</span></span>
+              <span className="line-clamp-2 text-sm sm:truncate">{priorities[0]?.title ?? t('No priorities recorded')}</span>
+              <span className="text-xs text-muted-foreground sm:text-right sm:text-sm">{currentPeriod.promptCount}<span className="sm:hidden"> {t('prompts · open this month')}</span></span>
             </span>
             <ChevronRightIcon className="size-4 text-muted-foreground" />
           </button>
@@ -456,24 +465,24 @@ function MonthByMonth({ onOpenCurrent }: { onOpenCurrent: () => void }) {
               <AccordionItem key={period.id} value={period.id} className="px-4">
                 <AccordionTrigger className="min-h-16 items-center gap-3 py-3 hover:no-underline">
                   <span className="flex min-w-0 flex-1 flex-col gap-0.5 sm:grid sm:grid-cols-[12rem_minmax(0,1fr)_7rem] sm:items-center sm:gap-3">
-                    <span className="text-sm font-semibold whitespace-nowrap">{period.label} <span className="ml-1 text-xs font-normal text-muted-foreground">Archived</span></span>
-                    <span className="line-clamp-2 text-sm font-normal sm:truncate">{period.priorities[0]?.title ?? 'No priorities saved'}</span>
-                    <span className="text-xs font-normal text-muted-foreground sm:text-right sm:text-sm">{period.promptCount}<span className="sm:hidden"> prompts · {period.priorities.length} priorities</span></span>
+                    <span className="text-sm font-semibold whitespace-nowrap">{period.label} <span className="ml-1 text-xs font-normal text-muted-foreground">{t('Archived')}</span></span>
+                    <span className="line-clamp-2 text-sm font-normal sm:truncate">{period.priorities[0]?.title ?? t('No priorities saved')}</span>
+                    <span className="text-xs font-normal text-muted-foreground sm:text-right sm:text-sm">{period.promptCount}<span className="sm:hidden"> {t('prompts · {count} priorities', { count: period.priorities.length })}</span></span>
                   </span>
                 </AccordionTrigger>
                 <AccordionContent className="space-y-4 pb-4 sm:pl-[12.75rem] [&_p:not(:last-child)]:mb-0">
-                  <p className="text-sm">{period.headline}</p>
+                  <p className="text-sm">{t(period.headline)}</p>
                   <ol className="space-y-3">
                     {period.priorities.map((priority, index) => (
                       <li key={priority.title} className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
                         <span className="flex size-6 items-center justify-center rounded-md bg-muted text-xs text-muted-foreground tabular-nums">{index + 1}</span>
                         <p className="text-sm font-medium">{priority.title}</p>
-                        <p className="col-start-2 text-xs text-muted-foreground">{priority.product} · {timesLabel(priority.timesAsked)}</p>
+                        <p className="col-start-2 text-xs text-muted-foreground">{t(priority.product)} · {timesLabel(priority.timesAsked)}</p>
                         {priority.quote && <div className="col-start-2"><Quotes quotes={[priority.quote]} /></div>}
                       </li>
                     ))}
                   </ol>
-                  <p className="text-xs text-muted-foreground">No request reviews cover this month, so it shows what you asked for, not what moved.</p>
+                  <p className="text-xs text-muted-foreground">{t('No request reviews cover this month, so it shows what you asked for, not what moved.')}</p>
                 </AccordionContent>
               </AccordionItem>
             ))}
@@ -504,9 +513,9 @@ function NoGoalsYet({ readError }: { readError: string | null }) {
     <Req ids={['R12.1', 'R3.8']}>
       <Empty className="border bg-card/60">
         <EmptyHeader>
-          <EmptyTitle>{readError ? 'Can’t read your goals right now' : 'No goals yet'}</EmptyTitle>
+          <EmptyTitle>{t(readError ? 'Can’t read your goals right now' : 'No goals yet')}</EmptyTitle>
           <EmptyDescription>
-            {readError ? <>{readError}. claude-mem rewrites them on its next automatic refresh.</> : <>No goals yet. claude-mem reads your recent prompts and fills this in automatically.</>}
+            {readError ? t('{error}. claude-mem rewrites them on its next automatic refresh.', { error: readError }) : t('No goals yet. claude-mem reads your recent prompts and fills this in automatically.')}
           </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
@@ -548,8 +557,8 @@ function GoalsForPeriod({ onOpen, focusGoalId }: { onOpen: (request: Request) =>
         <div className="space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
             <TabsList variant="line" className="p-0 group-data-horizontal/tabs:h-11">
-              <TabsTrigger value="now" className="h-11 px-3">This month<span className="hidden sm:inline">· {currentPeriod!.label}</span></TabsTrigger>
-              <TabsTrigger value="months" className="h-11 px-3">Month by month</TabsTrigger>
+              <TabsTrigger value="now" className="h-11 px-3">{t('This month')}<span className="hidden sm:inline">· {currentPeriod!.label}</span></TabsTrigger>
+              <TabsTrigger value="months" className="h-11 px-3">{t('Month by month')}</TabsTrigger>
             </TabsList>
             {sourceKind === 'sample' ? <RefreshButton run={SAMPLE_RUNS.goals} ids={['R3.8']} /> : <RefreshStatus refresh={refresh} run={lastRuns.goals} ids={['R3.8']} />}
           </div>

@@ -7,6 +7,7 @@ import type { MappedWorkModel, RequestReadError } from './work-data-source.ts'
 import type { OwnerRule, RuleQuote, RuleRecord } from '../data-rules.ts'
 import type { AutoRefresh, BuildStory } from './work-data-source.ts'
 import { measuredEstimate } from './measured-estimate.ts'
+import { getLocale, intlLocale, t } from '../i18n/translate.ts'
 import type { WorkViewAgent, WorkViewBuildStory, WorkViewGoalItem, WorkViewGoalList, WorkViewHumanRequest, WorkViewProgress, WorkViewRefresh, WorkViewRule, WorkViewSnapshot, WorkViewWorkProduct } from './work-view-api-types.ts'
 
 export const THIS_COMPUTER: Device = { id: 'this-computer', name: 'This computer', syncedMinutesAgo: 0, online: true }
@@ -56,12 +57,12 @@ export function cleanText(value: unknown, max = 150): string {
 }
 
 const lowercaseMeridiem = (text: string) => text.replace(/\s?(AM|PM)$/, (_, meridiem: string) => ` ${meridiem.toLowerCase()}`)
-/** "Oct 20, 1:16 pm", like the fixtures. */
-const formatDateTime = (epoch: number) => lowercaseMeridiem(new Date(epoch).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))
+/** "Oct 20, 1:16 pm", like the fixtures ("10月20日 13:16" in Chinese). */
+const formatDateTime = (epoch: number) => lowercaseMeridiem(new Date(epoch).toLocaleString(intlLocale(), { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))
 /** "1:56 pm" today, "Oct 19" before. */
 function formatRecordTime(epoch: number, now: number) {
   const sameDay = new Date(epoch).toDateString() === new Date(now).toDateString()
-  return sameDay ? lowercaseMeridiem(new Date(epoch).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })) : new Date(epoch).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return sameDay ? lowercaseMeridiem(new Date(epoch).toLocaleTimeString(intlLocale(), { hour: 'numeric', minute: '2-digit' })) : new Date(epoch).toLocaleDateString(intlLocale(), { month: 'short', day: 'numeric' })
 }
 /** "10-20 13:24", the prompt-quote stamp the fixtures use. */
 function formatPromptStamp(epoch: number) {
@@ -72,11 +73,11 @@ function formatPromptStamp(epoch: number) {
 function formatDuration(milliseconds: number) {
   const minutes = Math.max(0, Math.floor(milliseconds / 60000))
   if (minutes < 1) return 'Just started'
-  if (minutes < 60) return `${minutes} min`
+  if (minutes < 60) return t('{count} min', { count: minutes })
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours} hr`
+  if (hours < 24) return t('{count} hr', { count: hours })
   const days = Math.floor(hours / 24)
-  return `${days} day${days === 1 ? '' : 's'}`
+  return t(days === 1 ? '{count} day' : '{count} days', { count: days })
 }
 
 const lastPathSegment = (path: string | null) => path?.split('/').filter(Boolean).at(-1) ?? null
@@ -230,6 +231,10 @@ const OWNER_GOALS_SKILL = 'owner-goals'
 const RECORDED_PROMPT_TIME = /^\d{4}-(\d{2}-\d{2})(?: (\d{2}:\d{2}))?$/
 const RECORDED_DAY = /^(\d{4})-(\d{2})-(\d{2})$/
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+/** "Oct 18", or "Oct 18, 2025" with a year ("2025年10月18日" in Chinese). */
+const dayText = (month: number, day: number, year?: number) => getLocale() === 'zh-CN'
+  ? `${year ? `${year}年` : ''}${month}月${day}日`
+  : `${MONTH_LABELS[month - 1]} ${day}${year ? `, ${year}` : ''}`
 
 /** `YYYY-MM-DD HH:MM` → the `MM-DD HH:MM` stamp goals use; a bare day → `MM-DD`; nothing recorded → ''. */
 function toGoalPromptStamp(recordedAt: string | null, whatIsDated: string): string {
@@ -263,16 +268,15 @@ export function toGoalItem(item: WorkViewGoalItem): GoalItem {
 function periodLabel(periodStart: string, periodEndExclusive: string | null, currentYear: number): string {
   const start = RECORDED_DAY.exec(periodStart)
   if (!start) throw new Error(`A saved goals month has an unreadable start day: ${periodStart}`)
-  const startText = `${MONTH_LABELS[Number(start[2]) - 1]} ${Number(start[3])}`
-  if (!periodEndExclusive) return Number(start[1]) === currentYear ? `From ${startText}` : `From ${startText}, ${start[1]}`
+  const startYear = Number(start[1])
+  if (!periodEndExclusive) return t('From {day}', { day: dayText(Number(start[2]), Number(start[3]), startYear === currentYear ? undefined : startYear) })
   if (!RECORDED_DAY.test(periodEndExclusive)) throw new Error(`A saved goals month has an unreadable end day: ${periodEndExclusive}`)
   const lastDay = new Date(`${periodEndExclusive}T12:00:00Z`)
   lastDay.setUTCDate(lastDay.getUTCDate() - 1)
-  const endText = `${MONTH_LABELS[lastDay.getUTCMonth()]} ${lastDay.getUTCDate()}`
-  const startYear = Number(start[1])
   const endYear = lastDay.getUTCFullYear()
-  if (startYear === currentYear && endYear === currentYear) return `${startText} – ${endText}`
-  return startYear === endYear ? `${startText} – ${endText}, ${endYear}` : `${startText}, ${startYear} – ${endText}, ${endYear}`
+  const startText = dayText(Number(start[2]), Number(start[3]), startYear === endYear ? undefined : startYear)
+  const endText = dayText(lastDay.getUTCMonth() + 1, lastDay.getUTCDate(), startYear === currentYear && endYear === currentYear ? undefined : endYear)
+  return `${startText} – ${endText}`
 }
 
 function toPastPeriod(list: WorkViewGoalList, currentYear: number): PastPeriod {
@@ -290,7 +294,7 @@ function toPastPeriod(list: WorkViewGoalList, currentYear: number): PastPeriod {
 function recordedDayLabel(generatedAt: string): string {
   const day = RECORDED_DAY.exec(generatedAt.slice(0, 10))
   if (!day) throw new Error(`The ${OWNER_GOALS_SKILL} run has no readable day in generated_at (${generatedAt})`)
-  return `${MONTH_LABELS[Number(day[2]) - 1]} ${Number(day[3])}`
+  return dayText(Number(day[2]), Number(day[3]))
 }
 
 function generatedAtEpoch(list: WorkViewGoalList): number {
@@ -310,7 +314,7 @@ export function toGoalsModel(goals: WorkViewGoalList | null | undefined, goalHis
     const windowDays = requireRecordedCount(goals.windowDays, `The ${OWNER_GOALS_SKILL} window`)
     const generatedYear = new Date(generatedAt).getFullYear()
     const currentPeriod: CurrentPeriod = {
-      label: goals.periodStart ? periodLabel(goals.periodStart, goals.periodEnd, generatedYear) : `${windowDays} days to ${recordedDayLabel(goals.generatedAt!)}`,
+      label: goals.periodStart ? periodLabel(goals.periodStart, goals.periodEnd, generatedYear) : t('{days} days to {day}', { days: windowDays, day: recordedDayLabel(goals.generatedAt!) }),
       windowDays,
       promptCount: requireRecordedCount(goals.sourcePromptCount, `The ${OWNER_GOALS_SKILL} prompt count`),
     }
