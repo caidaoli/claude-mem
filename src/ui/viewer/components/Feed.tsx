@@ -59,7 +59,7 @@ export function Feed({ items, header, onLoadMore, onDeleted, isLoading, hasMore,
   }, [hasMore, isLoading, loadError]);
 
   return (
-    <div className="feed" ref={feedRef}>
+    <main className="feed" ref={feedRef} aria-label={t.pageHeading.timelineTitle}>
       <ScrollToTop targetRef={feedRef} />
       <div className="feed-content">
         {header}
@@ -73,9 +73,10 @@ export function Feed({ items, header, onLoadMore, onDeleted, isLoading, hasMore,
             return <PromptCard key={key} prompt={item} />;
           }
         })}
-        {items.length === 0 && !isLoading && (
-          <div style={{ textAlign: 'center', padding: '40px', color: 'var(--color-text-muted)' }}>
-            {t.feed.noItems}
+        {items.length === 0 && !isLoading && !loadError && (
+          <div className="memory-empty-state">
+            <h3>{t.feed.emptyTitle}</h3>
+            <p>{t.feed.emptyHint}</p>
           </div>
         )}
         {isLoading && (
@@ -99,6 +100,6 @@ export function Feed({ items, header, onLoadMore, onDeleted, isLoading, hasMore,
           </div>
         )}
       </div>
-    </div>
+    </main>
   );
 }

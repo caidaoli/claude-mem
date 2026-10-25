@@ -20,7 +20,6 @@ import { spawnSync } from 'child_process';
 import { SessionStore } from '../../../src/services/sqlite/SessionStore.js';
 import { openConfiguredSqliteDatabase } from '../../../src/services/sqlite/connection.js';
 import { emitRemapProject, hasSyncLane } from '../../../src/services/sync/remap-outbox.js';
-import { ChromaSync } from '../../../src/services/sync/ChromaSync.js';
 import { adoptMergedWorktrees, hasProvenAncestry } from '../../../src/services/infrastructure/WorktreeAdoption.js';
 import { runOneTimeCwdRemap } from '../../../src/services/infrastructure/ProcessManager.js';
 
@@ -43,6 +42,13 @@ function gitOutput(cwd: string, ...args: string[]): string {
   });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`);
   return r.stdout.trim();
+}
+
+// Adopted summaries are Chroma targets, so with Chroma enabled adoption starts a
+// real chroma-mcp subprocess (uvx) that can outlast the test timeout under load.
+// Vector search is not under test here; the SQL remap and outbox op are.
+function disableChromaFor(dataDir: string): void {
+  writeFileSync(join(dataDir, 'settings.json'), JSON.stringify({ CLAUDE_MEM_CHROMA_ENABLED: 'false' }));
 }
 
 interface OutboxRow {
@@ -353,9 +359,8 @@ describe('mutation sites', () => {
 
   // ---------------------------------------------------------------------------
   // (c) worktree adoption — the REAL site, own connection, real git repo with
-  // a merged worktree. Chroma is an external boundary; the dedicated adoption
-  // test covers its document patching, while this test verifies the SQL/outbox
-  // transaction and only asserts the target handed to Chroma.
+  // a merged worktree. Summaries only (no observation ids ⇒ the site's Chroma
+  // patch is skipped — vector search is not under test here).
   // ---------------------------------------------------------------------------
   it('adoptMergedWorktrees emits remap_project through its own connection', async () => {
     const repo = join(tempDir, 'mainrepo');
@@ -369,6 +374,7 @@ describe('mutation sites', () => {
 
     const dataDir = join(tempDir, 'data');
     mkdirSync(dataDir);
+    disableChromaFor(dataDir);
     const dbPath = join(dataDir, 'claude-mem.db');
     const store = new SessionStore(dbPath);
     store.db.prepare(`
@@ -381,20 +387,7 @@ describe('mutation sites', () => {
     `).run(ISO);
     store.db.close();
 
-    const chromaUpdate = spyOn(ChromaSync.prototype, 'updateMergedIntoProject')
-      .mockResolvedValue(undefined);
-    const result = await (async () => {
-      try {
-        const value = await adoptMergedWorktrees({ repoPath: repo, dataDirectory: dataDir });
-        expect(chromaUpdate).toHaveBeenCalledWith(
-          [{ docType: 'session_summary', sqliteId: 1 }],
-          'mainrepo'
-        );
-        return value;
-      } finally {
-        chromaUpdate.mockRestore();
-      }
-    })();
+    const result = await adoptMergedWorktrees({ repoPath: repo, dataDirectory: dataDir });
     expect(result.mergedBranches).toContain('feature');
     expect(result.adoptedSummaries).toBe(1);
     expect(result.adoptedObservations).toBe(0);
@@ -417,8 +410,6 @@ describe('mutation sites', () => {
     } finally {
       db.close();
     }
-    // Real git + real SQLite plus the unmocked Chroma path sit near bun test's
-    // 5 s default; it timed out under load before the async git change (#4741).
   }, 30000);
 
     it('adopts branched and detached worktrees proven by a remote commit while preserving negative space', async () => {
@@ -461,6 +452,7 @@ describe('mutation sites', () => {
     try {
       const dataDir = join(tempDir, 'data');
       mkdirSync(dataDir);
+      disableChromaFor(dataDir);
       const dbPath = join(dataDir, 'claude-mem.db');
       const store = new SessionStore(dbPath);
       for (const [memorySessionId, project] of [

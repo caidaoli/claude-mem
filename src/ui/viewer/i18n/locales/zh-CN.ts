@@ -4,6 +4,7 @@ export const zhCN: TranslationKeys = {
   // Header
   header: {
     allProjects: '所有项目',
+    filterByProject: '按项目筛选记忆',
     myWork: '我的工作',
     myWorkTitle: '打开本地工作和审查队列',
     documentation: '文档',
@@ -15,7 +16,8 @@ export const zhCN: TranslationKeys = {
 
   // Feed
   feed: {
-    noItems: '没有可显示的项目',
+    emptyTitle: '暂无记忆',
+    emptyHint: '工作时记忆会显示在这里。如果选了筛选条件，可以换个项目或类别试试。',
     loadingMore: '加载更多...',
     noMoreItems: '没有更多项目了',
     retry: '重试',
@@ -24,13 +26,13 @@ export const zhCN: TranslationKeys = {
   // Welcome Card
   welcome: {
     title: '欢迎使用 claude-mem',
-    subtitle: 'Claude Code 的持久化记忆。',
+    subtitle: '在不同编码会话之间保留有用的上下文。',
     liveFeed: '实时动态',
     liveFeedDesc: '观察记录、摘要和提示实时流入。',
     tuneIt: '调优配置',
-    tuneItDesc: '右上角齿轮图标可调节记忆注入方式。',
+    tuneItDesc: '打开设置，选择下次会话要注入的上下文。',
     recallIt: '搜索回忆',
-    recallItDesc: '向 Claude 提问或运行 /mem-search 查找过去的工作。',
+    recallItDesc: '询问你的助手或运行 /mem-search 查找过去的工作。',
     howItWorks: '工作原理',
     readDocs: '阅读文档',
     closeWelcome: '关闭欢迎',
@@ -75,9 +77,13 @@ export const zhCN: TranslationKeys = {
   // Context Settings Modal
   settings: {
     title: '设置',
+    subtitle: '选择下次会话要注入的上下文。',
     source: '来源：',
     project: '项目：',
     closeEsc: '关闭 (Esc)',
+    closeSettings: '关闭设置',
+    previewTitle: '已保存上下文预览',
+    previewDesc: '预览所选来源和项目的已保存配置。',
     errorLoadingPreview: '加载预览失败',
     // Loading section
     loading: '加载配置',
@@ -189,8 +195,8 @@ export const zhCN: TranslationKeys = {
     openrouterBaseUrlManagedTooltip: '由 claude-mem observer 托管。运行 npx claude-mem install 以使用你自己的端点。',
     openrouterBaseUrlTooltip: '可选的 OpenAI 兼容基础 URL。留空则使用 openrouter.ai。',
     reasoningEffort: '推理强度',
-    reasoningEffortTooltip: '仅适用于 openrouter.ai 模型。“关闭”会禁用推理，适合把输出预算耗在思考上的模型。“模型默认”不发送该参数。',
-    effortModelDefault: '模型默认',
+    reasoningEffortTooltip: '仅适用于 openrouter.ai。留空（默认）会发送关闭推理。设置强度可重新开启。自定义网关只有在空的截断回复重试一次时才会收到该字段。',
+    reasoningOffDefault: '关闭（默认）',
     effortNone: '关闭（不推理）',
     effortMinimal: '极低',
     effortLow: '低',
@@ -202,6 +208,9 @@ export const zhCN: TranslationKeys = {
     baseUrlTooltip: '留空则使用预设的端点',
     compatModelTooltip: '模型 ID，原样传递。留空则使用预设的默认模型',
     compatModelPlaceholder: '模型 ID',
+    compatReasoning: '推理',
+    compatReasoningTooltip: '关闭（默认）会发送禁用推理，避免推理模型把输出上限耗在思考上。开启则交给端点决定。服务器拒绝该字段时会去掉它重试一次。',
+    compatReasoningOn: '开启（由端点决定）',
     compatApiKeyNoteIntro: 'API 密钥需在查看器之外设置：',
     compatApiKeyNoteIn: ' 写入 ',
     compatApiKeyNoteOr: '，或 ',
@@ -235,7 +244,7 @@ export const zhCN: TranslationKeys = {
     saving: '保存中...',
     saved: '✓ 已保存',
     saveError: '✗ 出错：{error}',
-    save: '保存',
+    save: '保存设置',
   },
 
   // Cleanup Modal
@@ -288,14 +297,16 @@ export const zhCN: TranslationKeys = {
 
   // Logs Drawer
   logs: {
-    console: '控制台',
+    title: '记忆日志',
+    resize: '调整记忆日志高度',
     autoRefresh: '自动刷新',
     refreshLogs: '刷新日志',
     scrollToBottom: '滚动到底部',
     clearLogs: '清除日志',
     closeConsole: '关闭控制台',
     confirmClear: '确定要清除所有日志吗？',
-    noLogs: '暂无日志',
+    noLogs: '暂无日志。',
+    noMatchingLogs: '没有符合筛选条件的日志。请多选几个级别或组件。',
     quick: '快捷：',
     alignment: '对齐',
     alignmentTitle: '仅显示会话对齐日志',
@@ -303,6 +314,10 @@ export const zhCN: TranslationKeys = {
     components: '组件：',
     selectNone: '取消全选',
     selectAll: '全选',
+    selectAllLevels: '全选日志级别',
+    deselectAllLevels: '取消全选日志级别',
+    selectAllComponents: '全选日志组件',
+    deselectAllComponents: '取消全选日志组件',
     unknownError: '未知错误',
     fetchFailed: '获取日志失败：{status}',
     clearFailed: '清除日志失败：{status}',
@@ -328,6 +343,17 @@ export const zhCN: TranslationKeys = {
     },
   },
 
+  // Page heading above the timeline and session views
+  pageHeading: {
+    eyebrow: '已保存的上下文',
+    timelineTitle: '记忆时间线',
+    sessionsTitle: '会话',
+    sessionTitle: '会话记忆',
+    timelineDesc: '浏览工作中产生的观察记录、摘要和提示。',
+    sessionsDesc: '打开一个会话，回顾当时做了什么、学到了什么。',
+    sessionDesc: '查看这次会话记录下的上下文。',
+  },
+
   // View Tabs
   viewTabs: {
     label: '视图',
@@ -340,7 +366,9 @@ export const zhCN: TranslationKeys = {
     retry: '重试',
     loadFailed: '无法加载会话：{error}',
     loading: '正在加载会话…',
-    empty: '没有可显示的会话',
+    listLabel: '已保存的会话',
+    emptyTitle: '暂无会话',
+    emptyHint: '记录工作后会话会显示在这里。如果选了筛选条件，可以换个项目试试。',
     loadingOlder: '正在加载更早的会话…',
     oneMemory: '1 条记忆',
     memories: '{count} 条记忆',
@@ -401,7 +429,8 @@ export const zhCN: TranslationKeys = {
 
   // App-level
   app: {
-    toggleConsole: '切换控制台',
+    openLogs: '打开记忆日志',
+    closeLogs: '关闭记忆日志',
     memoryMaintenance: '记忆维护',
   },
 

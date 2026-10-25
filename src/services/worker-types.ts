@@ -148,6 +148,13 @@ export interface ActiveSession {
   lastGeneratorActivity: number;
   // Tier routing: model override per session based on queue complexity
   modelOverride?: string;
+  /**
+   * Set when tier routing put this generator on CLAUDE_MEM_TIER_SIMPLE_MODEL.
+   * The model is fixed for the generator's lifetime, so it ends at the next
+   * message that is not a simple-tool observation and a fresh one picks the
+   * tier again (#4963).
+   */
+  simpleTierRun?: boolean;
   lastSummaryStored?: boolean;
   pendingAgentId?: string | null;
   pendingAgentType?: string | null;

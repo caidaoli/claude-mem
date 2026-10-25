@@ -43,7 +43,7 @@ export function SessionList({ header, sessions, isLoading, hasMore, loadError, o
   }, [hasMore, isLoading, loadError]);
 
   return (
-    <div className="session-list">
+    <main className="session-list" aria-label={t.sessions.listLabel}>
       <div className="session-list-content">
         {header}
         {loadError && <div className="card-delete-error" role="alert">
@@ -63,7 +63,7 @@ export function SessionList({ header, sessions, isLoading, hasMore, loadError, o
         })}
         {sessions.length === 0 && !loadError && (
           <div className="session-list-empty">
-            {isLoading ? t.sessions.loading : t.sessions.empty}
+            {isLoading ? t.sessions.loading : <><h3>{t.sessions.emptyTitle}</h3><p>{t.sessions.emptyHint}</p></>}
           </div>
         )}
         {isLoading && sessions.length > 0 && (
@@ -73,6 +73,6 @@ export function SessionList({ header, sessions, isLoading, hasMore, loadError, o
           <div ref={loadMoreRef} style={{ height: '20px', margin: '10px 0' }} />
         )}
       </div>
-    </div>
+    </main>
   );
 }

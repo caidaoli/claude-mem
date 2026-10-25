@@ -12,6 +12,11 @@ import { scopedProjects } from '../../../sqlite/project-read-keys.js';
 import { validateBody } from '../middleware/validateBody.js';
 import { logger } from '../../../../utils/logger.js';
 import { groupByDate } from '../../../../shared/timeline-formatting.js';
+import {
+  SEMANTIC_CONTEXT_MAX_LIMIT,
+  SEMANTIC_CONTEXT_MIN_QUERY_CHARS,
+  renderSemanticContext,
+} from '../../../../shared/semantic-context.js';
 import { countObservationsByProjects } from '../../../context/ObservationCompiler.js';
 import { observerHealthWarning, withObserverHealthWarning } from '../../../context/ContextBuilder.js';
 import type { ContextInjectStats } from '../../../context/ContextBuilder.js';
@@ -128,7 +133,7 @@ export class SearchRoutes extends BaseRouteHandler {
     // Records each live SessionStart render so the hook can read it from disk
     // next time (liveness plan, Phase 6). Null in tests and tools that only
     // need the route.
-    private contextCache: (Pick<ContextCacheService, 'recordLiveRender' | 'removalGenerationNow' | 'warmVariant'> & Partial<Pick<ContextCacheService, 'invalidationGenerationNow'>>) | null = null,
+    private contextCache: (Pick<ContextCacheService, 'recordLiveRender' | 'removalGenerationNow' | 'warmVariant'> & Partial<Pick<ContextCacheService, 'invalidationGenerationNow' | 'beginRenderSequence'>>) | null = null,
     // Cloud sync's pull loop (null when sync is off). Structural so tests can stub it.
     private syncClient: { pullOnce(options?: { timeoutMs?: number }): Promise<void>; isSocketLive(): boolean } | null = null,
     private contextReader: ContextReadWorkerClient | null = null,
@@ -258,6 +263,7 @@ export class SearchRoutes extends BaseRouteHandler {
     try {
       res.json(progressiveSearchToolResult(await this.progressiveSearch.run(input as ProgressiveSearchInput, projects)));
     } catch (error) {
+      logger.warn('HTTP', 'Progressive memory search failed', { projectCount: Array.isArray(projects) ? projects.length : projects ? 1 : 0 }, error instanceof Error ? error : new Error(String(error)));
       res.json(progressiveSearchToolError(error));
     }
   });
@@ -430,6 +436,8 @@ export class SearchRoutes extends BaseRouteHandler {
     // A delete that lands while this renders must not see its row written back to the cache.
     const removalGenerationAtRenderStart = this.contextCache?.removalGenerationNow();
     const invalidationGenerationAtStart = this.contextCache?.invalidationGenerationNow?.();
+    // A queued re-render that starts after this one must win, even if it finishes first.
+    const renderSequenceAtStart = this.contextCache?.beginRenderSequence?.();
     let rendered: ContextInjectRender;
     try {
       rendered = await this.renderContextInjectBody({ projects, platformSource, forHuman, full, cwd: hostCwd || undefined, sessionId: hostSessionId, includePriorMessage: showLastMessage });
@@ -481,6 +489,7 @@ export class SearchRoutes extends BaseRouteHandler {
             },
             respondedAtEpochMs,
             removalGenerationAtRenderStart,
+            renderSequenceAtStart,
           );
         }
       } catch (error) {
@@ -601,10 +610,10 @@ export class SearchRoutes extends BaseRouteHandler {
     const query = SearchRoutes.firstString(req.body?.q) ?? SearchRoutes.firstString(req.query.q) ?? '';
     let project = SearchRoutes.firstString(req.body?.project) ?? SearchRoutes.firstString(req.query.project);
     let projects = SearchRoutes.parseProjectsParam(req.body?.projects ?? req.query.projects);
-    const limit = Math.min(Math.max(parseInt(String(req.body?.limit || req.query.limit || '5'), 10) || 5, 1), 20);
+    const limit = Math.min(Math.max(parseInt(String(req.body?.limit || req.query.limit || '5'), 10) || 5, 1), SEMANTIC_CONTEXT_MAX_LIMIT);
     const platformSource = this.getOptionalPlatformSourceFromRequest(req);
 
-    if (!query || query.length < 20) {
+    if (!query || query.length < SEMANTIC_CONTEXT_MIN_QUERY_CHARS) {
       res.json({ context: '', count: 0 });
       return;
     }
@@ -664,15 +673,13 @@ export class SearchRoutes extends BaseRouteHandler {
       return;
     }
 
-    const lines: string[] = ['## Relevant Past Work (semantic match)\n'];
-    for (const obs of observations.slice(0, limit)) {
-      const date = obs.created_at?.slice(0, 10) || '';
-      lines.push(`### ${obs.title || 'Observation'} (${date})`);
-      if (obs.narrative) lines.push(obs.narrative);
-      lines.push('');
-    }
+    const context = renderSemanticContext(observations.slice(0, limit).map((obs: any) => ({
+      title: obs.title,
+      narrative: obs.narrative,
+      date: obs.created_at?.slice(0, 10) || '',
+    })));
 
-    res.json({ context: lines.join('\n'), count: observations.length });
+    res.json({ context, count: observations.length });
   });
 
   /**

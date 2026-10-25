@@ -2,6 +2,7 @@ export const en = {
   // Header
   header: {
     allProjects: 'All Projects',
+    filterByProject: 'Filter memories by project',
     myWork: 'My Work',
     myWorkTitle: 'Open your local work and review queue',
     documentation: 'Documentation',
@@ -13,7 +14,8 @@ export const en = {
 
   // Feed
   feed: {
-    noItems: 'No items to display',
+    emptyTitle: 'No memories to show',
+    emptyHint: 'Memories appear here as you work. If a filter is selected, try another project or category.',
     loadingMore: 'Loading more...',
     noMoreItems: 'No more items to load',
     retry: 'Retry',
@@ -22,13 +24,13 @@ export const en = {
   // Welcome Card
   welcome: {
     title: 'Welcome to claude-mem',
-    subtitle: 'Persistent memory for Claude Code.',
+    subtitle: 'Keep useful context across your coding sessions.',
     liveFeed: 'Live feed',
     liveFeedDesc: 'Observations, summaries, and prompts stream in live.',
     tuneIt: 'Tune it',
-    tuneItDesc: 'The gear in the top-right tunes memory injection.',
+    tuneItDesc: 'Open Settings to choose the context your next session receives.',
     recallIt: 'Recall it',
-    recallItDesc: 'Ask Claude or run /mem-search to find past work.',
+    recallItDesc: 'Ask your assistant or run /mem-search to find past work.',
     howItWorks: 'How it works',
     readDocs: 'Read the docs',
     closeWelcome: 'Close welcome',
@@ -73,9 +75,13 @@ export const en = {
   // Context Settings Modal
   settings: {
     title: 'Settings',
+    subtitle: 'Choose the context your next session receives.',
     source: 'Source:',
     project: 'Project:',
     closeEsc: 'Close (Esc)',
+    closeSettings: 'Close settings',
+    previewTitle: 'Saved context preview',
+    previewDesc: 'Preview the saved configuration for the selected source and project.',
     errorLoadingPreview: 'Failed to load preview',
     // Loading section
     loading: 'Loading',
@@ -188,8 +194,8 @@ export const en = {
     openrouterBaseUrlManagedTooltip: 'Managed by the claude-mem observer. Run npx claude-mem install to use your own endpoint.',
     openrouterBaseUrlTooltip: 'Optional OpenAI-compatible base URL. Leave blank to use openrouter.ai.',
     reasoningEffort: 'Reasoning effort',
-    reasoningEffortTooltip: 'openrouter.ai models only. None turns reasoning off, for models that spend the output budget thinking. Default sends nothing.',
-    effortModelDefault: 'Model default',
+    reasoningEffortTooltip: 'openrouter.ai only. Empty (the default) sends reasoning off. Set an effort to opt back in. A custom gateway does not get this field until an empty length-truncated reply retries once.',
+    reasoningOffDefault: 'Off (default)',
     effortNone: 'None (reasoning off)',
     effortMinimal: 'Minimal',
     effortLow: 'Low',
@@ -201,6 +207,9 @@ export const en = {
     baseUrlTooltip: 'Leave blank to use the preset\'s endpoint',
     compatModelTooltip: 'Model id, passed verbatim. Leave blank to use the preset\'s default',
     compatModelPlaceholder: 'model id',
+    compatReasoning: 'Reasoning',
+    compatReasoningTooltip: 'Off (default) sends reasoning disabled so a reasoning model cannot spend the output cap thinking. On leaves it to the endpoint. A server that rejects the field is retried once without it.',
+    compatReasoningOn: 'On (endpoint decides)',
     compatApiKeyNoteIntro: 'The API key is set outside the viewer: ',
     compatApiKeyNoteIn: ' in ',
     compatApiKeyNoteOr: ', or ',
@@ -234,7 +243,7 @@ export const en = {
     saving: 'Saving...',
     saved: '✓ Saved',
     saveError: '✗ Error: {error}',
-    save: 'Save',
+    save: 'Save settings',
   },
 
   // Cleanup Modal
@@ -287,14 +296,16 @@ export const en = {
 
   // Logs Drawer
   logs: {
-    console: 'Console',
+    title: 'Memory logs',
+    resize: 'Resize memory logs',
     autoRefresh: 'Auto-refresh',
     refreshLogs: 'Refresh logs',
     scrollToBottom: 'Scroll to bottom',
     clearLogs: 'Clear logs',
     closeConsole: 'Close console',
     confirmClear: 'Are you sure you want to clear all logs?',
-    noLogs: 'No logs available',
+    noLogs: 'No logs available yet.',
+    noMatchingLogs: 'No logs match these filters. Select more levels or components.',
     quick: 'Quick:',
     alignment: 'Alignment',
     alignmentTitle: 'Show only session alignment logs',
@@ -302,6 +313,10 @@ export const en = {
     components: 'Components:',
     selectNone: 'Select none',
     selectAll: 'Select all',
+    selectAllLevels: 'Select all log levels',
+    deselectAllLevels: 'Deselect all log levels',
+    selectAllComponents: 'Select all log components',
+    deselectAllComponents: 'Deselect all log components',
     unknownError: 'Unknown error',
     fetchFailed: 'Failed to fetch logs: {status}',
     clearFailed: 'Failed to clear logs: {status}',
@@ -328,6 +343,17 @@ export const en = {
     },
   },
 
+  // Page heading above the timeline and session views
+  pageHeading: {
+    eyebrow: 'Your saved context',
+    timelineTitle: 'Memory timeline',
+    sessionsTitle: 'Sessions',
+    sessionTitle: 'Session memory',
+    timelineDesc: 'Browse observations, summaries, and prompts from your work.',
+    sessionsDesc: 'Open a session to revisit what happened and what was learned.',
+    sessionDesc: 'Review the context captured during this session.',
+  },
+
   // View Tabs
   viewTabs: {
     label: 'View',
@@ -340,7 +366,9 @@ export const en = {
     retry: 'Retry',
     loadFailed: 'Could not load sessions: {error}',
     loading: 'Loading sessions…',
-    empty: 'No sessions to display',
+    listLabel: 'Saved sessions',
+    emptyTitle: 'No sessions to show',
+    emptyHint: 'Sessions appear as work is captured. Try another project if a filter is selected.',
     loadingOlder: 'Loading older sessions…',
     oneMemory: '1 memory',
     memories: '{count} memories',
@@ -403,7 +431,8 @@ export const en = {
 
   // App-level
   app: {
-    toggleConsole: 'Toggle Console',
+    openLogs: 'Open memory logs',
+    closeLogs: 'Close memory logs',
     memoryMaintenance: 'Memory Maintenance',
   },
 

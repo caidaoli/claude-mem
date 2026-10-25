@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { useI18n } from '../i18n';
+import { useDialogFocus } from '../hooks/useDialogFocus';
 
 interface WelcomeCardProps {
   onDismiss: () => void;
@@ -162,6 +163,7 @@ const FEATURES: Feature[] = [
 
 export function WelcomeCard({ onDismiss }: WelcomeCardProps) {
   const { t } = useI18n();
+  const dialogRef = useDialogFocus(true);
   const handleDismiss = () => {
     setStoredWelcomeDismissed(true);
     onDismiss();
@@ -178,7 +180,9 @@ export function WelcomeCard({ onDismiss }: WelcomeCardProps) {
 
   return (
     <div className="welcome-modal-backdrop" onClick={handleDismiss}>
-      <article
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
         className="welcome-modal"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
@@ -214,7 +218,7 @@ export function WelcomeCard({ onDismiss }: WelcomeCardProps) {
             {t.welcome.readDocs}
           </a>
         </footer>
-      </article>
+      </div>
     </div>
   );
 }

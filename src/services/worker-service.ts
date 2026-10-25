@@ -16,7 +16,7 @@ import { HookSpoolRoutes } from './worker/http/routes/HookSpoolRoutes.js';
 import { HOOK_TIMEOUTS } from '../shared/hook-constants.js';
 import { getUptimeSeconds } from '../shared/uptime.js';
 import { SettingsDefaultsManager } from '../shared/SettingsDefaultsManager.js';
-import { getAuthMethodDescription } from '../shared/EnvManager.js';
+import { describeObserverAuthMethod } from './worker/observer-auth-method.js';
 import { logger } from '../utils/logger.js';
 import { ChromaMcpManager } from './sync/ChromaMcpManager.js';
 import { ChromaSync } from './sync/ChromaSync.js';
@@ -143,6 +143,11 @@ import { emitContextInvalidation } from '../shared/context-invalidation.js';
 import { SyncClient } from './sync/SyncClient.js';
 
 import { ViewerRoutes } from './worker/http/routes/ViewerRoutes.js';
+import { SetupScan } from './prompt-import/setup-scan.js';
+import { AGENT_WRITTEN_PROMPTS_FILE, writeJsonAtomic } from './work-view/request-groups.mjs';
+import { HistoryImport } from './setup/history-import.js';
+import { cmemProOrigin } from '../shared/cmem-gateway.js';
+import { Database as BunDatabase } from 'bun:sqlite';
 import { WorkViewRoutes } from './worker/http/routes/WorkViewRoutes.js';
 import { SessionRoutes } from './worker/http/routes/SessionRoutes.js';
 import { DataRoutes } from './worker/http/routes/DataRoutes.js';
@@ -371,7 +376,7 @@ export class WorkerService implements WorkerRef {
         const provider = getSelectedProvider();
         return {
           provider,
-          authMethod: provider === 'codex' ? 'Codex CLI subscription' : getAuthMethodDescription(),
+          authMethod: describeObserverAuthMethod(provider),
           lastInteraction: this.lastAiInteraction
             ? {
                 timestamp: this.lastAiInteraction.timestamp,
@@ -564,7 +569,27 @@ export class WorkerService implements WorkerRef {
       SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH).CLAUDE_MEM_WORKER_INGEST_MAX_BYTES,
     ));
 
-    this.workViewRoutes = new WorkViewRoutes({ getLocalDeviceId: () => this.dbManager.getCloudSync()?.status().deviceId ?? '' });
+    this.workViewRoutes = new WorkViewRoutes({
+      getLocalDeviceId: () => this.dbManager.getCloudSync()?.status().deviceId ?? '',
+      // My Rules saves as work-state rows, so a rule change syncs like any other write.
+      appendWorkStateEntry: (entry) => {
+        this.dbManager.getSessionStore().appendWorkStateEntry(entry);
+        this.dbManager.getCloudSync()?.notify();
+      },
+      // The install funnel's Scan step stores typed prompts read from every agent's transcripts.
+      // Hook rows an agent wrote are kept out of goals, work and rules extraction.
+      setupScan: new SetupScan({
+        getStore: () => this.dbManager.getSessionStore(),
+        // Hosted setup does not probe or wait for an agent login.
+        saveAgentWrittenPromptIds: promptIds => writeJsonAtomic(path.join(DATA_DIR, 'work-view', AGENT_WRITTEN_PROMPTS_FILE), { promptIds, updatedAt: new Date().toISOString() }),
+      }),
+      // Finish Setup's history upload to CMEM Pro, with the setup token checkout saved.
+      historyImport: new HistoryImport({
+        openDatabase: () => new BunDatabase(DB_PATH, { readonly: true, create: false }),
+        origin: () => cmemProOrigin(),
+        token: () => SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH).CLAUDE_MEM_CLOUD_SYNC_TOKEN?.trim() || null,
+      }),
+    });
     this.server.registerRoutes(this.workViewRoutes);
     this.server.registerRoutes(new ViewerRoutes(this.sseBroadcaster, this.dbManager, this.sessionManager));
     const sessionRoutes = new SessionRoutes(this.sessionManager, this.dbManager, this.sdkAgent, this.geminiAgent, this.openRouterAgent, this.sessionEventBroadcaster, this, this.completionHandler, this.codexAgent, this.openAICompatAgent, this.customAgent);
@@ -846,17 +871,18 @@ export class WorkerService implements WorkerRef {
         logger.warn('WORKER', `CLAUDE_MEM_SEARCH_RECENCY_DAYS: invalid value "${settings.CLAUDE_MEM_SEARCH_RECENCY_DAYS}" — keeping the default ${SEARCH_CONSTANTS.RECENCY_WINDOW_MS / 86_400_000}-day window. Use a non-negative integer of days; 0 disables the window.`, { value: settings.CLAUDE_MEM_SEARCH_RECENCY_DAYS });
       }
       const searchRecencyWindowMs = parsedRecencyWindowMs ?? SEARCH_CONSTANTS.RECENCY_WINDOW_MS;
+      const contextReader = getContextReadWorker();
       const searchManager = new SearchManager(
         this.dbManager.getSessionSearch(),
         this.dbManager.getSessionStore(),
         this.dbManager.getChromaSync(),
         formattingService,
         timelineService,
-        searchRecencyWindowMs
+        searchRecencyWindowMs,
+        contextReader
       );
       // Precomputed SessionStart context (liveness plan, Phase 6): the route
       // records each live render, the service re-renders on writes.
-      const contextReader = getContextReadWorker();
       this.contextCacheService = new ContextCacheService({
         renderVariant: (keys) => {
           if (!this.searchRoutes) throw new Error('Context cache render before search routes exist');

@@ -305,10 +305,23 @@ export function App() {
   const hasMore = pagination.observations.hasMore || pagination.summaries.hasMore || pagination.prompts.hasMore;
   const activeTab: ViewTab = route.view === 'timeline' ? 'timeline' : 'sessions';
   const tabs = (
-    <ViewTabs
-      active={activeTab}
-      onSelect={tab => navigate(tab === 'sessions' ? sessionsHash() : '')}
-    />
+    <>
+      <div className="memory-page-heading">
+        <div>
+          <p className="memory-eyebrow">{t.pageHeading.eyebrow}</p>
+          <h2>{route.view === 'timeline' ? t.pageHeading.timelineTitle : route.view === 'sessions' ? t.pageHeading.sessionsTitle : t.pageHeading.sessionTitle}</h2>
+          <p>{route.view === 'timeline'
+            ? t.pageHeading.timelineDesc
+            : route.view === 'sessions'
+              ? t.pageHeading.sessionsDesc
+              : t.pageHeading.sessionDesc}</p>
+        </div>
+        <ViewTabs
+          active={activeTab}
+          onSelect={tab => navigate(tab === 'sessions' ? sessionsHash() : '')}
+        />
+      </div>
+    </>
   );
 
   let content: React.ReactNode;
@@ -394,7 +407,9 @@ export function App() {
       <button
         className="console-toggle-btn"
         onClick={toggleLogsModal}
-        title={t.app.toggleConsole}
+        title={t.app.openLogs}
+        aria-label={logsModalOpen ? t.app.closeLogs : t.app.openLogs}
+        aria-expanded={logsModalOpen}
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <polyline points="4 17 10 11 4 5"></polyline>

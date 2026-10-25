@@ -1,4 +1,5 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useId } from 'react';
+import { useDialogFocus } from '../hooks/useDialogFocus';
 import type { Settings } from '../types';
 import { TerminalPreview } from './TerminalPreview';
 import { useContextPreview } from '../hooks/useContextPreview';
@@ -47,6 +48,7 @@ function CollapsibleSection({
   defaultOpen?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
+  const contentId = useId();
 
   return (
     <div className={`settings-section-collapsible ${isOpen ? 'open' : ''}`}>
@@ -54,6 +56,8 @@ function CollapsibleSection({
         className="section-header-btn"
         onClick={() => setIsOpen(!isOpen)}
         type="button"
+        aria-expanded={isOpen}
+        aria-controls={contentId}
       >
         <div className="section-header-content">
           <span className="section-title">{title}</span>
@@ -71,7 +75,7 @@ function CollapsibleSection({
           <polyline points="6 9 12 15 18 9" />
         </svg>
       </button>
-      {isOpen && <div className="section-content">{children}</div>}
+      {isOpen && <div className="section-content" id={contentId}>{children}</div>}
     </div>
   );
 }
@@ -85,9 +89,15 @@ function FormField({
   tooltip?: string;
   children: React.ReactNode;
 }) {
+  const fieldId = useId();
+  const control = React.Children.map(children, child => {
+    if (!React.isValidElement<{ id?: string; 'aria-describedby'?: string }>(child)
+      || typeof child.type !== 'string' || !['input', 'select', 'textarea'].includes(child.type)) return child;
+    return React.cloneElement(child, { id: fieldId, 'aria-describedby': tooltip ? `${fieldId}-hint` : undefined });
+  });
   return (
     <div className="form-field">
-      <label className="form-field-label">
+      <label className="form-field-label" htmlFor={fieldId}>
         {label}
         {tooltip && (
           <span className="tooltip-trigger" title={tooltip}>
@@ -99,7 +109,8 @@ function FormField({
           </span>
         )}
       </label>
-      {children}
+      {control}
+      {tooltip && <span className="visually-hidden" id={`${fieldId}-hint`}>{tooltip}</span>}
     </div>
   );
 }
@@ -152,6 +163,7 @@ export function ContextSettingsModal({
   saveStatus
 }: ContextSettingsModalProps) {
   const { t } = useI18n();
+  const dialogRef = useDialogFocus(isOpen);
   const [formState, setFormState] = useState<Settings>(settings);
   // From the saved settings, not the form: the field stays editable while a
   // user types any other URL, and read-only for the observer's own endpoint.
@@ -205,10 +217,10 @@ export function ContextSettingsModal({
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="context-settings-modal" onClick={(e) => e.stopPropagation()}>
+      <div ref={dialogRef} tabIndex={-1} className="context-settings-modal" role="dialog" aria-modal="true" aria-labelledby="memory-settings-title" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="modal-header">
-          <h2>{t.settings.title}</h2>
+          <div className="settings-heading"><h2 id="memory-settings-title">{t.settings.title}</h2><p>{t.settings.subtitle}</p></div>
           <div className="header-controls">
             <label className="preview-selector">
               {t.settings.source}
@@ -239,6 +251,7 @@ export function ContextSettingsModal({
               onClick={onClose}
               className="modal-close-btn"
               title={t.settings.closeEsc}
+              aria-label={t.settings.closeSettings}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <line x1="18" y1="6" x2="6" y2="18" />
@@ -252,6 +265,7 @@ export function ContextSettingsModal({
         <div className="modal-body">
           {/* Left column - Terminal Preview */}
           <div className="preview-column">
+            <div className="settings-preview-heading"><h3>{t.settings.previewTitle}</h3><p>{t.settings.previewDesc}</p></div>
             <div className="preview-content">
               {error ? (
                 <div style={{ color: 'var(--color-accent-error)' }}>
@@ -521,7 +535,7 @@ export function ContextSettingsModal({
                         value={formState.CLAUDE_MEM_OPENROUTER_REASONING_EFFORT || ''}
                         onChange={(e) => updateSetting('CLAUDE_MEM_OPENROUTER_REASONING_EFFORT', e.target.value)}
                       >
-                        <option value="">{t.settings.effortModelDefault}</option>
+                        <option value="">{t.settings.reasoningOffDefault}</option>
                         <option value="none">{t.settings.effortNone}</option>
                         <option value="minimal">{t.settings.effortMinimal}</option>
                         <option value="low">{t.settings.effortLow}</option>
@@ -705,6 +719,18 @@ export function ContextSettingsModal({
                       placeholder={openAICompatPresetOption(formState.CLAUDE_MEM_OPENAI_COMPAT_PRESET).defaultModel || t.settings.compatModelPlaceholder}
                     />
                   </FormField>
+                  <FormField
+                    label={t.settings.compatReasoning}
+                    tooltip={t.settings.compatReasoningTooltip}
+                  >
+                    <select
+                      value={formState.CLAUDE_MEM_OPENAI_COMPAT_REASONING || ''}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_OPENAI_COMPAT_REASONING', e.target.value)}
+                    >
+                      <option value="">{t.settings.reasoningOffDefault}</option>
+                      <option value="on">{t.settings.compatReasoningOn}</option>
+                    </select>
+                  </FormField>
                   <span className="toggle-description">
                     {t.settings.compatApiKeyNoteIntro}<code>CLAUDE_MEM_OPENAI_COMPAT_API_KEY</code>{t.settings.compatApiKeyNoteIn}
                     <code>~/.claude-mem/settings.json</code>{t.settings.compatApiKeyNoteOr}<code>OPENAI_COMPAT_API_KEY</code>{t.settings.compatApiKeyNoteIn}
@@ -846,7 +872,7 @@ export function ContextSettingsModal({
 
         {/* Footer with Save button */}
         <div className="modal-footer">
-          <div className="save-status">
+          <div className="save-status" role="status" aria-live="polite">
             {loadError ? (
               <span className="error" role="alert">
                 {t.settings.loadFailed.replace('{error}', () => loadError)}{' '}
