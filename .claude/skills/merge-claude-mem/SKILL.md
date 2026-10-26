@@ -13,7 +13,15 @@ description: Use when Codex 或 Claude Code 需要在包含 CustomAgent 定制�
 - `.gitattributes` 的 `merge=ours` 不能替代删除冲突处理和行为测试。
 - 不批量选择 ours/theirs，不用 rebase 代替 upstream merge，不因构建失败自动修改依赖。
 
-每个代码块都作为独立 shell 整块执行；任一命令失败立即停止。
+每个代码块都整块交给新的 bash 进程执行并检查退出码；非 0 立即停止。Claude Code 的 Bash 工具在忽略 errexit 的上下文中运行命令，直接粘贴时块内 `set -euo pipefail` 不生效，门禁会失败后继续执行：
+
+```bash
+bash -c "$(cat <<'SH'
+<代码块原文>
+SH
+)"
+echo "exit=$?"
+```
 
 ## 1. Preflight 与快照
 
@@ -173,14 +181,14 @@ git diff --cached --stat
 git ls-files --others --exclude-standard
 ```
 
-暂存完成后必须没有遗漏：
+暂存完成后必须没有遗漏。空白检查排除 `plugin/`：构建产物不能手改，work-view bundle 内联的 CSS 模板字符串本身带行尾空白，上游提交的版本也一样：
 
 ```bash
 set -euo pipefail
 test -z "$(git diff --name-only)"
 test -z "$(git ls-files --others --exclude-standard)"
 test -n "$(git diff --cached --name-only)"
-git diff --cached --check
+git diff --cached --check -- . ':(exclude)plugin/'
 ```
 
 验证 Worker 状态和版本：
