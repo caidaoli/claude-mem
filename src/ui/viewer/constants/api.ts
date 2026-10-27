@@ -4,6 +4,7 @@ export const API_ENDPOINTS = {
   PROMPTS: '/api/prompts',
   SETTINGS: '/api/settings',
   SESSIONS: '/api/sessions',
+  BACKUP_STATUS: '/api/backup/status',
   STREAM: '/stream',
   // Maintenance endpoints
   MAINTENANCE_CLEANUP_PREVIEW: '/api/maintenance/cleanup/preview',

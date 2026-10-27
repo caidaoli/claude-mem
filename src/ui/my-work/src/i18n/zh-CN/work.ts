@@ -62,6 +62,9 @@ export const WORK_ZH_CN: Readonly<Record<string, string>> = {
   // Request card (components/request-card.tsx)
   'Just updated': '刚刚更新',
   'Open after ship · {count}': '交付后待办 · {count}',
+  'Deliverables · {count}': '交付物 · {count}',
+  'Open the request to see {count} more deliverables': '打开请求查看其余 {count} 项交付物',
+  '+{count} more': '另有 {count} 项',
   'Docs': '文档',
   'Promo': '推广',
   'Other': '其他',
