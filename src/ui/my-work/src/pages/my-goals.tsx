@@ -55,7 +55,7 @@ function statusOf(goal: GoalItem, requests: Request[]): GoalStatus {
   return 'stalled'
 }
 
-const requestTitle = (request: Request) => request.title ?? t('New request, title being written')
+const requestTitle = (request: Request) => request.title ?? t(request.titleUnavailable ? 'Title unavailable' : 'New request, title being written')
 const timesLabel = (times: number) => t(times === 1 ? 'asked once' : 'asked {count}×', { count: times })
 const isReviewed = (request: Request) => request.progress.readings > 0
 

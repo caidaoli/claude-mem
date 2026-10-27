@@ -154,7 +154,7 @@ export function RequestCard({ request, onOpen, onOpenGoal }: { request: Request;
           </div>
           <div className="flex items-center gap-1.5">
             <StateBadge state={request.state} />
-            {(phase !== 'human' || fresh || contentJustUpdated) && <ActivitySpinner word={word} settled={fresh || contentJustUpdated} />}
+            {!request.titleUnavailable && (phase !== 'human' || fresh || contentJustUpdated) && <ActivitySpinner word={word} settled={fresh || contentJustUpdated} />}
           </div>
         </CardHeader>
 
@@ -168,10 +168,11 @@ export function RequestCard({ request, onOpen, onOpenGoal }: { request: Request;
             </button>
           ) : (
             <Req ids={['D5']}>
-              <button type="button" onClick={onOpen} className="text-left" aria-label={t('Open this request; its title is still being written')}>
-                <Terminal output={request.terminal.join('\n')} isStreaming className="border-dashed border-terminal-border bg-terminal text-terminal-foreground">
+              <button type="button" onClick={onOpen} className="text-left" aria-label={t(request.titleUnavailable ? 'Open this request; its title is unavailable' : 'Open this request; its title is still being written')}>
+                <Terminal output={request.terminal.join('\n')} isStreaming={!request.titleUnavailable} className="border-dashed border-terminal-border bg-terminal text-terminal-foreground">
                   <TerminalContent className="max-h-28 p-3.5 text-[11px] leading-relaxed">
                     <pre className="whitespace-pre-wrap text-terminal-foreground">{request.terminal.slice(-4).join('\n')}</pre>
+                    {request.titleUnavailable && <p className="mt-2 text-xs">{t('Title unavailable')}</p>}
                     {phase === 'translating' && <Shimmer as="span" className="text-[11px] [--color-background:var(--foreground)] [--color-muted-foreground:var(--terminal-foreground)]">{t('Writing the human title…')}</Shimmer>}
                   </TerminalContent>
                 </Terminal>

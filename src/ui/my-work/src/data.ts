@@ -32,6 +32,8 @@ export type WorkProductKind = 'PR' | 'Commit' | 'Branch' | 'Page' | 'Deck' | 'Do
 export interface Request {
   id: string
   title: string | null
+  /** The title writer could not produce human copy; missing copy otherwise remains pending. */
+  titleUnavailable?: boolean
   summary: string | null
   /** The goal this serves. `null` = serves no goal; `undefined` = not linked yet (never shown as "No goal"). */
   goalId?: string | null

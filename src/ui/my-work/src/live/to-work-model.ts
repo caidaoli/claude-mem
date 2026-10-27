@@ -169,6 +169,7 @@ export function toRequest(raw: WorkViewHumanRequest, agents: WorkViewAgent[], no
     id: raw.id,
     contentFingerprint: raw.contentFingerprint,
     title: copyReady && copy.title?.trim() ? copy.title.trim() : null,
+    titleUnavailable: copy?.state === 'unavailable' || undefined,
     summary: copyReady && copy.summary?.trim() ? copy.summary.trim() : null,
     stageNote: copy?.stage?.trim() || undefined,
     // From the request-progress alignment: absent reads "Goal not linked yet", null reads "No goal".

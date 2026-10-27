@@ -97,8 +97,26 @@ test('a shipped lifecycle without a completion time becomes a read-error card, n
 test('missing human copy shows the terminal view, with no invented title', () => {
   const { request } = mapOne({ humanCopy: null })
   assert.equal(request.title, null)
+  assert.equal(request.titleUnavailable, undefined)
   assert.equal(request.activityWord, 'Translating')
   assert.ok(request.terminal.length > 0)
+})
+
+test('unavailable human copy is distinguished from pending copy and clears when a title arrives', () => {
+  const { request: unavailable } = mapOne({ humanCopy: { state: 'unavailable' } })
+  assert.equal(unavailable.title, null)
+  assert.equal(unavailable.titleUnavailable, true)
+  assert.ok(unavailable.terminal.length > 0)
+
+  const { request: pending } = mapOne({ humanCopy: { state: 'pending' } })
+  assert.equal(pending.title, null)
+  assert.equal(pending.titleUnavailable, undefined)
+
+  for (const state of ['current', 'outdated']) {
+    const { request } = mapOne({ humanCopy: { state, title: 'A readable title' } })
+    assert.equal(request.title, 'A readable title')
+    assert.equal(request.titleUnavailable, undefined)
+  }
 })
 
 test('a request whose work-state items were all dropped is closed, with no lifecycle needed', () => {

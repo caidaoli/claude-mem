@@ -33,7 +33,7 @@ const SORTS: { value: SortKey; label: string }[] = [
   { value: 'started', label: 'Newest' },
   { value: 'progress', label: 'Most progress' },
 ]
-const titleOf = (request: Request) => request.title ?? request.resolvesTo?.title ?? t('New request, title being written')
+const titleOf = (request: Request) => request.title ?? request.resolvesTo?.title ?? t(request.titleUnavailable ? 'Title unavailable' : 'New request, title being written')
 
 /** Attention first by default (your move, then to check, then working, idle, shipped); newest first within a state. */
 function sortRequests(requests: Request[], sort: SortKey) {

@@ -31,8 +31,12 @@ export function humanCopyProvider(query, language = '') {
       { role: 'user', content: JSON.stringify(input) },
     ]);
     const content = result.content;
+    // Some JSON-mode transports still wrap the answer in a Markdown fence.
+    // Unwrap only a complete fenced response; leave prose and malformed JSON invalid.
+    const trimmed = content.trim();
+    const json = trimmed.match(/^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/i)?.[1] ?? trimmed;
     let output = null;
-    try { if (content.trim()) output = JSON.parse(content); } catch { /* Retain usage even for unusable output. */ }
+    try { if (json) output = JSON.parse(json); } catch { /* Retain usage even for unusable output. */ }
     return { output, usage: result.usage ?? null, model: result.model ?? null, responseId: result.responseId ?? null,
       error: !content.trim() ? `No answer text (finish: ${result.finishReason || 'unknown'}).` : output === null ? 'Invalid summary JSON.' : null };
   };

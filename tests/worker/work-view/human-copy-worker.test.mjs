@@ -258,12 +258,50 @@ test('the shared provider preserves usage and response metadata for empty or inv
     [' \n ', 'length', 'No answer text (finish: length).'],
     ['', undefined, 'No answer text (finish: unknown).'],
     ['not JSON', 'stop', 'Invalid summary JSON.'],
-    ['```json\n{"title":"t"}\n```', 'stop', 'Invalid summary JSON.'],
+    ['```json\n{"title":"t"}\n', 'stop', 'Invalid summary JSON.'],
+    ['Here is the answer:\n```json\n{"title":"t"}\n```', 'stop', 'Invalid summary JSON.'],
+    ['```json\n{"title":"t"}\n```\nExtra text', 'stop', 'Invalid summary JSON.'],
+    ['```json\n{"title":}\n```', 'stop', 'Invalid summary JSON.'],
     ['null', 'stop', 'Invalid summary JSON.'],
   ]) await t.test(JSON.stringify(content), async () => {
     const usage = { input_tokens: 20, output_tokens: 5 };
     const provider = humanCopyProvider(async () => ({ content, finishReason, usage, model: 'model-1', responseId: 'response-1' }));
     assert.deepEqual(await provider({}), { output: null, usage, model: 'model-1', responseId: 'response-1', error });
+  });
+});
+
+test('the shared provider accepts a complete JSON fence and preserves response metadata', async t => {
+  const output = copy(createHumanCopyInput(request()), '确认工具版本状态');
+  const usage = { prompt_tokens: 722, completion_tokens: 71, total_tokens: 793 };
+  for (const content of [
+    JSON.stringify(output),
+    `\`\`\`json\n${JSON.stringify(output)}\n\`\`\``,
+    ` \n\`\`\`JSON\r\n${JSON.stringify(output)}\r\n\`\`\`\n `,
+    `\`\`\`\n${JSON.stringify(output)}\n\`\`\``,
+  ]) await t.test(content.slice(0, 12), async () => {
+    const provider = humanCopyProvider(async () => ({ content, usage, model: 'gemini-3.5-flash-lite', responseId: 'response-1' }));
+    assert.deepEqual(await provider({}), { output, usage, model: 'gemini-3.5-flash-lite', responseId: 'response-1', error: null });
+  });
+});
+
+test('fenced provider answers publish only validated copy and reuse it on the next poll', async t => {
+  for (const invalid of [false, true]) await t.test(invalid ? 'invalid identity' : 'valid copy', async t => {
+    let calls = 0;
+    const instance = worker(humanCopyProvider(async messages => {
+      calls++;
+      const output = copy(JSON.parse(messages[1].content), '确认工具版本状态');
+      if (invalid) output.workstreams[0].id = 'invented-stream';
+      return { content: `\`\`\`json\n${JSON.stringify(output)}\n\`\`\`` };
+    }));
+    t.after(() => instance.close());
+    const source = request();
+    instance.observe(view(source));
+    await settle();
+    const result = instance.observe(view(source)).humanRequests[0];
+    assert.equal(result.humanCopy.state, invalid ? 'unavailable' : 'current');
+    assert.equal(result.humanCopy.title, invalid ? undefined : '确认工具版本状态');
+    assert.equal(result.workstreams[0].items[0].status, 'doing');
+    assert.equal(calls, 1);
   });
 });
 
