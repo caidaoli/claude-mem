@@ -121,6 +121,19 @@ git rm -r -q --ignore-unmatch -- .github/workflows
 2. 读取 base、local、upstream 三方语义；采用上游架构并迁移本地行为。
 3. 若 `.codegraph/` 存在，理解移动后的符号和调用路径时先使用 CodeGraph。
 4. 逐个编辑、验证和 `git add`；不得批量 checkout ours/theirs。
+5. `plugin/` 下的冲突是构建产物：不手改、不选 ours/theirs，源码冲突解决后由第 4 节的构建重新生成并暂存。
+
+无论是否冲突，上游新增的界面文案都要接入 Fork 的 zh-CN。先列出上游的 UI 改动：
+
+```bash
+STATE_DIR=$(git rev-parse --git-path merge-claude-mem)
+PRE_MERGE_HEAD=$(sed -n '1p' "$STATE_DIR/pre-merge-head")
+UPSTREAM_HEAD=$(sed -n '1p' "$STATE_DIR/upstream-head")
+git diff --stat "$(git merge-base "$PRE_MERGE_HEAD" "$UPSTREAM_HEAD")" "$UPSTREAM_HEAD" -- src/ui
+```
+
+- viewer：组件里用 `useI18n()` 的 `t.<section>.<key>`，键同时加到 `src/ui/viewer/i18n/locales/en.ts` 和 `zh-CN.ts`（typecheck 会检查两边的键是否一致）。
+- My Work：用 `t('English {var}', vars)`，中文加到 `src/ui/my-work/src/i18n/zh-CN/*.ts` 对应的字典里，键就是英文原文。
 
 从持久快照读取旧实现，例如：
 
@@ -133,6 +146,21 @@ git show "${PRE_MERGE_HEAD}:src/services/worker/CustomAgent.ts"
 只恢复确认丢失的行为，不机械覆盖整个文件。
 
 ## 4. 验证并暂存
+
+先构建并暂存 `plugin/`，再跑测试。`committed-plugin-bundles` 会按索引里的路径检查 bundle，而 work-view 每次构建都会换哈希文件名；旧路径如果还留在索引里，这个测试会成片失败：
+
+```bash
+set -euo pipefail
+test -z "$(git diff --name-only --diff-filter=U -- . ':(exclude)plugin/')"
+npm run typecheck
+npm run build
+rc=0
+git grep -n -I -E '^(<<<<<<<|>>>>>>>) ' -- plugin/ || rc=$?
+test "$rc" -eq 1
+git add -A -- plugin/
+test -z "$(git diff --name-only -- plugin/)"
+test -z "$(git ls-files --others --exclude-standard -- plugin/)"
+```
 
 保持 `MERGE_HEAD` 存在，确认没有冲突且 attributes 契约仍有效：
 
@@ -155,7 +183,7 @@ git check-attr merge -- \
                  END { exit !(count == 5 && !bad) }'
 ```
 
-按从快到慢的顺序验证公开行为：
+CustomAgent 相关测试必须全部通过：
 
 ```bash
 set -euo pipefail
@@ -163,12 +191,127 @@ bun test tests/worker/custom-agent-*.test.ts \
   tests/worker/gemini-sse-parser.test.ts \
   tests/parser-json-observations.test.ts \
   tests/sdk/parser.test.ts tests/sdk/prompts.test.ts
-npm test
-npm run typecheck
-npm run build-and-sync
 ```
 
-失败时保持 merge 进行中和 `plugin/` 解锁，修复根因后重跑完整验证；不要自动执行 `npm install`。
+全量测试有既有失败，所以不看 `npm test` 的退出码，而是看日志。这一块要跑六七分钟，放到后台执行：
+
+```bash
+set -euo pipefail
+STATE_DIR=$(git rev-parse --git-path merge-claude-mem)
+LOG="$STATE_DIR/npm-test.log"
+npm test >"$LOG" 2>&1 || printf 'npm test exit=%s\n' "$?"
+
+# 每批的文件数加起来要等于计划的文件数，汇总的失败数要等于 (fail) 行数，且没有测试之外的 error。
+awk '
+  /^\[test-lanes\] fast: [0-9]+ files in / { expected = $3 }
+  /^ *[0-9]+ fail$/ { fail = $1 }
+  /^ *[0-9]+ errors?$/ { error = $1 }
+  /^Ran [0-9]+ tests across [0-9]+ files\./ { ran += $5; failed += fail; errors += error }
+  /^Ran / { fail = 0; error = 0 }
+  /^\(fail\) / { listed++ }
+  END {
+    printf "files expected=%d ran=%d failed=%d listed=%d errors=%d\n",
+      expected, ran, failed, listed, errors
+    exit !(expected > 0 && ran == expected && failed == listed && errors == 0)
+  }' "$LOG"
+
+# 把每个失败归到它前面最近的测试文件标题下，存成“文件<TAB>用例”。
+awk '
+  /^(tests|src)\/.*(\.test|_test_|\.spec|_spec_).*\.[cm]?[jt]sx?:$/ {
+    file = substr($0, 1, length($0) - 1); next
+  }
+  /^\(fail\) / {
+    if (file == "") { bad = 1; next }
+    name = substr($0, 8); sub(/ \[[0-9.]+m?s\]$/, "", name)
+    print file "\t" name
+  }
+  END { exit bad }' "$LOG" >"$STATE_DIR/failed-tests"
+cat "$STATE_DIR/failed-tests"
+```
+
+把每个失败文件分别放在合并结果、合并前 HEAD、upstream 三棵树里单独再跑一次。合并结果里失败、但两个基线里都没有的用例才算回归；合并结果单独跑能通过的，记为只在全量运行时失败：
+
+```bash
+set -euo pipefail
+STATE_DIR=$(git rev-parse --git-path merge-claude-mem)
+PRE_MERGE_HEAD=$(sed -n '1p' "$STATE_DIR/pre-merge-head")
+UPSTREAM_HEAD=$(sed -n '1p' "$STATE_DIR/upstream-head")
+ROOT=$(git rev-parse --show-toplevel)
+cut -f1 "$STATE_DIR/failed-tests" | sort -u >"$STATE_DIR/failed-test-files"
+test -s "$STATE_DIR/failed-test-files" || { printf 'no failing tests\n'; exit 0; }
+
+WORK=$(mktemp -d)
+cleanup() {
+  git worktree remove --force "$WORK/pre" 2>/dev/null || true
+  git worktree remove --force "$WORK/upstream" 2>/dev/null || true
+  rm -rf "$WORK"
+}
+trap cleanup EXIT
+git worktree add --quiet --detach "$WORK/pre" "$PRE_MERGE_HEAD"
+git worktree add --quiet --detach "$WORK/upstream" "$UPSTREAM_HEAD"
+for tree in "$WORK/pre" "$WORK/upstream"; do
+  git ls-files '*package.json' ':!plugin/' | while IFS= read -r manifest; do
+    dir=$(dirname "$manifest")
+    if test -d "$dir/node_modules" && test -d "$tree/$dir"; then
+      ln -s "$ROOT/$dir/node_modules" "$tree/$dir/node_modules"
+    fi
+  done
+done
+
+# 输出这个文件里失败的用例名；非 0 退出却没有 (fail) 行时输出一行退出码。
+failures() {
+  local tree=$1 file=$2 rc=0
+  test -f "$tree/$file" || return 0
+  (cd "$tree" && bun test "./$file") </dev/null >"$WORK/run.log" 2>&1 || rc=$?
+  awk '/^\(fail\) / { name = substr($0, 8); sub(/ \[[0-9.]+m?s\]$/, "", name); print name }' \
+    "$WORK/run.log" | sort -u >"$WORK/names"
+  if test "$rc" -ne 0 && test ! -s "$WORK/names"; then
+    printf 'exit %s without (fail) lines\n' "$rc" >"$WORK/names"
+  fi
+  cat "$WORK/names"
+}
+count() { wc -l <"$1" | tr -d ' '; }
+
+regressions=0
+while IFS= read -r file; do
+  awk -F '\t' -v file="$file" '$1 == file' "$STATE_DIR/failed-tests" >"$WORK/full"
+  failures "$ROOT" "$file" >"$WORK/merged"
+  failures "$WORK/pre" "$file" >"$WORK/pre.names"
+  failures "$WORK/upstream" "$file" >"$WORK/upstream.names"
+  sort -u "$WORK/pre.names" "$WORK/upstream.names" >"$WORK/baseline"
+  comm -23 "$WORK/merged" "$WORK/baseline" >"$WORK/new"
+  verdict=pre-existing
+  test -s "$WORK/merged" || verdict=full-run-only
+  test ! -s "$WORK/new" || verdict=REGRESSION
+  printf '%s full=%s merged=%s pre=%s upstream=%s %s\n' "$file" \
+    "$(count "$WORK/full")" "$(count "$WORK/merged")" \
+    "$(count "$WORK/pre.names")" "$(count "$WORK/upstream.names")" "$verdict"
+  sed 's/^/  new: /' "$WORK/new"
+  regressions=$((regressions + $(count "$WORK/new")))
+done <"$STATE_DIR/failed-test-files"
+printf 'regressions=%s\n' "$regressions"
+test "$regressions" -eq 0
+```
+
+没有回归后再安装到 Claude Code 和 Codex 并重启 Worker。重新构建后 `plugin/` 不能再有未暂存的变化；如果有，说明前面改过源码，回到本节第一步。Bun 崩溃会在仓库根留下 bun 可执行文件的副本 `.<hash>-00000000.bun-build`，确认和 bun 一模一样后删掉：
+
+```bash
+set -euo pipefail
+npm run build-and-sync
+test -z "$(git diff --name-only -- plugin/)"
+test -z "$(git ls-files --others --exclude-standard -- plugin/)"
+
+BUN_BIN=$(readlink -f "$(command -v bun)")
+for junk in .*.bun-build; do
+  test -f "$junk" || continue
+  if cmp -s "$junk" "$BUN_BIN"; then
+    rm -f -- "$junk"
+    printf 'removed %s\n' "$junk"
+  fi
+done
+```
+
+失败时保持 merge 进行中和 `plugin/` 解锁，修复根因后从本节第一步重跑；不要自动执行 `npm install`。
 
 检查 build 产生的 staged、unstaged 和 untracked 变更，逐个暂存属于本次合并的实际路径：
 
@@ -238,7 +381,8 @@ git ls-files -v plugin/ |
          exit !(total > 0 && skip == total)
        }'
 
-rm -f "$STATE_DIR/pre-merge-head" "$STATE_DIR/upstream-ref" "$STATE_DIR/upstream-head"
+rm -f "$STATE_DIR/pre-merge-head" "$STATE_DIR/upstream-ref" "$STATE_DIR/upstream-head" \
+  "$STATE_DIR/npm-test.log" "$STATE_DIR/failed-tests" "$STATE_DIR/failed-test-files"
 rmdir "$STATE_DIR"
 test ! -d "$STATE_DIR"
 git status --short
@@ -294,7 +438,8 @@ git ls-files -v plugin/ |
        { total++ }
        END { exit !(total > 0 && skip == total) }'
 
-rm -f "$STATE_DIR/pre-merge-head" "$STATE_DIR/upstream-ref" "$STATE_DIR/upstream-head"
+rm -f "$STATE_DIR/pre-merge-head" "$STATE_DIR/upstream-ref" "$STATE_DIR/upstream-head" \
+  "$STATE_DIR/npm-test.log" "$STATE_DIR/failed-tests" "$STATE_DIR/failed-test-files"
 rmdir "$STATE_DIR"
 test ! -d "$STATE_DIR"
 ```
@@ -303,4 +448,4 @@ test ! -d "$STATE_DIR"
 
 ## 完成报告
 
-报告 upstream ref/SHA/版本/提交数、merge commit、冲突处理、测试/typecheck/build、Worker 健康与版本、plugin skip/tracked 数量，以及状态目录是否清理。
+报告 upstream ref/SHA/版本/提交数、merge commit、冲突处理和中文化、测试/typecheck/build、每个失败文件的分类（pre-existing、full-run-only）、Worker 健康与版本、plugin skip/tracked 数量，以及状态目录是否清理。
