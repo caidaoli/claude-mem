@@ -169,8 +169,8 @@ export class SessionRoutes extends BaseRouteHandler {
           if (!this.openAICompatAgent) throw new Error('OpenAI-compatible provider is not available');
           return await this.openAICompatAgent.formatTelegramWrapup(input, activeModelId);
         case 'custom':
-          // CustomAgent has no wrap-up formatter; Claude formats it with its own model.
-          return await this.sdkAgent.formatTelegramWrapup(input);
+          if (!this.customAgent) throw new Error('Custom provider is not available');
+          return await this.customAgent.formatTelegramWrapup(input, activeModelId);
         default:
           return await this.sdkAgent.formatTelegramWrapup(input, activeModelId);
       }

@@ -116,6 +116,7 @@ import {
   hasUnfinishedObservationBlock,
   takeObserverSchemaReminder,
   type ResponseContext,
+  type ProcessAgentResponseOptions,
 } from '../../../src/services/worker/agents/ResponseProcessor.js';
 import { buildObservationPrompt, OBSERVATION_SCHEMA_REMINDER } from '../../../src/sdk/prompts.js';
 import type { WorkerRef, StorageResult } from '../../../src/services/worker/agents/types.js';
@@ -588,7 +589,7 @@ describe('ResponseProcessor', () => {
       expect(session.conversationHistory).toEqual([{ role: 'assistant', content: text }]);
     });
 
-    it('stores observations against the dispatched prompt context when the live session has already advanced', async () => {
+    it.each(['xml', 'json'] as const)('stores %s observations against the dispatched context when the live session has already advanced', async (format) => {
       const session = createMockSession({
         project: 'repo-b/worktree',
         lastPromptNumber: 2,
@@ -601,7 +602,10 @@ describe('ResponseProcessor', () => {
         pendingAgentId: 'agent-old',
         pendingAgentType: 'planner',
       };
-      const responseText = `
+      const responseText = format === 'json' ? JSON.stringify({
+        type: 'discovery', title: 'Late response', narrative: 'Stored on the original prompt context.',
+        facts: [], concepts: [], files_read: [], files_modified: [],
+      }) : `
         <observation>
           <type>discovery</type>
           <title>Late response</title>
@@ -624,7 +628,9 @@ describe('ResponseProcessor', () => {
         'TestAgent',
         undefined,
         undefined,
-        responseContext
+        format === 'json'
+          ? { parseJsonObservation: true, observationText: responseText, context: responseContext }
+          : responseContext
       );
 
       const [, project, observations, , promptNumber] = mockStoreObservations.mock.calls[0];
@@ -831,6 +837,60 @@ describe('ResponseProcessor', () => {
     });
   });
 
+  function responseOptions(format: 'xml' | 'json-observation' | 'json-summary', text: string): ProcessAgentResponseOptions | undefined {
+    if (format === 'json-observation') return { parseJsonObservation: true, observationText: text };
+    if (format === 'json-summary') return { parseJsonSummary: true, summaryText: text };
+    return undefined;
+  }
+
+  describe('JSON output recovery', () => {
+    it.each(['xml', 'json-observation', 'json-summary'] as const)('preserves %s quota rejection prose', async format => {
+      const session = createMockSession({ claimedMessageIds: [41] });
+      const text = "You've hit your session limit · resets 5:50pm";
+      await processAgentResponse(text, session, mockDbManager, mockSessionManager, mockWorker,
+        100, null, 'TestAgent', undefined, undefined, responseOptions(format, text));
+      expect(mockSessionManager.resetProcessingToPending).toHaveBeenCalledWith(1);
+      expect(mockSessionManager.confirmClaimedMessages).not.toHaveBeenCalled();
+      expect(mockStoreObservations).not.toHaveBeenCalled();
+      expect(session.abortReason).toBe('quota:observer_text');
+      expect(session.conversationHistory).toEqual([]);
+    });
+
+    it.each([
+      ['json-observation', ''], ['json-observation', 'not JSON'],
+      ['json-observation', '{"observations":'], ['json-observation', '{"error":"failed"}'],
+      ['json-summary', ''], ['json-summary', 'not JSON'],
+      ['json-summary', '{"request":'], ['json-summary', '{}'],
+    ] as const)('retries an unusable %s batch once, then drops it visibly: %s', async (format, text) => {
+      const session = createMockSession({ currentProvider: 'custom', claimedMessageIds: [41] });
+      extraMockSettings.CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER = 'off';
+      const options = responseOptions(format, text);
+      await processAgentResponse(text, session, mockDbManager, mockSessionManager, mockWorker,
+        100, null, 'Custom', undefined, undefined, options);
+      expect(mockSessionManager.resetProcessingToPending).toHaveBeenCalledTimes(1);
+      expect(mockSessionManager.confirmClaimedMessages).not.toHaveBeenCalled();
+      expect(session.abortReason).toBe(text ? 'output_retry:prose' : 'output_retry:idle');
+      session.abortController = new AbortController();
+      session.abortReason = undefined;
+      await processAgentResponse(text, session, mockDbManager, mockSessionManager, mockWorker,
+        100, null, 'Custom', undefined, undefined, options);
+      expect(mockSessionManager.resetProcessingToPending).toHaveBeenCalledTimes(1);
+      expect(mockSessionManager.confirmClaimedMessages).toHaveBeenCalledTimes(1);
+      expect(mockStoreObservations).not.toHaveBeenCalled();
+    });
+
+    it.each(['{"skip":true}', '{}', '[]', '{"observations":[]}'])('acknowledges a valid JSON skip without retry: %s', async text => {
+      const session = createMockSession({ currentProvider: 'custom', claimedMessageIds: [41] });
+      mockStoreObservations.mockReturnValue({ observationIds: [], summaryId: null, createdAtEpoch: 1700000000000 });
+      await processAgentResponse(text, session, mockDbManager, mockSessionManager, mockWorker,
+        100, null, 'Custom', undefined, undefined, responseOptions('json-observation', text));
+      expect(mockSessionManager.confirmClaimedMessages).toHaveBeenCalledWith(1);
+      expect(mockSessionManager.resetProcessingToPending).not.toHaveBeenCalled();
+      expect(session.abortController.signal.aborted).toBe(false);
+      expect(mockStoreObservations.mock.calls[0][2]).toEqual([]);
+    });
+  });
+
   describe('non-XML observer responses', () => {
     it('warns and clears pending work when the observer returns non-XML prose', async () => {
       const confirmClaimedMessages = mock(() => Promise.resolve(0));
@@ -868,7 +928,7 @@ describe('ResponseProcessor', () => {
     // error string rather than crashing, so the text lands in this same branch.
     // Confirming it drops the claimed batch permanently — the reporter lost 882
     // observations over six days that way.
-    it('requeues the claimed batch when the response is the child transport failure', async () => {
+    it.each(['xml', 'json-observation', 'json-summary'] as const)('requeues the claimed batch when the response is the child transport failure (%s)', async format => {
       const confirmClaimedMessages = mock(() => Promise.resolve(0));
       const resetProcessingToPending = mock(() => Promise.resolve(0));
       mockSessionManager = {
@@ -890,7 +950,7 @@ describe('ResponseProcessor', () => {
         mockWorker,
         100,
         null,
-        'TestAgent'
+        'TestAgent', undefined, undefined, responseOptions(format, responseText)
       );
 
       expect(resetProcessingToPending).toHaveBeenCalledWith(1);
@@ -1035,7 +1095,7 @@ describe('ResponseProcessor', () => {
       return { resetProcessingToPending, confirmClaimedMessages };
     }
 
-    it('recycles the conversation and preserves the batch instead of dropping it', async () => {
+    it.each(['xml', 'json-observation', 'json-summary'] as const)('recycles the conversation and preserves the batch instead of dropping it (%s)', async format => {
       const { resetProcessingToPending, confirmClaimedMessages } = overflowSessionManager();
       const session = createMockSession({
         conversationHistory: [
@@ -1048,7 +1108,7 @@ describe('ResponseProcessor', () => {
 
       await processAgentResponse(
         'Prompt is too long', session, mockDbManager, mockSessionManager, mockWorker,
-        100, null, 'TestAgent'
+        100, null, 'TestAgent', undefined, undefined, responseOptions(format, 'Prompt is too long')
       );
 
       // The batch is preserved for a fresh generator, never confirmed away.
@@ -1077,7 +1137,7 @@ describe('ResponseProcessor', () => {
       expect(session.conversationHistory.some(m => m.content.includes('too long'))).toBe(false);
     });
 
-    it('pauses the session once recycling has failed repeatedly, rather than retrying forever', async () => {
+    it.each(['xml', 'json-observation', 'json-summary'] as const)('pauses the session once recycling has failed repeatedly, rather than retrying forever (%s)', async format => {
       const { resetProcessingToPending, confirmClaimedMessages } = overflowSessionManager();
       // Two recycles already spent; a fresh generation carries only the framing
       // prompt, the session-so-far block and one field-truncated observation, so
@@ -1086,7 +1146,7 @@ describe('ResponseProcessor', () => {
 
       await processAgentResponse(
         'Prompt is too long', session, mockDbManager, mockSessionManager, mockWorker,
-        100, null, 'TestAgent'
+        100, null, 'TestAgent', undefined, undefined, responseOptions(format, 'Prompt is too long')
       );
 
       expect(session.abortReason).toBe('overflow:exhausted');
@@ -1709,7 +1769,7 @@ describe('ResponseProcessor', () => {
     // End to end over the branch the matcher gates: the CLI's signed-out
     // wording must reach the auth branch (reset to pending + abort) instead of
     // the prose fallback, which confirms the claim and loses the work.
-    it('resets the batch to pending instead of confirming it', async () => {
+    it.each(['xml', 'json-observation', 'json-summary'] as const)('resets the batch to pending instead of confirming it (%s)', async format => {
       const confirmClaimedMessages = mock(() => Promise.resolve(0));
       const resetProcessingToPending = mock(() => Promise.resolve(1));
       mockSessionManager = {
@@ -1727,7 +1787,7 @@ describe('ResponseProcessor', () => {
         mockWorker,
         100,
         null,
-        'TestAgent'
+        'TestAgent', undefined, undefined, responseOptions(format, 'Not logged in · Please run /login')
       );
 
       expect(resetProcessingToPending).toHaveBeenCalledWith(1);

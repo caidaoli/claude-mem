@@ -120,6 +120,8 @@ export interface Settings {
   // Custom Provider Configuration
   CLAUDE_MEM_CUSTOM_API_URL?: string;
   CLAUDE_MEM_CUSTOM_API_KEY?: string;
+  CLAUDE_MEM_CUSTOM_API_KEYS?: string;
+  CLAUDE_MEM_CUSTOM_REASONING?: string;
   CLAUDE_MEM_CUSTOM_MODEL?: string;
   CLAUDE_MEM_CUSTOM_PROTOCOL?: string;  // 'openai' | 'gemini' | 'codex'
   CLAUDE_MEM_CUSTOM_STREAMING?: string;  // 'true' | 'false'

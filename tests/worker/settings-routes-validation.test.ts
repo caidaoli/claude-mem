@@ -8,6 +8,21 @@ type SettingsValidator = {
   validateSettings(settings: Record<string, string>): { valid: boolean; error?: string };
 };
 
+describe('SettingsRoutes Custom reasoning validation', () => {
+  it('accepts on and off and rejects other values', () => {
+    const routes = new SettingsRoutes({} as SettingsManager) as unknown as SettingsValidator;
+    for (const value of ['off', 'on']) {
+      expect(routes.validateSettings({ CLAUDE_MEM_CUSTOM_REASONING: value }).valid).toBe(true);
+    }
+    for (const value of ['', 'auto', 'true']) {
+      expect(routes.validateSettings({ CLAUDE_MEM_CUSTOM_REASONING: value })).toEqual({
+        valid: false,
+        error: 'CLAUDE_MEM_CUSTOM_REASONING must be "off" (default) or "on"',
+      });
+    }
+  });
+});
+
 describe('SettingsRoutes OpenRouter base URL validation', () => {
   it('rejects non-HTTP(S) custom OpenRouter base URLs', () => {
     const routes = new SettingsRoutes({} as SettingsManager) as unknown as SettingsValidator;

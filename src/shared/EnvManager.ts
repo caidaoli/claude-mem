@@ -96,6 +96,7 @@ export interface ClaudeMemEnv {
   OPENAI_COMPAT_API_KEY?: string;
   OPENAI_COMPAT_API_KEYS?: string;
   CUSTOM_API_KEY?: string;
+  CUSTOM_API_KEYS?: string;
 }
 
 /**
@@ -123,6 +124,7 @@ const CREDENTIAL_KEYS = [
   'OPENAI_COMPAT_API_KEY',
   'OPENAI_COMPAT_API_KEYS',
   'CUSTOM_API_KEY',
+  'CUSTOM_API_KEYS',
 ] as const;
 
 // Node's stdlib .env parser (util.parseEnv, Node ≥20.12 / stable in 24):

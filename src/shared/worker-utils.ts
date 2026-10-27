@@ -165,6 +165,8 @@ export interface IdleTimeoutOptions {
   idleTimeoutMs: number;
   /** Optional hard ceiling for the whole exchange (only where a host imposes one). */
   absoluteCapMs?: number;
+  /** Optional deadline from send until the first non-empty body chunk; headers do not satisfy it. */
+  firstChunkTimeoutMs?: number;
   /** Called for every body chunk as it arrives (liveness / progress). */
   onChunk?: (chunk: Uint8Array) => void;
 }
@@ -197,6 +199,7 @@ function createIdleWatchdog(options: IdleTimeoutOptions, callerSignal: AbortSign
   let timeoutError: Error | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   let capTimer: ReturnType<typeof setTimeout> | null = null;
+  let firstChunkTimer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
 
   const clearIdle = () => {
@@ -206,6 +209,7 @@ function createIdleWatchdog(options: IdleTimeoutOptions, callerSignal: AbortSign
     disposed = true;
     clearIdle();
     if (capTimer !== null) { clearTimeout(capTimer); capTimer = null; }
+    if (firstChunkTimer !== null) { clearTimeout(firstChunkTimer); firstChunkTimer = null; }
   };
   const trip = (error: Error) => {
     if (disposed) return;
@@ -226,11 +230,18 @@ function createIdleWatchdog(options: IdleTimeoutOptions, callerSignal: AbortSign
     const absoluteCapMs = options.absoluteCapMs;
     capTimer = setTimeout(() => trip(new Error(`Request timed out after ${absoluteCapMs}ms`)), absoluteCapMs);
   }
+  if (options.firstChunkTimeoutMs !== undefined && options.firstChunkTimeoutMs > 0) {
+    const firstChunkTimeoutMs = options.firstChunkTimeoutMs;
+    firstChunkTimer = setTimeout(() => trip(new Error(`Request timed out after ${firstChunkTimeoutMs}ms waiting for the first body chunk`)), firstChunkTimeoutMs);
+  }
   touch();
 
   return {
     signal: callerSignal ? AbortSignal.any([callerSignal, controller.signal]) : controller.signal,
     touch,
+    firstChunk: () => {
+      if (firstChunkTimer !== null) { clearTimeout(firstChunkTimer); firstChunkTimer = null; }
+    },
     pause: clearIdle,
     dispose,
     /** Our timeout error if the watchdog fired, otherwise the original error. */
@@ -275,6 +286,7 @@ export async function fetchStreamWithIdleTimeout(
         }
         if (result.done) { bodyFinished = true; return; }
         watchdog.pause();
+        if (result.value.byteLength > 0) watchdog.firstChunk();
         options.onChunk?.(result.value);
         yield result.value;
       }

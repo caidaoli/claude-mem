@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
+import { readFileSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { paths } from '../../src/shared/paths.js';
 import {
+  API_KEY_COOLDOWN_FILENAME,
   buildKeyPool,
   KEY_ROTATE_KINDS,
   resolvePoolKeys,
@@ -140,9 +144,24 @@ describe('cooldown bookkeeping', () => {
     expect(keyCooldownRemainingMs('gemini', 'k1')).toBe(0);
   });
 
+  it('persists and restores Custom cooldowns without storing credentials', () => {
+    markKeyCooldown('custom', 'custom-secret-key', 'quota_exhausted');
+    const file = join(paths.dataDir(), API_KEY_COOLDOWN_FILENAME);
+    const persisted = readFileSync(file, 'utf-8');
+    expect(persisted).not.toContain('custom-secret-key');
+    expect(JSON.parse(persisted).pools.custom).toHaveLength(1);
+    resetKeyPoolStateForTesting();
+    writeFileSync(file, persisted);
+    expect(keyCooldownRemainingMs('custom', 'custom-secret-key')).toBeGreaterThan(0);
+    expect(keyCooldownRemainingMs('openai-compatible', 'custom-secret-key')).toBe(0);
+  });
+
   it('keeps pools independent', () => {
     markKeyCooldown('gemini', 'shared-key', 'quota_exhausted');
     expect(keyCooldownRemainingMs('openrouter', 'shared-key')).toBe(0);
+    markKeyCooldown('custom', 'shared-key', 'quota_exhausted');
+    expect(keyCooldownRemainingMs('custom', 'shared-key')).toBeGreaterThan(0);
+    expect(keyCooldownRemainingMs('openai-compatible', 'shared-key')).toBe(0);
   });
 });
 

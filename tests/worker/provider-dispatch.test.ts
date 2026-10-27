@@ -55,6 +55,7 @@ const ENV_KEYS = [
   'CLAUDE_MEM_GEMINI_API_KEY',
   'CLAUDE_MEM_CUSTOM_API_URL',
   'CLAUDE_MEM_CUSTOM_API_KEY',
+  'CLAUDE_MEM_CUSTOM_API_KEYS',
   'CUSTOM_API_KEY',
   'CMEM_PRO_ORIGIN',
   'CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER',
@@ -480,6 +481,22 @@ describe('provider-dispatch', () => {
         expect(getSelectedProvider()).toBe(provider);
       }
       expect(quotaFallbackLines()).toEqual([]);
+    });
+
+    it('routes a holding primary to Custom only while Custom is available and not held', () => {
+      pinGeminiPrimary('custom', {
+        CLAUDE_MEM_CUSTOM_API_URL: 'https://custom.example.test/v1',
+        CLAUDE_MEM_CUSTOM_API_KEY: 'custom-fallback-key',
+      });
+      recordQuotaExhausted('gemini', 'Daily limit reached');
+      expect(selectProviderForGenerator()).toEqual({ provider: 'custom', gatewayProbeClaimId: null, fallbackFrom: 'gemini' });
+      expect(getSelectedProvider()).toBe('custom');
+      expect(quotaFallbackTarget('custom')).toBeNull();
+      recordQuotaExhausted('custom', 'Custom quota spent');
+      expect(quotaFallbackTarget('gemini')).toBeNull();
+      clearQuotaCooldown('custom');
+      process.env.CLAUDE_MEM_CUSTOM_API_URL = '';
+      expect(quotaFallbackTarget('gemini')).toBeNull();
     });
 
     it('routes a holding primary to the fallback, naming what it stands in for', () => {

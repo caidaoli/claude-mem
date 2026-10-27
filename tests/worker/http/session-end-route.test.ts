@@ -59,7 +59,7 @@ function makeRoutes(findSessionDbIdByContentSessionId: ReturnType<typeof mock>, 
 }
 
 describe('SessionEnd route', () => {
-  it.each(['claude', 'gemini', 'openrouter'] as const)('formats through the active %s summary provider and model', async provider => {
+  it.each(['claude', 'gemini', 'openrouter', 'custom'] as const)('formats through the active %s summary provider and model', async provider => {
     let formatter!: TelegramWrapupFormatter;
     const input: TelegramWrapupFormatterInput = {
       sessionDbId: 42, contentSessionId: 'session', project: 'project', platformSource: 'claude', summaryText: 'whole summary',
@@ -68,12 +68,13 @@ describe('SessionEnd route', () => {
       claude: { formatTelegramWrapup: mock(async () => '• Claude summary') },
       gemini: { formatTelegramWrapup: mock(async () => '• Gemini summary') },
       openrouter: { formatTelegramWrapup: mock(async () => '• OpenRouter summary') },
+      custom: { formatTelegramWrapup: mock(async () => '• Custom summary') },
     };
     const selection = spyOn(providerDispatch, 'selectProviderForGenerator');
     new SessionRoutes({
       getSession: () => ({ currentProvider: provider, lastModelId: 'active-model' }),
       setTelegramWrapupFormatter: (value: TelegramWrapupFormatter) => { formatter = value; },
-    } as any, {} as any, agents.claude as any, agents.gemini as any, agents.openrouter as any, {} as any, {} as any, {} as any);
+    } as any, {} as any, agents.claude as any, agents.gemini as any, agents.openrouter as any, {} as any, {} as any, {} as any, undefined, undefined, agents.custom as any);
 
     await formatter(input);
 
@@ -82,6 +83,20 @@ describe('SessionEnd route', () => {
     for (const [name, agent] of Object.entries(agents)) {
       if (name !== provider) expect(agent.formatTelegramWrapup).not.toHaveBeenCalled();
     }
+  });
+
+  it('reports an unavailable Custom formatter without calling Claude', async () => {
+    let formatter!: TelegramWrapupFormatter;
+    const claudeFormatter = mock(async () => 'Wrong provider');
+    new SessionRoutes({
+      getSession: () => ({ currentProvider: 'custom', lastModelId: 'custom-model' }),
+      setTelegramWrapupFormatter: (value: TelegramWrapupFormatter) => { formatter = value; },
+    } as any, {} as any, { formatTelegramWrapup: claudeFormatter } as any, {} as any,
+    {} as any, {} as any, {} as any, {} as any);
+    await expect(formatter({
+      sessionDbId: 42, contentSessionId: 'session', project: 'project', platformSource: 'claude', summaryText: 'summary',
+    })).rejects.toThrow('Custom provider is not available');
+    expect(claudeFormatter).not.toHaveBeenCalled();
   });
 
   it.each([false, true])('uses normal provider dispatch for a replay and releases the probe (failure: %s)', async fail => {

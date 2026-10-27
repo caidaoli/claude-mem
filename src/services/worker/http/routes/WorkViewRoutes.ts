@@ -9,6 +9,8 @@ import { Database } from 'bun:sqlite';
 import { CLAUDE_CONFIG_DIR, DATA_DIR, DB_PATH, getPackageRoot, USER_SETTINGS_PATH } from '../../../../shared/paths.js';
 import { onContextInvalidation } from '../../../../shared/context-invalidation.js';
 import { SettingsDefaultsManager } from '../../../../shared/SettingsDefaultsManager.js';
+import { isCustomAvailable } from '../../CustomAgent.js';
+import { isOpenAICompatAvailable } from '../../OpenAICompatProvider.js';
 import { resolveOpenRouterChatCompletionsUrl } from '../../../../shared/openrouter-base-url.js';
 import { logger } from '../../../../utils/logger.js';
 import { hasForwardedClientHeaders, hasLoopbackHostHeader, isLocalhost } from '../../../../server/middleware/request-auth-helpers.js';
@@ -131,6 +133,7 @@ interface WorkViewOptions {
   pollIntervalMs?: number;
   getLocalDeviceId?: () => string;
   humanCopy?: HumanCopyWorker | null;
+  humanCopyProviders?: HumanCopyGenerators;
   /** Runs owner-goals and request-progress when something is due. Omitted: on for the default ledger only. */
   autoRefresh?: AutoRefreshWorker | null;
   /** Overall-request ledger written by the request-progress skill; null disables it. */
@@ -182,11 +185,17 @@ const setupCompleteBody = z.object({
 const setupImportBody = z.object({}).strict();
 
 type HumanCopyProvider = ReturnType<typeof chatCompletionsHumanCopyProvider>;
+type HumanCopyGenerators = Partial<Record<'custom' | 'openai-compatible', { generateHumanCopy: HumanCopyProvider }>>;
 
 /** Readable request summaries use the observer endpoint the user already
  * configured. Other providers keep the recorded wording. */
-export function configuredHumanCopyProvider(settingsPath = USER_SETTINGS_PATH): HumanCopyProvider | null {
+export function configuredHumanCopyProvider(settingsPath = USER_SETTINGS_PATH, providers: HumanCopyGenerators = {}): HumanCopyProvider | null {
   const settings = SettingsDefaultsManager.loadFromFile(settingsPath, true, { readOnly: true });
+  if (settings.CLAUDE_MEM_PROVIDER === 'custom' || settings.CLAUDE_MEM_PROVIDER === 'openai-compatible') {
+    const provider = providers[settings.CLAUDE_MEM_PROVIDER];
+    const available = settings.CLAUDE_MEM_PROVIDER === 'custom' ? isCustomAvailable(settingsPath) : isOpenAICompatAvailable(settingsPath);
+    return provider && available ? provider.generateHumanCopy.bind(provider) : null;
+  }
   const apiKey = settings.CLAUDE_MEM_OPENROUTER_API_KEY?.trim();
   if (settings.CLAUDE_MEM_PROVIDER !== 'openrouter' || !apiKey) return null;
   return chatCompletionsHumanCopyProvider({
@@ -259,7 +268,7 @@ export class WorkViewRoutes extends BaseRouteHandler {
     });
     this.reviews = new LocalReviewStore(options.reviewPath ?? join(DATA_DIR, 'work-view-reviews.db'));
     this.humanCopy = options.humanCopy === undefined
-      ? new HumanCopyWorker({ provider: configuredHumanCopyProvider(), cachePath: join(DATA_DIR, 'work-view', 'human-copy.json') })
+      ? new HumanCopyWorker({ provider: configuredHumanCopyProvider(options.settingsPath, options.humanCopyProviders), cachePath: join(DATA_DIR, 'work-view', 'human-copy.json') })
       : options.humanCopy;
     this.humanCopy?.pauseWhile(() => this.setupIsActive());
     if (this.humanCopy) void this.humanCopy.load().then(() => this.humanCopy?.start());

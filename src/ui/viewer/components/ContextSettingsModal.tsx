@@ -701,6 +701,29 @@ export function ContextSettingsModal({
                     />
                   </FormField>
                   <FormField
+                    label={t.settings.customApiKeys}
+                    tooltip={t.settings.customApiKeysTooltip}
+                  >
+                    <input
+                      type="password"
+                      value={formState.CLAUDE_MEM_CUSTOM_API_KEYS || ''}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_CUSTOM_API_KEYS', e.target.value)}
+                      placeholder={t.settings.enterApiKey}
+                    />
+                  </FormField>
+                  <FormField
+                    label={t.settings.compatReasoning}
+                    tooltip={t.settings.customReasoningTooltip}
+                  >
+                    <select
+                      value={formState.CLAUDE_MEM_CUSTOM_REASONING || 'off'}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_CUSTOM_REASONING', e.target.value)}
+                    >
+                      <option value="off">{t.settings.reasoningOffDefault}</option>
+                      <option value="on">{t.settings.compatReasoningOn}</option>
+                    </select>
+                  </FormField>
+                  <FormField
                     label={t.settings.model}
                     tooltip={t.settings.modelTooltip}
                   >
@@ -859,6 +882,7 @@ export function ContextSettingsModal({
                   <option value="gemini">{t.settings.geminiOption}</option>
                   <option value="openrouter">{t.settings.openrouterOption}</option>
                   <option value="openai-compatible">{t.settings.quotaFallbackOpenaiCompat}</option>
+                  <option value="custom">{t.settings.customOption}</option>
                 </select>
               </FormField>
 

@@ -690,19 +690,24 @@ function stripFieldWrapper(value: string): string {
  * }
  */
 export function parseObservationsJson(text: string, correlationId?: string): ParsedObservation[] {
+  const parsed = parseObservationsJsonResult(text, correlationId);
+  return parsed.valid ? parsed.observations : [];
+}
+
+/** Distinguish an explicit JSON skip from an unusable reply before acknowledging queued work. */
+export function parseObservationsJsonResult(text: string, correlationId?: string): ParseResult {
   const jsonText = preprocessJsonResponse(text, true);
   const trimmed = jsonText.trim();
 
-  // JSON observation mode is allowed to "skip" by returning no JSON at all.
-  // Many models/proxies will still emit a short plain-text explanation despite prompt instructions.
-  // Treat responses with no JSON payload as a skip (parity with XML parsing: no <observation> tags => no observations).
+  // Plain text and empty replies must pass through the shared output recovery
+  // path. Only an explicit JSON skip or an empty JSON container acknowledges work.
   if (!trimmed.includes('{') && !trimmed.includes('[')) {
-    logger.debug('PARSER', 'Non-JSON response in JSON observation mode - treated as skip', {
+    logger.debug('PARSER', 'Non-JSON response in JSON observation mode', {
       correlationId,
       textLength: text.length,
       textPreview: text.substring(0, 200)
     });
-    return [];
+    return { valid: false };
   }
 
   try {
@@ -713,9 +718,11 @@ export function parseObservationsJson(text: string, correlationId?: string): Par
       const obj = data as Record<string, unknown>;
       if (obj.skip === true) {
         logger.debug('PARSER', 'JSON observation skipped via sentinel', { correlationId });
-        return [];
+        return { valid: true, observations: [], summary: null };
       }
     }
+
+    if (typeof data !== 'object' || data === null) return { valid: false };
 
     // Handle array of observations or single observation
     let rawObservations: unknown[];
@@ -729,13 +736,13 @@ export function parseObservationsJson(text: string, correlationId?: string): Par
     } else {
       if (typeof data === 'object' && data !== null && Object.keys(data).length === 0) {
         logger.debug('PARSER', 'JSON observation skipped via empty object', { correlationId });
-        return [];
+        return { valid: true, observations: [], summary: null };
       }
       logger.warn('PARSER', 'JSON response has no observations', {
         correlationId,
         keys: Object.keys(data)
       });
-      return [];
+      return { valid: false };
     }
 
     const mode = ModeManager.getInstance().getActiveMode();
@@ -787,7 +794,9 @@ export function parseObservationsJson(text: string, correlationId?: string): Par
       });
     }
 
-    return observations;
+    return observations.length > 0 || rawObservations.length === 0
+      ? { valid: true, observations, summary: null }
+      : { valid: false };
   } catch (error) {
     const trimmedRaw = text.trim();
     const errorMsg = error instanceof Error ? error.message : String(error);
@@ -803,7 +812,7 @@ export function parseObservationsJson(text: string, correlationId?: string): Par
       correlationId,
       textLength: text.length
     }, data);
-    return [];
+    return { valid: false };
   }
 }
 

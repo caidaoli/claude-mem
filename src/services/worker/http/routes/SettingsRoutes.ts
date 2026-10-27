@@ -43,6 +43,7 @@ const SECRET_SETTING_KEYS = new Set([
   'CLAUDE_MEM_OPENAI_COMPAT_API_KEY',
   'CLAUDE_MEM_OPENAI_COMPAT_API_KEYS',
   'CLAUDE_MEM_CUSTOM_API_KEY',
+  'CLAUDE_MEM_CUSTOM_API_KEYS',
   'CLAUDE_MEM_CHROMA_API_KEY',
   'CLAUDE_MEM_CLOUD_SYNC_TOKEN',
   'CLAUDE_MEM_TELEGRAM_BOT_TOKEN',
@@ -268,6 +269,8 @@ export class SettingsRoutes extends BaseRouteHandler {
       'CLAUDE_MEM_OPENROUTER_APP_NAME',
       'CLAUDE_MEM_CUSTOM_API_URL',
       'CLAUDE_MEM_CUSTOM_API_KEY',
+      'CLAUDE_MEM_CUSTOM_API_KEYS',
+      'CLAUDE_MEM_CUSTOM_REASONING',
       'CLAUDE_MEM_CUSTOM_MODEL',
       'CLAUDE_MEM_CUSTOM_PROTOCOL',
       'CLAUDE_MEM_CUSTOM_STREAMING',
@@ -404,9 +407,9 @@ export class SettingsRoutes extends BaseRouteHandler {
     // Empty is valid: it means the default, the Anthropic plan. 'off' turns it off.
     if (settings.CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER) {
       // The names provider-dispatch's QUOTA_FALLBACK_PROVIDERS accepts, plus QUOTA_FALLBACK_OFF.
-      const validFallbacks = ['claude', 'gemini', 'openrouter', 'openai-compatible', 'off'];
+      const validFallbacks = ['claude', 'gemini', 'openrouter', 'openai-compatible', 'custom', 'off'];
       if (!validFallbacks.includes(settings.CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER)) {
-        return { valid: false, error: 'CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER must be "claude" (or empty, the default), "gemini", "openrouter", "openai-compatible", or "off"' };
+        return { valid: false, error: 'CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER must be "claude" (or empty, the default), "gemini", "openrouter", "openai-compatible", "custom", or "off"' };
       }
     }
 
@@ -415,6 +418,11 @@ export class SettingsRoutes extends BaseRouteHandler {
       if (!validProtocols.includes(settings.CLAUDE_MEM_CUSTOM_PROTOCOL)) {
         return { valid: false, error: 'CLAUDE_MEM_CUSTOM_PROTOCOL must be "openai", "gemini", or "codex"' };
       }
+    }
+
+    if (settings.CLAUDE_MEM_CUSTOM_REASONING !== undefined
+      && !['off', 'on'].includes(settings.CLAUDE_MEM_CUSTOM_REASONING)) {
+      return { valid: false, error: 'CLAUDE_MEM_CUSTOM_REASONING must be "off" (default) or "on"' };
     }
 
     const customNumericRanges: Array<{ key: string; min: number; max: number }> = [

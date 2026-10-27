@@ -6,8 +6,9 @@
  * reported as "Claude Code OAuth token".
  */
 
+import { buildKeyPool } from '../../shared/api-key-pool.js';
 import { isCmemGatewayUrl } from '../../shared/cmem-gateway.js';
-import { getAuthMethodDescription } from '../../shared/EnvManager.js';
+import { getAuthMethodDescription, getCredential } from '../../shared/EnvManager.js';
 import { resolveOpenAICompatPreset } from '../../shared/openai-compat-presets.js';
 import { USER_SETTINGS_PATH } from '../../shared/paths.js';
 import { SettingsDefaultsManager, type SettingsDefaults } from '../../shared/SettingsDefaultsManager.js';
@@ -37,6 +38,11 @@ export function describeObserverAuthMethod(provider: string, settings?: Settings
     ? ''
     : String(SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH, false).CLAUDE_MEM_OPENROUTER_BASE_URL ?? '');
   switch (provider) {
+    case 'custom':
+      return buildKeyPool(
+        resolved.CLAUDE_MEM_CUSTOM_API_KEY?.trim() || getCredential('CUSTOM_API_KEY')?.trim() || '',
+        resolved.CLAUDE_MEM_CUSTOM_API_KEYS || getCredential('CUSTOM_API_KEYS'),
+      ).length > 0 ? 'Custom API key' : 'Custom endpoint (no API key)';
     case 'codex':
       return 'Codex CLI subscription';
     case 'gemini':

@@ -16,6 +16,7 @@ import { getSelectedProvider } from '../../src/services/worker/provider-dispatch
 import { SettingsRoutes } from '../../src/services/worker/http/routes/SettingsRoutes.js';
 import { SessionRoutes } from '../../src/services/worker/http/routes/SessionRoutes.js';
 import { SettingsDefaultsManager } from '../../src/shared/SettingsDefaultsManager.js';
+import * as EnvManager from '../../src/shared/EnvManager.js';
 import { logger } from '../../src/utils/logger.js';
 import type { ConversationMessage } from '../../src/services/worker-types.js';
 
@@ -686,6 +687,91 @@ describe('openai-compatible requests follow the shared observer contract', () =>
       fieldCompressionMaxOutputTokens(): number | undefined;
     };
     expect(provider.fieldCompressionMaxOutputTokens()).toBe(3200);
+  });
+
+  describe('standalone human copy', () => {
+    const input = { original: { text: 'Fix checkout failures' }, workstreams: [{ id: 'checkout' }] };
+    const output = { title: 'Fix checkout', summary: 'Investigating checkout failures.', next: '', stage: '', workstreams: [{ id: 'checkout', title: 'Checkout', summary: 'Tracking failed payments.' }] };
+    const generate = () => new OpenAICompatProvider({} as never, {} as never).generateHumanCopy(input);
+
+    beforeEach(() => {
+      Object.assign(settingsOverrides, {
+        CLAUDE_MEM_OPENAI_COMPAT_PRESET: 'nvidia-nim',
+        CLAUDE_MEM_OPENAI_COMPAT_API_KEY: 'nvapi-fixture',
+        CLAUDE_MEM_OPENAI_COMPAT_API_KEYS: '',
+        CLAUDE_MEM_OPENAI_COMPAT_BASE_URL: '',
+        CLAUDE_MEM_OPENAI_COMPAT_MODEL: '',
+        CLAUDE_MEM_TIER_ROUTING_ENABLED: 'false',
+      });
+      spies.push(spyOn(EnvManager, 'getCredential').mockReturnValue(undefined));
+    });
+
+    it('uses the configured preset and only a standalone system/user exchange', async () => {
+      const fetchSpy = spyOn(globalThis, 'fetch').mockResolvedValue(reply({
+        model: 'served-summary', id: 'response-123', choices: [{ message: { content: JSON.stringify(output) }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
+      }));
+      spies.push(fetchSpy);
+
+      expect(await generate()).toEqual({ output, usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 }, model: 'served-summary', responseId: null, error: null });
+      expect(fetchSpy.mock.calls).toHaveLength(1);
+      expect(String(fetchSpy.mock.calls[0][0])).toBe(`${NIM_BASE}/chat/completions`);
+      const options = fetchSpy.mock.calls[0][1] as RequestInit;
+      expect(new Headers(options.headers).get('Authorization')).toBe('Bearer nvapi-fixture');
+      expect(new Headers(options.headers).get('x-opencode-session')).toBeNull();
+      const [body] = sentBodies(fetchSpy);
+      expect(body.model).toBe(resolveOpenAICompatPreset('nvidia-nim').defaultModel);
+      expect(body.messages.map((message: any) => message.role)).toEqual(['system', 'user']);
+      expect(body.messages[0].content).toContain('JSON object');
+      expect(JSON.parse(body.messages[1].content)).toEqual(input);
+    });
+
+    it('allows a keyless local endpoint and routes human copy to the summary-tier model', async () => {
+      Object.assign(settingsOverrides, {
+        CLAUDE_MEM_OPENAI_COMPAT_PRESET: 'ollama', CLAUDE_MEM_OPENAI_COMPAT_API_KEY: '',
+        CLAUDE_MEM_OPENAI_COMPAT_MODEL: 'local-observer', CLAUDE_MEM_TIER_ROUTING_ENABLED: 'true',
+        CLAUDE_MEM_TIER_SUMMARY_MODEL: 'local-summary',
+      });
+      const fetchSpy = spyOn(globalThis, 'fetch').mockResolvedValue(reply({ choices: [{ message: { content: JSON.stringify(output) } }] }));
+      spies.push(fetchSpy);
+
+      expect(await generate()).toEqual({ output, usage: null, model: 'local-summary', responseId: null, error: null });
+      expect(String(fetchSpy.mock.calls[0][0])).toBe('http://localhost:11434/v1/chat/completions');
+      expect(new Headers((fetchSpy.mock.calls[0][1] as RequestInit).headers).get('Authorization')).toBeNull();
+      expect(sentBodies(fetchSpy)[0].model).toBe('local-summary');
+    });
+
+    it('sends a stable request-specific session header only when the preset requires it', async () => {
+      settingsOverrides.CLAUDE_MEM_OPENAI_COMPAT_PRESET = 'opencode-go';
+      const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async () => reply({ choices: [{ message: { content: JSON.stringify(output) } }] }));
+      spies.push(fetchSpy);
+      await generate();
+      await generate();
+      await new OpenAICompatProvider({} as never, {} as never).generateHumanCopy({ ...input, original: { text: 'A different request' } });
+
+      const sessionHeaders = fetchSpy.mock.calls.map(call => new Headers((call[1] as RequestInit).headers).get('x-opencode-session'));
+      expect(sessionHeaders[0]).toBeTruthy();
+      expect(sessionHeaders[1]).toBe(sessionHeaders[0]);
+      expect(sessionHeaders[2]).not.toBe(sessionHeaders[0]);
+      expect(String(fetchSpy.mock.calls[0][0])).toBe('https://opencode.ai/zen/go/v1/chat/completions');
+    });
+
+    for (const content of ['not valid JSON', '']) it(`preserves measured usage when the reply is ${content ? 'invalid JSON' : 'empty'}`, async () => {
+      spies.push(spyOn(globalThis, 'fetch').mockResolvedValue(reply({
+        choices: [{ message: { content }, finish_reason: 'stop' }], usage: { total_tokens: 9 },
+      })));
+      const result = await generate();
+      expect(result.output).toBeNull();
+      expect(result.usage).toEqual({ total_tokens: 9 });
+      expect(result.error).toBe(content ? 'Invalid summary JSON.' : 'No answer text (finish: stop).');
+    });
+
+    it('propagates upstream failures without starting an observer session', async () => {
+      const fetchSpy = spyOn(globalThis, 'fetch').mockResolvedValue(reply({ error: { message: 'Invalid API key' } }, 401));
+      spies.push(fetchSpy);
+      await expect(generate()).rejects.toMatchObject({ kind: 'auth_invalid' });
+      expect(fetchSpy.mock.calls).toHaveLength(1);
+    });
   });
 });
 

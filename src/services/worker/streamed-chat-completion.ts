@@ -111,6 +111,7 @@ function withoutStreamingFields(body: Record<string, unknown>): Record<string, u
 export interface StreamLiveness {
   idleTimeoutMs: number;
   absoluteCapMs: number;
+  firstChunkTimeoutMs?: number;
 }
 
 /**
@@ -145,6 +146,10 @@ export interface ChatCompletionRequest {
    * query, so every attempt of one withRetry loop is bounded the same way.
    */
   liveness: StreamLiveness | null;
+  /** Explicitly keep a plain request while retaining caller-owned body deadlines. */
+  stream?: boolean;
+  /** Plain fallback deadline when this caller owns the attempt deadline. */
+  nonStreamTimeoutMs?: number;
   /** Names the provider in error messages. */
   label: string;
   /** The provider's classifier, for HTTP errors, network errors and in-stream error objects. */
@@ -184,6 +189,7 @@ interface StreamChunk {
   error?: { code?: unknown; message?: unknown } | null;
   choices?: Array<{
     delta?: { content?: unknown; reasoning?: unknown; reasoning_content?: unknown; tool_calls?: unknown } | null;
+    message?: { content?: unknown } | null;
     finish_reason?: unknown;
   }>;
 }
@@ -250,7 +256,9 @@ async function openExchange(
     if (request.liveness) {
       const liveness = streamThisSend
         ? request.liveness
-        : { idleTimeoutMs: request.liveness.absoluteCapMs, absoluteCapMs: request.liveness.absoluteCapMs };
+        : { ...request.liveness,
+          idleTimeoutMs: request.nonStreamTimeoutMs ?? request.liveness.absoluteCapMs,
+          absoluteCapMs: request.nonStreamTimeoutMs ?? request.liveness.absoluteCapMs };
       return await fetchStreamWithIdleTimeout(request.url, init, liveness);
     }
     // Called on globalThis, so a runtime whose fetch needs its receiver gets it.
@@ -278,6 +286,38 @@ async function readBodyText(chunks: AsyncIterable<Uint8Array>, maxBytes: number)
   return text + decoder.decode();
 }
 
+/** Gateways sometimes forward SSE bytes while dropping or replacing Content-Type. */
+async function sniffExchange(opened: OpenedExchange): Promise<{ opened: OpenedExchange; sse: boolean }> {
+  if (isEventStream(opened.headers)) return { opened, sse: true };
+  const iterator = opened.chunks[Symbol.asyncIterator]();
+  const leading: Uint8Array[] = [];
+  const decoder = new TextDecoder();
+  let prefix = '';
+  let done = false;
+  try {
+    while (prefix.trim().length < 6) {
+      const part = await iterator.next();
+      if (part.done) { done = true; break; }
+      leading.push(part.value);
+      prefix += decoder.decode(part.value, { stream: true });
+    }
+  } catch (error) {
+    await iterator.return?.();
+    throw error;
+  }
+  const chunks = (async function* () {
+    try {
+      yield* leading;
+      if (!done) while (true) {
+        const part = await iterator.next();
+        if (part.done) break;
+        yield part.value;
+      }
+    } finally { await iterator.return?.(); }
+  })();
+  return { opened: { ...opened, chunks }, sse: /^\s*(?:data:|event:|id:|retry:|:)/.test(prefix) };
+}
+
 /**
  * POST a chat-completions request and return its reply in the non-streamed
  * shape. Resends once with `max_completion_tokens` when the endpoint refuses
@@ -292,12 +332,23 @@ export async function sendChatCompletion(request: ChatCompletionRequest): Promis
     { ...bodyWithoutCap, max_completion_tokens: request.maxOutputTokens },
   ];
   // Re-read per send: another query may have learned the endpoint refuses streaming.
-  let streamThisSend = request.liveness !== null && streamsChatCompletion(request.url);
+  let streamThisSend = request.liveness !== null && request.stream !== false && streamsChatCompletion(request.url);
 
   for (let bodyIndex = 0; bodyIndex < bodies.length; bodyIndex++) {
     const body = streamThisSend ? bodies[bodyIndex] : withoutStreamingFields(bodies[bodyIndex]);
-    const opened = await openExchange(request, body, streamThisSend);
-    if (opened.ok && isEventStream(opened.headers)) {
+    let opened = await openExchange(request, body, streamThisSend);
+    let sse = false;
+    if (opened.ok) {
+      try {
+        const sniffed = await sniffExchange(opened);
+        opened = sniffed.opened;
+        sse = sniffed.sse;
+      } catch (error) {
+        if (request.signal.aborted) throw error;
+        throw outputFailure(`${request.label} response body could not be read: ${asError(error).message}`, error);
+      }
+    }
+    if (opened.ok && sse) {
       return { status: opened.status, headers: opened.headers, body: { ...await assembleStream(opened, request) }, streamed: true };
     }
 
@@ -416,7 +467,7 @@ async function assembleStream(opened: OpenedExchange, request: ChatCompletionReq
       const choice = Array.isArray(chunk.choices) ? chunk.choices[0] : undefined;
       if (!choice) continue;
       const delta = choice.delta ?? undefined;
-      const text = deltaText(delta?.content);
+      const text = deltaText(delta?.content ?? choice.message?.content);
       content += text;
       // Reasoning and tool-call deltas are billed output too: once any arrived,
       // a resend would pay for them again.

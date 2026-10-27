@@ -13,6 +13,7 @@ import { resolveOpenAICompatPreset } from '../../src/shared/openai-compat-preset
 import { SettingsDefaultsManager } from '../../src/shared/SettingsDefaultsManager.js';
 import { logger } from '../../src/utils/logger.js';
 import { getAuthMethodDescription } from '../../src/shared/EnvManager.js';
+import * as envManager from '../../src/shared/EnvManager.js';
 import { describeObserverAuthMethod } from '../../src/services/worker/observer-auth-method.js';
 import { PaidSendBudget } from '../../src/services/worker/paid-send-budget.js';
 import {
@@ -536,9 +537,24 @@ describe('reasoning budget exhaustion', () => {
 describe('observer auth method', () => {
   const settings = () => SettingsDefaultsManager.getAllDefaults();
 
+  it('describes a Custom endpoint without credentials and its credential-file keys', () => {
+    const credential = spyOn(envManager, 'getCredential').mockReturnValue(undefined);
+    try {
+      expect(describeObserverAuthMethod('custom', settings())).toBe('Custom endpoint (no API key)');
+      credential.mockImplementation(key => key === 'CUSTOM_API_KEY' ? 'custom-key' : undefined);
+      expect(describeObserverAuthMethod('custom', settings())).toBe('Custom API key');
+      credential.mockImplementation(key => key === 'CUSTOM_API_KEYS' ? 'pooled-key' : undefined);
+      expect(describeObserverAuthMethod('custom', settings())).toBe('Custom API key');
+    } finally {
+      credential.mockRestore();
+    }
+  });
+
   it('names the active provider instead of always describing Claude', () => {
     const defaults = settings();
     expect(describeObserverAuthMethod('claude', defaults)).toBe(getAuthMethodDescription());
+    expect(describeObserverAuthMethod('custom', { ...defaults, CLAUDE_MEM_CUSTOM_API_KEY: 'custom-key' })).toBe('Custom API key');
+    expect(describeObserverAuthMethod('custom', { ...defaults, CLAUDE_MEM_CUSTOM_API_KEYS: 'pool-key' })).toBe('Custom API key');
     expect(describeObserverAuthMethod('codex', defaults)).toBe('Codex CLI subscription');
     expect(describeObserverAuthMethod('gemini', defaults)).toBe('Gemini API key');
     expect(describeObserverAuthMethod('openrouter', defaults)).toBe('OpenRouter API key');

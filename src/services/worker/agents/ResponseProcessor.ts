@@ -3,7 +3,7 @@ import { logger } from '../../../utils/logger.js';
 import { hasStorableTitle } from '../../sqlite/observations/store.js';
 import {
   parseAgentXml,
-  parseObservationsJson,
+  parseObservationsJsonResult,
   parseSummaryJson,
   type ParsedObservation,
   type ParsedSummary,
@@ -42,6 +42,8 @@ import { logChromaWriteFailure } from '../search/errors.js';
 
 /** JSON-mode payloads used by CustomAgent and Gemini responseMimeType calls. */
 export interface ProcessAgentResponseOptions {
+  /** Snapshot from before the request, including JSON-mode requests. */
+  context?: ResponseContext;
   parseJsonSummary?: boolean;
   summaryText?: string;
   parseJsonObservation?: boolean;
@@ -462,7 +464,7 @@ export async function processAgentResponse(
   const options = isResponseContext(optionsOrContext) ? undefined : optionsOrContext;
   const context = isResponseContext(optionsOrContext)
     ? optionsOrContext
-    : snapshotResponseContext(session);
+    : options?.context ?? snapshotResponseContext(session);
   // Scoped to the reply that produced `text`: consumed here, before any branch,
   // so a later reply (from any provider) never reads one an earlier turn set.
   const finishReason = session.lastFinishReason ?? null;
@@ -487,17 +489,17 @@ export async function processAgentResponse(
   const parseAsJsonSummary = options?.parseJsonSummary === true;
   const usesJsonParsing = parseAsJsonObservation || parseAsJsonSummary;
 
-  // An empty JSON payload is a valid skip sentinel. Keep the XML poison and
-  // respawn path isolated from providers that intentionally return no record.
   let parsed: ParseResult;
   if (usesJsonParsing) {
-    const jsonObservations = parseAsJsonObservation && options?.observationText !== undefined
-      ? parseObservationsJson(options.observationText, session.contentSessionId)
-      : [];
-    const jsonSummary = parseAsJsonSummary && options?.summaryText
-      ? parseSummaryJson(options.summaryText, session.sessionDbId)
+    const observations = parseAsJsonObservation
+      ? parseObservationsJsonResult(options?.observationText ?? text, session.contentSessionId)
+      : { valid: true as const, observations: [], summary: null };
+    const summary = parseAsJsonSummary
+      ? parseSummaryJson(options?.summaryText ?? text, session.sessionDbId)
       : null;
-    parsed = { valid: true, observations: jsonObservations, summary: jsonSummary };
+    parsed = observations.valid && (!parseAsJsonSummary || summary !== null)
+      ? { valid: true, observations: observations.observations, summary }
+      : { valid: false };
   } else {
     parsed = parseAgentXml(text, session.contentSessionId);
   }

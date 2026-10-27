@@ -152,11 +152,29 @@ For `CLAUDE_MEM_PROVIDER=openai-compatible`: any endpoint that speaks `/chat/com
 
 See [OpenAI-Compatible Provider](usage/openai-compatible-provider) for presets and setup.
 
+### Custom Provider Settings (fork)
+
+`CLAUDE_MEM_PROVIDER=custom` keeps the fork's Chinese JSON observations and summaries, with `CLAUDE_MEM_CUSTOM_PROTOCOL` selecting `openai`, `gemini`, or `codex` (Responses API). It shares the HTTP providers' queue recovery, generation budgets, field compression, summary model routing and Telegram formatter. The existing custom message/token limits still apply.
+
+My Work generates readable request titles, summaries and workstream descriptions with the selected `custom`, `openai-compatible`, or `openrouter` provider. Custom supports all three protocols and writes display copy in Chinese. Custom and OpenAI-compatible reuse their configured endpoint, key pool and summary-tier model (when tier routing is enabled). Generation uses the existing debounce and cache, and does not change recorded work status or observations.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `CLAUDE_MEM_CUSTOM_API_URL` | — | Endpoint base URL |
+| `CLAUDE_MEM_CUSTOM_MODEL` | `gpt-4o` | Model id sent to the endpoint |
+| `CLAUDE_MEM_CUSTOM_API_KEY` | — | Endpoint key, or `CUSTOM_API_KEY` in `~/.claude-mem/.env`. Local endpoints may omit it |
+| `CLAUDE_MEM_CUSTOM_API_KEYS` | — | Additional keys, separated by commas or newlines, or `CUSTOM_API_KEYS` in `~/.claude-mem/.env`. Custom has its own rotation cooldown pool |
+| `CLAUDE_MEM_CUSTOM_REASONING` | `off` | `off` applies low/off reasoning hints supported by the selected protocol; `on` leaves reasoning to the endpoint |
+| `CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT` | `0` | Seconds until the first response body chunk; headers alone do not satisfy it. `0` disables this extra deadline |
+| `CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT` | `0` | Seconds for the complete request. `0` now uses the shared provider timeout defaults instead of disabling all deadlines |
+
+Custom now honors `CLAUDE_MEM_OBSERVE_BARE_PROMPTS` (default `false`), so initialization no longer costs a separate request by default. Explicit JSON skips remain valid; malformed responses use the same bounded recovery as other HTTP providers. Requests that may already have been billed obey the shared retry budget instead of blindly retrying three times.
+
 ### Quota Fallback Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER` | `claude` | Where observer work goes while the selected provider can't serve (a spent allowance, rate limits or over-capacity refusals past their retries, an outage, repeated unusable replies), until it recovers: `claude` (your Anthropic plan, used only when a Claude login or key exists), `gemini`, `openrouter`, `openai-compatible`, or `off` to wait instead. Empty (from older settings files) = `claude`. See [Quota Fallback](/usage/quota-fallback) |
+| `CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER` | `claude` | Where observer work goes while the selected provider can't serve (a spent allowance, rate limits or over-capacity refusals past their retries, an outage, repeated unusable replies), until it recovers: `claude` (your Anthropic plan, used only when a Claude login or key exists), `gemini`, `openrouter`, `openai-compatible`, `custom`, or `off` to wait instead. Empty (from older settings files) = `claude`. See [Quota Fallback](/usage/quota-fallback) |
 | `CLAUDE_MEM_QUOTA_FALLBACK_MODEL` | — | Claude model for a Claude fallback run. Empty = `CLAUDE_MEM_MODEL` and tier routing. Ignored for other fallbacks |
 | `CLAUDE_MEM_QUOTA_FALLBACK_AUTH_METHOD` | — | The Claude credential to run on while the primary one is held for quota: `subscription` (the Claude Code login, for a spent `ANTHROPIC_API_KEY`) or `api-key` (`ANTHROPIC_FALLBACK_API_KEY`, for a spent or guard-paused login). Tried before `CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER`. Empty = off. See [Quota Fallback](usage/quota-fallback#claude-credential-fallback) |
 

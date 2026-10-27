@@ -225,13 +225,15 @@ export interface SettingsDefaults {
   // Custom Provider Configuration
   CLAUDE_MEM_CUSTOM_API_URL: string;      // Custom API base URL (e.g., https://your-proxy.example.com)
   CLAUDE_MEM_CUSTOM_API_KEY: string;      // API Key for custom provider
+  CLAUDE_MEM_CUSTOM_API_KEYS: string;     // Rotation pool (comma/newline separated)
+  CLAUDE_MEM_CUSTOM_REASONING: string;    // 'off' | 'on'
   CLAUDE_MEM_CUSTOM_MODEL: string;        // Model name
   CLAUDE_MEM_CUSTOM_PROTOCOL: string;     // 'openai' | 'gemini' | 'codex'
   CLAUDE_MEM_CUSTOM_STREAMING: string;    // 'true' | 'false'
   CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES: string;  // Max messages (0 = disabled)
   CLAUDE_MEM_CUSTOM_MAX_TOKENS: string;   // Max tokens (0 = disabled)
   CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT: string;  // First token timeout in seconds (0 = disabled)
-  CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT: string;        // Total request timeout in seconds (0 = disabled)
+  CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT: string;        // Total request timeout in seconds (0 = shared provider defaults)
   // Quota guard: per-window utilization (0–1) at which a subscription observer stops (#4230).
   CLAUDE_MEM_QUOTA_THRESHOLD_FIVE_HOUR: string;
   CLAUDE_MEM_QUOTA_THRESHOLD_SEVEN_DAY: string;
@@ -512,13 +514,15 @@ export class SettingsDefaultsManager {
     // Custom Provider Configuration
     CLAUDE_MEM_CUSTOM_API_URL: '',  // Empty by default, user must configure (base URL only)
     CLAUDE_MEM_CUSTOM_API_KEY: '',  // Empty by default, user must configure
+    CLAUDE_MEM_CUSTOM_API_KEYS: '',  // Optional rotation pool
+    CLAUDE_MEM_CUSTOM_REASONING: 'off',  // Disable reasoning unless explicitly enabled
     CLAUDE_MEM_CUSTOM_MODEL: 'gpt-4o',  // Default model name
     CLAUDE_MEM_CUSTOM_PROTOCOL: 'openai',  // Default to OpenAI protocol
     CLAUDE_MEM_CUSTOM_STREAMING: 'true',  // Enable streaming by default
     CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES: '0',  // Disabled by default
     CLAUDE_MEM_CUSTOM_MAX_TOKENS: '0',  // Disabled by default
     CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT: '0',  // Disabled by default (seconds)
-    CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT: '0',  // Disabled by default (seconds)
+    CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT: '0',  // Use shared provider deadlines by default
     CLAUDE_MEM_QUOTA_THRESHOLD_FIVE_HOUR: '0.95',          // Quota guard (#4230): subscription observer stops at this utilization of the window. A provider rejection always stops it
     CLAUDE_MEM_QUOTA_THRESHOLD_SEVEN_DAY: '0.93',
     CLAUDE_MEM_QUOTA_THRESHOLD_SEVEN_DAY_OPUS: '0.93',

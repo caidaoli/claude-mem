@@ -135,6 +135,8 @@ export interface OpenAICompatConfig {
   requiresApiKey: boolean;
   /** Set for a Telegram wrap-up request (OpenAICompatibleProvider.formatTelegramWrapup). */
   plainText?: boolean;
+  /** Standalone display-copy instructions; never persisted as observer history. */
+  systemPrompt?: string;
 }
 
 /**
@@ -631,7 +633,7 @@ export class OpenAICompatProvider extends OpenAICompatibleProvider<OpenAICompatC
     /** anonymousSessionId() of the observed session, for preset.sessionHeader. */
     sessionId?: string,
   ): Promise<ProviderQueryResult> {
-    const messages = this.conversationToOpenAIMessages(history);
+    const messages = this.conversationToOpenAIMessages(history, config.systemPrompt);
     const label = config.preset.label;
     const clientAttemptId = paidSendBudget?.clientAttemptId ?? randomUUID();
     const maxOutputTokens = resolveObserverMaxOutputTokens();

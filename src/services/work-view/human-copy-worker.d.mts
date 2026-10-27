@@ -1,4 +1,12 @@
-type HumanCopyProvider = (input: unknown) => Promise<Record<string, unknown>>;
+export type HumanCopyProvider = (input: unknown) => Promise<Record<string, unknown>>;
+export type HumanCopyQuery = (messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) => Promise<{
+  content: string;
+  usage?: unknown;
+  model?: string;
+  responseId?: string | null;
+  finishReason?: string;
+}>;
+export function humanCopyProvider(query: HumanCopyQuery, language?: string): HumanCopyProvider;
 export function chatCompletionsHumanCopyProvider(options: { url: string; apiKey: string; model: string; fetchImpl?: typeof fetch }): HumanCopyProvider;
 export function fitGeneratedCopy(output: unknown): unknown;
 export class HumanCopyWorker {

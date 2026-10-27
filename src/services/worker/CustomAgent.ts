@@ -1,35 +1,30 @@
-/**
- * CustomAgent: Configurable AI provider with multi-protocol support
- *
- * A flexible provider that supports:
- * - Custom API endpoints (proxies, self-hosted models)
- * - Multiple protocols (OpenAI, Gemini, Codex)
- * - Streaming responses
- * - Gemini 2.5+ thinking part extraction
- * - JSON response format for reliable summary parsing
- *
- * Responsibility:
- * - Call configurable REST APIs for observation extraction
- * - Support OpenAI/Gemini/Codex message formats
- * - Parse responses (XML for observations, JSON for summaries)
- * - Sync to database and Chroma
- */
-
 import { DatabaseManager } from './DatabaseManager.js';
 import { SessionManager } from './SessionManager.js';
 import { logger } from '../../utils/logger.js';
-import { buildInitPromptJson, buildObservationPromptJson, buildSummaryPromptJson, buildContinuationPromptJson } from '../../sdk/prompts.js';
 import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH } from '../../shared/paths.js';
 import { getCredential } from '../../shared/EnvManager.js';
+import { buildKeyPool, resolvePoolKeys, retryPolicyForPool, withKeyPool } from '../../shared/api-key-pool.js';
+import { keysForEndpoint } from '../../shared/cmem-gateway.js';
+import { iterateByteStream, readSseEvents } from '../../shared/sse-reader.js';
 import type { ActiveSession, ConversationMessage } from '../worker-types.js';
 import { ModeManager } from '../domain/ModeManager.js';
 import type { ModeConfig } from '../domain/types.js';
+import type { WorkerRef } from './agents/index.js';
+import { OpenAICompatibleProvider, assistantText, type ObserverRequestLabel, type ProviderQueryResult } from './OpenAICompatibleProvider.js';
+import { classifyGeminiError } from './GeminiProvider.js';
+import { classifyOpenAICompatError, isLocalEndpointUrl, stripLeadingThinkBlock } from './OpenAICompatProvider.js';
+import { ClassifiedProviderError, isClassified, rateLimitUntilNextKey } from './provider-errors.js';
+import { withRetry, resolveLlmTimeoutMs } from './retry.js';
+import type { PaidSendBudget } from './paid-send-budget.js';
+import { resolveObserverMaxOutputTokens, resolveContextWindowTokens } from './context-window.js';
+import { sendChatCompletion, streamsChatCompletion, resolveStreamLiveness, resolveStreamIdleTimeoutMs } from './streamed-chat-completion.js';
 import {
-  processAgentResponse,
-  isAbortError,
-  type WorkerRef
-} from './agents/index.js';
+  endpointRejectsReasoningField, isUnknownReasoningParameter, rememberEndpointRejectsReasoningField,
+  REASONING_DISABLED, resolveOpenAICompatReasoning, isLengthTruncatedEmptyReply,
+  claimReasoningBudgetRetry, combineBilledChatUsage,
+} from './reasoning-budget.js';
+import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import type { Tiktoken } from 'tiktoken';
 
@@ -70,13 +65,18 @@ export type CustomProtocol = 'openai' | 'gemini' | 'codex';
 export interface CustomAgentConfig {
   apiUrl: string;
   apiKey: string;
+  apiKeys?: string[];
+  plainText?: boolean;
+  /** Standalone display-copy instructions; never persisted as observer history. */
+  systemPrompt?: string;
+  reasoning?: string;
   model: string;
   protocol: CustomProtocol;
   streaming: boolean;
   maxContextMessages: number;  // 0 = disabled
   maxTokens: number;  // 0 = disabled
   firstTokenTimeoutSeconds: number;  // 0 = disabled (time to first body chunk, not HTTP headers)
-  totalTimeoutSeconds: number;  // 0 = disabled
+  totalTimeoutSeconds: number;  // 0 = shared provider deadline
 }
 
 // Fork: Custom always writes Chinese, whatever language the active mode asks for.
@@ -150,7 +150,10 @@ export function buildApiUrl(baseUrl: string, protocol: CustomProtocol, model: st
 
 // Gemini response types
 interface GeminiResponse {
+  modelVersion?: string;
+  error?: { code?: string | number; message?: string; status?: string };
   candidates?: Array<{
+    finishReason?: string;
     content?: {
       parts?: Array<{
         text?: string;
@@ -161,13 +164,16 @@ interface GeminiResponse {
   usageMetadata?: {
     promptTokenCount?: number;
     candidatesTokenCount?: number;
+    thoughtsTokenCount?: number;
     totalTokenCount?: number;
   };
 }
 
 // OpenAI response types
 interface OpenAIResponse {
+  model?: string;
   choices?: Array<{
+    finish_reason?: string;
     message?: {
       content?: string;
     };
@@ -189,6 +195,9 @@ interface OpenAIResponse {
 
 // Codex responses API types
 interface CodexResponse {
+  model?: string;
+  status?: string;
+  incomplete_details?: { reason?: string };
   output?: Array<{
     content?: Array<{
       type?: string;
@@ -206,28 +215,6 @@ interface CodexResponse {
     message?: string;
     type?: string;
   };
-}
-
-function getResponsePreview(body: string, maxLength: number = 200): string {
-  const preview = body.replace(/\s+/g, ' ').trim();
-  if (!preview) {
-    return '<empty>';
-  }
-
-  return preview.length > maxLength
-    ? `${preview.slice(0, maxLength)}...`
-    : preview;
-}
-
-function parseJsonWithContext<T>(body: string, provider: 'Gemini' | 'OpenAI' | 'Codex', status: number): T {
-  try {
-    return JSON.parse(body) as T;
-  } catch (error) {
-    const parseMessage = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `Custom/${provider} API returned invalid JSON (status ${status}): ${parseMessage}. Body preview: ${getResponsePreview(body)}`
-    );
-  }
 }
 
 function formatOpenAIError(errorPayload: unknown): string | null {
@@ -262,62 +249,6 @@ function formatOpenAIError(errorPayload: unknown): string | null {
   return `${code}${type} - ${message}`;
 }
 
-function looksLikeSsePayload(body: string): boolean {
-  return /(^|\n)\s*(data|event):/.test(body);
-}
-
-function parseOpenAIJsonOrSseWithContext(
-  body: string,
-  status: number
-): { content: string; tokensUsed?: number; error?: string; usedSseFallback: boolean } {
-  try {
-    const data = parseJsonWithContext<OpenAIResponse>(body, 'OpenAI', status);
-    return {
-      content: data.choices?.[0]?.message?.content || '',
-      tokensUsed: data.usage?.total_tokens,
-      error: formatOpenAIError(data.error) || undefined,
-      usedSseFallback: false,
-    };
-  } catch (parseError) {
-    if (!looksLikeSsePayload(body)) {
-      throw parseError;
-    }
-
-    const parsed = parseOpenAISseStream(body);
-    return {
-      content: parsed.content,
-      tokensUsed: parsed.tokensUsed,
-      error: parsed.error,
-      usedSseFallback: true,
-    };
-  }
-}
-
-function parseGeminiJsonOrSseWithContext(
-  body: string,
-  status: number
-): { parts: Array<{ text?: string; thought?: boolean; thoughtSignature?: string }>; tokensUsed?: number; usedSseFallback: boolean } {
-  try {
-    const data = parseJsonWithContext<GeminiResponse>(body, 'Gemini', status);
-    return {
-      parts: data.candidates?.[0]?.content?.parts || [],
-      tokensUsed: data.usageMetadata?.totalTokenCount,
-      usedSseFallback: false,
-    };
-  } catch (parseError) {
-    if (!looksLikeSsePayload(body)) {
-      throw parseError;
-    }
-
-    const parsed = parseGeminiSseStream(body);
-    return {
-      parts: parsed.parts,
-      tokensUsed: parsed.tokensUsed,
-      usedSseFallback: true,
-    };
-  }
-}
-
 function extractCodexResponseText(data: CodexResponse): string {
   if (typeof data.output_text === 'string' && data.output_text) {
     return data.output_text;
@@ -326,7 +257,7 @@ function extractCodexResponseText(data: CodexResponse): string {
   const parts: string[] = [];
   for (const item of data.output || []) {
     for (const content of item.content || []) {
-      if (typeof content?.text === 'string' && content.text) {
+      if (content?.type === 'output_text' && typeof content.text === 'string' && content.text) {
         parts.push(content.text);
       }
     }
@@ -366,10 +297,10 @@ function isGemini25FlashModel(model: string): boolean {
  * Build Gemini generation config with optional JSON mode
  * For Gemini 3 models, thinkingLevel: 'low' speeds up responses ('minimal' is rejected by 3.7+ Flash and Pro).
  */
-function buildGeminiGenerationConfig(model: string, jsonMode: boolean = false): Record<string, unknown> {
+function buildGeminiGenerationConfig(model: string, jsonMode: boolean = false, reasoningOff: boolean = true): Record<string, unknown> {
   const config: Record<string, unknown> = {
     temperature: 0.3,
-    maxOutputTokens: 4096,
+    maxOutputTokens: resolveObserverMaxOutputTokens(),
   };
 
   if (jsonMode) {
@@ -377,11 +308,11 @@ function buildGeminiGenerationConfig(model: string, jsonMode: boolean = false): 
   }
 
   // Lowest level supported by every Gemini 3.x model
-  if (isGemini3Model(model)) {
+  if (reasoningOff && isGemini3Model(model)) {
     config.thinkingConfig = {
       thinkingLevel: 'low',
     };
-  } else if (isGemini25FlashModel(model)) {
+  } else if (reasoningOff && isGemini25FlashModel(model)) {
     config.thinkingConfig = {
       thinkingBudget: 0,
     };
@@ -533,487 +464,6 @@ function parseOpenAISseStream(responseText: string): { content: string; tokensUs
   return { content, tokensUsed, error: apiError };
 }
 
-async function readResponseBodyText(response: Response, onFirstChunk: () => void): Promise<string> {
-  if (!response.body) {
-    const text = await response.text();
-    // Response fully received (even if empty) — clear firstTokenTimer
-    onFirstChunk();
-    return text;
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  const chunks: string[] = [];
-  let sawChunk = false;
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    if (!value || value.length === 0) continue;
-
-    if (!sawChunk) {
-      sawChunk = true;
-      onFirstChunk();
-    }
-
-    chunks.push(decoder.decode(value, { stream: true }));
-  }
-
-  const flushed = decoder.decode();
-  if (flushed) {
-    chunks.push(flushed);
-  }
-
-  return chunks.join('');
-}
-
-async function* iterateResponseLines(response: Response, onFirstChunk: () => void): AsyncGenerator<string> {
-  if (!response.body) {
-    const text = await response.text();
-    // Response fully received (even if empty) — clear firstTokenTimer
-    onFirstChunk();
-    for (const line of text.split(/\r?\n/)) {
-      yield line;
-    }
-    return;
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let sawChunk = false;
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    if (!value || value.length === 0) continue;
-
-    if (!sawChunk) {
-      sawChunk = true;
-      onFirstChunk();
-    }
-
-    buffer += decoder.decode(value, { stream: true });
-
-    while (true) {
-      const newlineIdx = buffer.indexOf('\n');
-      if (newlineIdx === -1) break;
-
-      let line = buffer.slice(0, newlineIdx);
-      if (line.endsWith('\r')) {
-        line = line.slice(0, -1);
-      }
-      buffer = buffer.slice(newlineIdx + 1);
-      yield line;
-    }
-  }
-
-  buffer += decoder.decode();
-  if (buffer) {
-    yield buffer;
-  }
-}
-
-/**
- * SSE event handlers for protocol-specific parsing
- */
-interface SseParseHandlers {
-  onSsePayload(payload: string): void;
-  shouldTryFallback(): boolean;
-  onFallbackJson(raw: string): void;
-}
-
-/**
- * Generic SSE stream parser with non-SSE JSON fallback.
- * Shared framing logic for both Gemini and OpenAI response parsers.
- */
-async function parseSseStreamFromResponse<T>(
-  response: Response,
-  onFirstChunk: () => void,
-  state: T,
-  handlers: SseParseHandlers
-): Promise<T> {
-  const currentEventData: string[] = [];
-  let sawSseLine = false;
-  let captureRaw = true;
-  const rawLines: string[] = [];
-
-  const flushEvent = () => {
-    if (currentEventData.length === 0) return;
-    const payload = currentEventData.join('\n').trim();
-    currentEventData.length = 0;
-    if (!payload || payload === '[DONE]') return;
-    handlers.onSsePayload(payload);
-  };
-
-  for await (const line of iterateResponseLines(response, onFirstChunk)) {
-    if (captureRaw) {
-      rawLines.push(`${line}\n`);
-    }
-
-    if (line === '') {
-      flushEvent();
-      continue;
-    }
-
-    if (!line.startsWith('data:')) continue;
-
-    sawSseLine = true;
-    if (captureRaw) {
-      captureRaw = false;
-      rawLines.length = 0;
-    }
-
-    currentEventData.push(line.slice(5).replace(/^\s*/, ''));
-  }
-
-  flushEvent();
-
-  // Fallback: some proxies/providers ignore SSE mode and return a single JSON object.
-  if (handlers.shouldTryFallback() && !sawSseLine) {
-    const trimmed = rawLines.join('').trim();
-    if (trimmed.startsWith('{')) {
-      handlers.onFallbackJson(trimmed);
-    }
-  }
-
-  return state;
-}
-
-async function parseGeminiSseStreamFromResponse(
-  response: Response,
-  onFirstChunk: () => void
-): Promise<{ parts: Array<{ text?: string; thought?: boolean; thoughtSignature?: string }>; tokensUsed?: number }> {
-  const state = {
-    parts: [] as Array<{ text?: string; thought?: boolean; thoughtSignature?: string }>,
-    tokensUsed: undefined as number | undefined,
-  };
-
-  const parsePayload = (payload: string) => {
-    try {
-      const data = JSON.parse(payload) as GeminiResponse;
-      const parts = data.candidates?.[0]?.content?.parts;
-      if (parts) state.parts = state.parts.concat(parts);
-      if (data.usageMetadata?.totalTokenCount) state.tokensUsed = data.usageMetadata.totalTokenCount;
-    } catch {
-      // Ignore invalid/partial events
-    }
-  };
-
-  return parseSseStreamFromResponse(response, onFirstChunk, state, {
-    onSsePayload: parsePayload,
-    shouldTryFallback: () => state.parts.length === 0,
-    onFallbackJson: parsePayload,
-  });
-}
-
-async function parseOpenAISseStreamFromResponse(
-  response: Response,
-  onFirstChunk: () => void
-): Promise<{ content: string; tokensUsed?: number; error?: string }> {
-  const state = {
-    content: '',
-    tokensUsed: undefined as number | undefined,
-    error: undefined as string | undefined,
-  };
-
-  return parseSseStreamFromResponse(response, onFirstChunk, state, {
-    onSsePayload(payload) {
-      try {
-        const data = JSON.parse(payload) as OpenAIResponse;
-        const errorMessage = formatOpenAIError(data.error);
-        if (errorMessage) {
-          state.error = errorMessage;
-          return;
-        }
-        const streamedContent = data.choices?.[0]?.delta?.content ?? data.choices?.[0]?.message?.content;
-        if (streamedContent) state.content += streamedContent;
-        if (data.usage?.total_tokens) state.tokensUsed = data.usage.total_tokens;
-      } catch {
-        // Skip invalid JSON events
-      }
-    },
-    shouldTryFallback: () => !state.content,
-    onFallbackJson(raw) {
-      try {
-        const data = JSON.parse(raw) as OpenAIResponse;
-        const errorMessage = formatOpenAIError(data.error);
-        if (errorMessage) state.error = errorMessage;
-        state.content = data.choices?.[0]?.message?.content || '';
-        if (data.usage?.total_tokens) state.tokensUsed = data.usage.total_tokens;
-      } catch {
-        // ignore fallback parse errors
-      }
-    },
-  });
-}
-
-async function parseCodexSseStreamFromResponse(
-  response: Response,
-  onFirstChunk: () => void
-): Promise<{ content: string; tokensUsed?: number; error?: string }> {
-  const state = {
-    content: '',
-    completedText: '',
-    tokensUsed: undefined as number | undefined,
-    error: undefined as string | undefined,
-  };
-
-  const tryApplyResponse = (responsePayload: CodexResponse | undefined) => {
-    if (!responsePayload) return;
-
-    const errorMessage = formatOpenAIError(responsePayload.error);
-    if (errorMessage) {
-      state.error = errorMessage;
-      return;
-    }
-
-    if (responsePayload.usage?.total_tokens) {
-      state.tokensUsed = responsePayload.usage.total_tokens;
-    }
-
-    const responseText = extractCodexResponseText(responsePayload);
-    if (responseText) {
-      state.completedText = responseText;
-    }
-  };
-
-  return parseSseStreamFromResponse(response, onFirstChunk, state, {
-    onSsePayload(payload) {
-      try {
-        const event = JSON.parse(payload) as {
-          type?: string;
-          delta?: string;
-          text?: string;
-          response?: CodexResponse;
-          error?: unknown;
-        };
-
-        const eventError = formatOpenAIError(event.error);
-        if (eventError) {
-          state.error = eventError;
-          return;
-        }
-
-        if (event.type === 'response.output_text.delta' && typeof event.delta === 'string') {
-          state.content += event.delta;
-        } else if (event.type === 'response.output_text.done' && typeof event.text === 'string') {
-          state.completedText = event.text;
-        } else if (event.type === 'response.completed' || event.type === 'response.failed' || event.type === 'response.incomplete') {
-          tryApplyResponse(event.response);
-        } else if (event.type === 'error') {
-          const errorMessage = formatOpenAIError(event.error ?? event);
-          if (errorMessage) state.error = errorMessage;
-        } else {
-          // Some providers stream response-shaped payloads directly
-          tryApplyResponse(event as unknown as CodexResponse);
-        }
-      } catch {
-        // Skip invalid JSON events
-      }
-    },
-    shouldTryFallback: () => !state.content && !state.completedText,
-    onFallbackJson(raw) {
-      try {
-        const data = JSON.parse(raw) as CodexResponse;
-        tryApplyResponse(data);
-      } catch {
-        // ignore fallback parse errors
-      }
-    },
-  }).then(parsed => ({
-    content: parsed.content || parsed.completedText || '',
-    tokensUsed: parsed.tokensUsed,
-    error: parsed.error
-  }));
-}
-
-/**
- * Custom timeout error for request timeouts
- */
-class TimeoutError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'TimeoutError';
-  }
-}
-
-/**
- * Result from fetchWithTimeout/fetchWithTimeoutAndRetry
- */
-interface FetchOkResult<T> {
-  ok: true;
-  status: number;
-  data: T;
-}
-
-interface FetchErrorResult {
-  ok: false;
-  status: number;
-  body: string;
-}
-
-type FetchResult<T> = FetchOkResult<T> | FetchErrorResult;
-
-/**
- * Fetch with timeout control
- * - firstTokenTimeoutMs: Timeout for receiving the first body chunk after headers (0 = disabled).
- *   Timer starts at request initiation, cleared when first body data arrives.
- * - totalTimeoutMs: Total request timeout including body read (0 = disabled)
- * Returns parsed response data if successful, throws TimeoutError on timeout
- */
-async function fetchWithTimeout<T>(
-  url: string,
-  options: RequestInit,
-  firstTokenTimeoutMs: number,
-  totalTimeoutMs: number,
-  externalSignal: AbortSignal | undefined,
-  okHandler: (response: Response, onFirstChunk: () => void) => Promise<T>
-): Promise<FetchResult<T>> {
-  const controller = new AbortController();
-  const { signal } = controller;
-  let abortReason: 'timeout' | 'external' | null = null;
-
-  const fetchOptions: RequestInit = {
-    ...options,
-    signal,
-  };
-
-  let totalTimer: ReturnType<typeof setTimeout> | undefined;
-  let firstTokenTimer: ReturnType<typeof setTimeout> | undefined;
-
-  const abortForTimeout = () => {
-    abortReason = 'timeout';
-    controller.abort();
-  };
-
-  const onExternalAbort = () => {
-    abortReason = 'external';
-    controller.abort();
-  };
-
-  if (externalSignal) {
-    if (externalSignal.aborted) {
-      onExternalAbort();
-    } else {
-      externalSignal.addEventListener('abort', onExternalAbort, { once: true });
-    }
-  }
-
-  const cleanup = () => {
-    if (totalTimer) clearTimeout(totalTimer);
-    if (firstTokenTimer) clearTimeout(firstTokenTimer);
-    if (externalSignal) {
-      externalSignal.removeEventListener('abort', onExternalAbort);
-    }
-  };
-
-  try {
-    if (totalTimeoutMs > 0) {
-      totalTimer = setTimeout(abortForTimeout, totalTimeoutMs);
-    }
-
-    if (firstTokenTimeoutMs > 0) {
-      firstTokenTimer = setTimeout(abortForTimeout, firstTokenTimeoutMs);
-    }
-
-    const response = await fetch(url, fetchOptions);
-
-    let sawChunk = false;
-    const onFirstChunk = () => {
-      if (sawChunk) return;
-      sawChunk = true;
-      if (firstTokenTimer) {
-        clearTimeout(firstTokenTimer);
-        firstTokenTimer = undefined;
-      }
-    };
-
-    if (!response.ok) {
-      const body = await readResponseBodyText(response, onFirstChunk);
-      cleanup();
-      return { ok: false, status: response.status, body };
-    }
-
-    const data = await okHandler(response, onFirstChunk);
-    cleanup();
-
-    return { ok: true, status: response.status, data };
-  } catch (error) {
-    cleanup();
-    if (error instanceof Error && error.name === 'AbortError') {
-      if (abortReason === 'timeout') {
-        throw new TimeoutError('Request timeout');
-      }
-
-      const abortError = new Error('Request aborted');
-      abortError.name = 'AbortError';
-      throw abortError;
-    }
-    throw error;
-  }
-}
-
-/**
- * Fetch with timeout and automatic retry on timeout
- * Retries up to maxRetries times on timeout
- */
-async function fetchWithTimeoutAndRetry<T>(
-  url: string,
-  options: RequestInit,
-  config: CustomAgentConfig,
-  maxRetries: number = 3,
-  abortSignal: AbortSignal | undefined,
-  okHandler: (response: Response, onFirstChunk: () => void) => Promise<T>
-): Promise<FetchResult<T>> {
-  const firstTokenTimeoutMs = config.firstTokenTimeoutSeconds > 0 ? config.firstTokenTimeoutSeconds * 1000 : 0;
-  const totalTimeoutMs = config.totalTimeoutSeconds > 0 ? config.totalTimeoutSeconds * 1000 : 0;
-
-  // If no timeout configured, do a normal fetch and rely on the session abort signal.
-  if (firstTokenTimeoutMs === 0 && totalTimeoutMs === 0) {
-    const fetchOptions: RequestInit = abortSignal
-      ? { ...options, signal: abortSignal }
-      : options;
-    const response = await fetch(url, fetchOptions);
-    if (!response.ok) {
-      const body = await response.text();
-      return { ok: false, status: response.status, body };
-    }
-
-    const data = await okHandler(response, () => {});
-    return { ok: true, status: response.status, data };
-  }
-
-  let lastError: Error | undefined;
-
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      return await fetchWithTimeout(url, options, firstTokenTimeoutMs, totalTimeoutMs, abortSignal, okHandler);
-    } catch (error) {
-      if (error instanceof TimeoutError) {
-        lastError = error;
-        logger.warn('SDK', `Request timeout, retrying (${attempt}/${maxRetries})`, {
-          url,
-          firstTokenTimeoutMs,
-          totalTimeoutMs,
-        });
-        continue;
-      }
-      throw error;
-    }
-  }
-
-  throw lastError || new TimeoutError('Request timeout after max retries');
-}
-
-/**
- * Gemini content message format
- */
-interface GeminiContent {
-  role: 'user' | 'model';
-  parts: Array<{ text: string }>;
-}
-
 /**
  * OpenAI content message format
  */
@@ -1031,7 +481,7 @@ function buildOpenAIJsonRequestBody(
   const body: Record<string, unknown> = {
     model,
     temperature: 0.3,
-    max_tokens: 4096,
+    max_tokens: resolveObserverMaxOutputTokens(),
     response_format: { type: 'json_object' },
   };
 
@@ -1065,7 +515,7 @@ function buildOpenAIJsonRequestBody(
 
 function buildBearerJsonHeaders(apiKey: string, sessionId?: string): Record<string, string> {
   const headers: Record<string, string> = {
-    'Authorization': `Bearer ${apiKey}`,
+    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
     'Content-Type': 'application/json',
   };
 
@@ -1079,7 +529,7 @@ function buildBearerJsonHeaders(apiKey: string, sessionId?: string): Record<stri
 function buildGeminiJsonHeaders(apiKey: string, sessionId?: string): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'x-goog-api-key': apiKey,
+    ...(apiKey ? { 'x-goog-api-key': apiKey } : {}),
   };
 
   if (sessionId && sessionId.trim()) {
@@ -1108,7 +558,7 @@ function buildCodexJsonRequestBody(
     model,
     instructions: 'You are GPT-5.4 running in the Codex CLI, a terminal-based coding assistant. Codex CLI is an open source project led by OpenAI. You are expected to be precise, safe, and helpful.\n\n',
     input,
-    max_output_tokens: 4096,
+    max_output_tokens: resolveObserverMaxOutputTokens(),
     text: {
       format: { type: 'json_object' }
     }
@@ -1164,294 +614,70 @@ function resolveRequestSessionId(contentSessionId: string): { sessionId: string;
   };
 }
 
-export class CustomAgent {
-  private dbManager: DatabaseManager;
-  private sessionManager: SessionManager;
-
-  // Hysteresis window: per-session tail buffer start index into conversationHistory.
-  // Once set, history.slice(tailStartIndex) is the stable tail — append-only between
-  // resets so prompt-cache prefix stays identical across turns. Cleared when tail
-  // grows back to maxContextMessages, triggering a fresh slice next time.
+export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
+  protected readonly providerName = 'Custom';
+  protected readonly syntheticIdPrefix = 'custom';
+  protected readonly outputFormat = 'json' as const;
+  protected readonly humanCopyLanguage = '中文';
+  protected readonly forwardEmptyMessageResponse = true;
+  protected readonly rejectAbortedObservation = true;
   private tailStartIndex = new WeakMap<ActiveSession, number>();
 
-  constructor(dbManager: DatabaseManager, sessionManager: SessionManager) {
-    this.dbManager = dbManager;
-    this.sessionManager = sessionManager;
+  protected getMode(): ModeConfig {
+    return withCustomLanguage(ModeManager.getInstance().getActiveMode());
   }
 
-  /**
-   * Start Custom agent for a session
-   */
-  async startSession(session: ActiveSession, worker?: WorkerRef): Promise<void> {
-    try {
-      const config = this.getCustomConfig();
-
-      if (!config.apiUrl || !config.apiKey) {
-        throw new Error('Custom provider not configured. Set CLAUDE_MEM_CUSTOM_API_URL in settings and configure CLAUDE_MEM_CUSTOM_API_KEY or CUSTOM_API_KEY.');
-      }
-
-      // CRITICAL: Always load memorySessionId from database for Custom agent
-      // Custom is stateless and uses synthetic IDs. We must ALWAYS use the DB value
-      // to prevent FK constraint failures (observations table references memory_session_id)
-      // This overrides any value set by SDKAgent fallback or cached session state.
-      const dbSession = this.dbManager.getSessionStore().getSessionById(session.sessionDbId);
-      if (dbSession?.memory_session_id) {
-        // Use existing memory_session_id from database
-        if (session.memorySessionId !== dbSession.memory_session_id) {
-          logger.info('SESSION', `MEMORY_ID_RESTORED | sessionDbId=${session.sessionDbId} | was=${session.memorySessionId || 'null'} | now=${dbSession.memory_session_id} | provider=Custom`);
-        }
-        session.memorySessionId = dbSession.memory_session_id;
-      } else if (!session.memorySessionId) {
-        // Generate new synthetic ID only if none exists anywhere
-        const syntheticId = `custom-${session.contentSessionId}-${Date.now()}`;
-        session.memorySessionId = syntheticId;
-        this.dbManager.getSessionStore().updateMemorySessionId(session.sessionDbId, syntheticId);
-        logger.info('SESSION', `MEMORY_ID_GENERATED | sessionDbId=${session.sessionDbId} | provider=Custom`);
-      }
-
-      // Load active mode
-      const mode = withCustomLanguage(ModeManager.getInstance().getActiveMode());
-      const requestSession = resolveRequestSessionId(session.contentSessionId || '');
-      const requestSessionId = requestSession.sessionId;
-      if (requestSession.generated) {
-        logger.warn('SDK', 'Blank contentSessionId detected; generated random Session_id for Custom provider', {
-          sessionId: session.sessionDbId,
-          generatedSessionId: requestSessionId
-        });
-      }
-
-      // Build initial prompt (JSON format for Custom)
-      const initPrompt = session.lastPromptNumber === 1
-        ? buildInitPromptJson(session.project, session.contentSessionId, session.userPrompt, mode)
-        : buildContinuationPromptJson(session.userPrompt, session.lastPromptNumber, session.contentSessionId, mode);
-
-      // Add to conversation history and query with full context (multi-turn)
-      session.conversationHistory.push({ role: 'user', content: initPrompt });
-      const initResponse = await this.queryJsonMultiTurn(
-        session.conversationHistory,
-        config,
-        session.abortController.signal,
-        requestSessionId,
-        session
-      );
-
-      if (initResponse.content) {
-        const tokensUsed = initResponse.tokensUsed || 0;
-        session.cumulativeInputTokens += Math.floor(tokensUsed * 0.7);
-        session.cumulativeOutputTokens += Math.floor(tokensUsed * 0.3);
-
-        await processAgentResponse(
-          initResponse.content,
-          session,
-          this.dbManager,
-          this.sessionManager,
-          worker,
-          tokensUsed,
-          null,
-          'Custom',
-          undefined,
-          undefined,
-          {
-            parseJsonObservation: true,
-            observationText: initResponse.content
-          }
-        );
-      } else {
-        // Empty response is a valid scenario - model may choose to skip initial observation
-        logger.warn('SDK', 'Empty Custom init response - model chose to skip or session may lack context', {
-          sessionId: session.sessionDbId,
-          model: config.model
-        });
-      }
-
-      // Process pending messages
-      let lastCwd: string | undefined;
-
-      for await (const message of this.sessionManager.getMessageIterator(session.sessionDbId)) {
-        session.pendingAgentId = message.agentId ?? null;
-        session.pendingAgentType = message.agentType ?? null;
-
-        if (message.cwd) {
-          lastCwd = message.cwd;
-        }
-        const originalTimestamp = session.earliestPendingTimestamp;
-
-        if (message.type === 'observation') {
-          if (message.prompt_number !== undefined) {
-            session.lastPromptNumber = message.prompt_number;
-          }
-
-          // CRITICAL: Check memorySessionId BEFORE making expensive LLM call
-          // This prevents wasting tokens when we won't be able to store the result anyway
-          if (!session.memorySessionId) {
-            throw new Error('Cannot process observations: memorySessionId not yet captured. This session may need to be reinitialized.');
-          }
-
-          // Build observation prompt with JSON output format from shared prompt system
-          const obsPromptWithJsonFormat = buildObservationPromptJson({
-            id: 0,
-            tool_name: message.tool_name!,
-            tool_input: JSON.stringify(message.tool_input),
-            tool_output: JSON.stringify(message.tool_response),
-            created_at_epoch: originalTimestamp ?? Date.now(),
-            cwd: message.cwd
-          }, mode);
-
-          session.conversationHistory.push({ role: 'user', content: obsPromptWithJsonFormat });
-          const obsResponse = await this.queryJsonMultiTurn(
-            session.conversationHistory,
-            config,
-            session.abortController.signal,
-            requestSessionId,
-            session
-          );
-
-          const observationText = obsResponse.content || '';
-          // Always use JSON parsing path — CustomAgent never produces XML observations.
-          const observationOptions = {
-            parseJsonObservation: true,
-            observationText
-          };
-          const observationTokensUsed = obsResponse.tokensUsed || 0;
-
-          if (observationTokensUsed > 0) {
-            session.cumulativeInputTokens += Math.floor(observationTokensUsed * 0.7);
-            session.cumulativeOutputTokens += Math.floor(observationTokensUsed * 0.3);
-          }
-
-          if (!observationText) {
-            logger.warn('SDK', 'Empty Custom observation response; processing empty payload for queue consistency', {
-              sessionId: session.sessionDbId,
-              messageId: message._persistentId
-            });
-          }
-
-          // Always process response (including empty text) to keep CLAIM-CONFIRM and cleanup state consistent.
-          await processAgentResponse(
-            observationText,
-            session,
-            this.dbManager,
-            this.sessionManager,
-            worker,
-            observationTokensUsed,
-            originalTimestamp,
-            'Custom',
-            lastCwd,
-            undefined,
-            observationOptions
-          );
-
-        } else if (message.type === 'summarize') {
-          // CRITICAL: Check memorySessionId BEFORE making expensive LLM call
-          if (!session.memorySessionId) {
-            throw new Error('Cannot process summary: memorySessionId not yet captured. This session may need to be reinitialized.');
-          }
-
-          // Build JSON-format summary prompt
-          const summaryPrompt = buildSummaryPromptJson({
-            id: session.sessionDbId,
-            memory_session_id: session.memorySessionId,
-            project: session.project,
-            user_prompt: session.userPrompt,
-            last_assistant_message: message.last_assistant_message || ''
-          }, mode);
-
-          // Add to conversation history and query with full context (multi-turn)
-          session.conversationHistory.push({ role: 'user', content: summaryPrompt });
-          const summaryResponse = await this.queryJsonMultiTurn(
-            session.conversationHistory,
-            config,
-            session.abortController.signal,
-            requestSessionId,
-            session
-          );
-
-          const summaryText = summaryResponse.content || '';
-          // Always use JSON parsing path — CustomAgent never produces XML summaries.
-          const summaryOptions = {
-            parseJsonSummary: true,
-            summaryText
-          };
-          const summaryTokensUsed = summaryResponse.tokensUsed || 0;
-
-          if (summaryTokensUsed > 0) {
-            session.cumulativeInputTokens += Math.floor(summaryTokensUsed * 0.7);
-            session.cumulativeOutputTokens += Math.floor(summaryTokensUsed * 0.3);
-          }
-
-          if (!summaryText) {
-            logger.warn('SDK', 'Empty Custom summary response; processing empty payload for queue consistency', {
-              sessionId: session.sessionDbId,
-              messageId: message._persistentId
-            });
-          }
-
-          // Always process response (including empty text) to keep CLAIM-CONFIRM and cleanup state consistent.
-          await processAgentResponse(
-            summaryText,
-            session,
-            this.dbManager,
-            this.sessionManager,
-            worker,
-            summaryTokensUsed,
-            originalTimestamp,
-            'Custom',
-            lastCwd,
-            undefined,
-            summaryOptions
-          );
-        }
-      }
-
-      const sessionDuration = Date.now() - session.startTime;
-      logger.success('SDK', 'Custom agent completed', {
-        sessionId: session.sessionDbId,
-        duration: `${(sessionDuration / 1000).toFixed(1)}s`,
-        historyLength: session.conversationHistory.length
-      });
-
-    } catch (error: unknown) {
-      if (isAbortError(error)) {
-        logger.warn('SDK', 'Custom agent aborted', { sessionId: session.sessionDbId });
-        throw error;
-      }
-
-      logger.failure('SDK', 'Custom agent error', { sessionDbId: session.sessionDbId }, error as Error);
-      throw error;
-    }
+  protected getConfig(): CustomAgentConfig {
+    return resolveCustomConfig();
   }
 
-  /**
-   * Convert conversation history to Gemini format
-   */
-  private toGeminiContents(history: ConversationMessage[]): GeminiContent[] {
-    return history.map(msg => ({
-      role: msg.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: msg.content }]
-    }));
+  protected missingApiKeyError(): Error {
+    return new ClassifiedProviderError('Custom provider not configured. Set CLAUDE_MEM_CUSTOM_API_URL and CLAUDE_MEM_CUSTOM_API_KEY (or CUSTOM_API_KEY) for hosted endpoints.', {
+      kind: 'setup_required', cause: new Error('missing custom endpoint or credential'),
+    });
   }
 
-  /**
-   * Convert conversation history to OpenAI format
-   */
-  private toOpenAIMessages(history: ConversationMessage[]): OpenAIMessage[] {
-    return history.map(msg => ({
-      role: msg.role,
-      content: msg.content
-    }));
+  protected requiresApiKey(config: CustomAgentConfig): boolean {
+    return !isLocalEndpointUrl(config.apiUrl);
   }
 
-  /**
-   * Estimate token count from text with tiktoken.
-   */
-  private estimateTokens(text: string): number {
+  protected querySignal(session: ActiveSession): AbortSignal {
+    return session.abortController.signal;
+  }
+
+  protected prepareSessionExtras(session: ActiveSession): void {
+    session.endpointClass = 'custom';
+  }
+
+  protected prepareQueryHistory(history: ConversationMessage[], config: CustomAgentConfig, session: ActiveSession): ConversationMessage[] {
+    return this.truncateHistory(history, config, session);
+  }
+
+  protected resolveContextWindow(config: CustomAgentConfig): Promise<number> {
+    return resolveContextWindowTokens(config.protocol === 'gemini' ? 'gemini' : 'openrouter', config.model.replace(/^models\//, ''), config.apiUrl);
+  }
+
+  protected estimateTokens(text: string): number {
     return estimateTokenCount(text);
   }
 
-  /**
-   * Build a user-only fallback message that still respects configured token limits.
-   * Prevents "empty truncation fallback" from re-introducing oversized user payloads.
-   */
+  protected buildLastUsage(result: ProviderQueryResult): ActiveSession['lastUsage'] {
+    return typeof result.inputTokens === 'number' && typeof result.outputTokens === 'number'
+      ? { input: result.inputTokens, output: result.outputTokens }
+      : null;
+  }
+
+  async startSession(session: ActiveSession, worker?: WorkerRef): Promise<void> {
+    // The persisted id is the FK target even when a fallback left another id in memory.
+    const persisted = this.dbManager.getSessionStore().getSessionById(session.sessionDbId)?.memory_session_id;
+    if (persisted) session.memorySessionId = persisted;
+    else if (!session.memorySessionId) {
+      session.memorySessionId = `custom-${session.contentSessionId}-${Date.now()}`;
+      this.dbManager.getSessionStore().updateMemorySessionId(session.sessionDbId, session.memorySessionId);
+    }
+    return super.startSession(session, worker);
+  }
+
   private buildLatestUserFallback(
     history: ConversationMessage[],
     maxTokens: number
@@ -1716,341 +942,338 @@ export class CustomAgent {
     return [head, ...kept];
   }
 
-  /**
-   * Query with full conversation history (multi-turn) and JSON response enforcement
-   */
-  private async queryJsonMultiTurn(
+  protected async query(
     history: ConversationMessage[],
     config: CustomAgentConfig,
-    abortSignal?: AbortSignal,
-    sessionIdHeader?: string,
-    session?: ActiveSession
-  ): Promise<{ content: string; tokensUsed?: number }> {
-    // Truncate history if limits are configured
-    const truncatedHistory = this.truncateHistory(history, config, session);
-
-    if (config.protocol === 'gemini') {
-      if (config.streaming) {
-        return this.queryGeminiJsonMultiTurnStream(truncatedHistory, config, abortSignal, sessionIdHeader);
-      }
-      return this.queryGeminiJsonMultiTurn(truncatedHistory, config, abortSignal, sessionIdHeader);
-    } else if (config.protocol === 'codex') {
-      if (config.streaming) {
-        return this.queryCodexJsonMultiTurnStream(truncatedHistory, config, abortSignal, sessionIdHeader);
-      }
-      return this.queryCodexJsonMultiTurn(truncatedHistory, config, abortSignal, sessionIdHeader);
-    } else {
-      if (config.streaming) {
-        return this.queryOpenAIJsonMultiTurnStream(truncatedHistory, config, abortSignal, sessionIdHeader);
-      }
-      return this.queryOpenAIJsonMultiTurn(truncatedHistory, config, abortSignal, sessionIdHeader);
-    }
-  }
-
-  /**
-   * Query Gemini API with multi-turn conversation (streaming, JSON enforced)
-   */
-  private async queryGeminiJsonMultiTurnStream(
-    history: ConversationMessage[],
-    config: CustomAgentConfig,
-    abortSignal?: AbortSignal,
-    sessionIdHeader?: string
-  ): Promise<{ content: string; tokensUsed?: number }> {
-    const contents = this.toGeminiContents(history);
-    const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
-    const url = buildApiUrl(config.apiUrl, config.protocol, config.model, true);
-
-    logger.debug('SDK', `Querying Custom/Gemini JSON multi-turn stream (${config.model})`, {
-      turns: history.length,
-      totalChars,
-      url
-    });
-
-    const result = await fetchWithTimeoutAndRetry(url, {
-      method: 'POST',
-      headers: buildGeminiJsonHeaders(config.apiKey, sessionIdHeader),
-      body: JSON.stringify({
-        generationConfig: buildGeminiGenerationConfig(config.model, true),
-        contents,
-      }),
-    }, config, 3, abortSignal, parseGeminiSseStreamFromResponse);
-
-    if (!result.ok) {
-      throw new Error(`Custom/Gemini API error: ${result.status} - ${result.body}`);
-    }
-
-    const { parts, tokensUsed } = result.data;
-
-    if (parts.length === 0) {
-      logger.warn('SDK', 'Empty stream response from Custom/Gemini');
-      return { content: '' };
-    }
-
-    return { content: extractResponseText(parts), tokensUsed };
-  }
-
-  /**
-   * Query Gemini API with multi-turn conversation (non-streaming, JSON enforced)
-   */
-  private async queryGeminiJsonMultiTurn(
-    history: ConversationMessage[],
-    config: CustomAgentConfig,
-    abortSignal?: AbortSignal,
-    sessionIdHeader?: string
-  ): Promise<{ content: string; tokensUsed?: number }> {
-    const contents = this.toGeminiContents(history);
-    const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
-    const url = buildApiUrl(config.apiUrl, config.protocol, config.model);
-
-    logger.debug('SDK', `Querying Custom/Gemini JSON multi-turn (${config.model})`, {
-      turns: history.length,
-      totalChars,
-      url
-    });
-
-    const result = await fetchWithTimeoutAndRetry(url, {
-      method: 'POST',
-      headers: buildGeminiJsonHeaders(config.apiKey, sessionIdHeader),
-      body: JSON.stringify({
-        generationConfig: buildGeminiGenerationConfig(config.model, true),
-        contents,
-      }),
-    }, config, 3, abortSignal, readResponseBodyText);
-
-    if (!result.ok) {
-      throw new Error(`Custom/Gemini API error: ${result.status} - ${result.body}`);
-    }
-
-    const parsed = parseGeminiJsonOrSseWithContext(result.data, result.status);
-    const parts = parsed.parts;
-
-    if (!parts || parts.length === 0) {
-      if (parsed.usedSseFallback) {
-        logger.warn('SDK', 'Empty stream response from Custom/Gemini');
-      } else {
-        logger.warn('SDK', 'Empty response from Custom/Gemini');
-      }
-      return { content: '' };
-    }
-
-    if (parsed.usedSseFallback) {
-      logger.debug('SDK', 'Parsed SSE response from Custom/Gemini while stream=false');
-    }
-
-    return { content: extractResponseText(parts), tokensUsed: parsed.tokensUsed };
-  }
-
-  /**
-   * Query OpenAI API with multi-turn conversation (JSON enforced)
-   */
-  private async queryOpenAIJsonMultiTurn(
-    history: ConversationMessage[],
-    config: CustomAgentConfig,
-    abortSignal?: AbortSignal,
-    sessionIdHeader?: string
-  ): Promise<{ content: string; tokensUsed?: number }> {
-    const messages = this.toOpenAIMessages(history);
-    const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
-
-    logger.debug('SDK', `Querying Custom/OpenAI JSON multi-turn (${config.model})`, {
-      turns: history.length,
-      totalChars
-    });
-
-    const url = buildApiUrl(config.apiUrl, config.protocol, config.model);
-
-    const result = await fetchWithTimeoutAndRetry(url, {
-      method: 'POST',
-      headers: buildBearerJsonHeaders(config.apiKey, sessionIdHeader),
-      body: JSON.stringify(buildOpenAIJsonRequestBody(config.model, messages, false, sessionIdHeader)),
-    }, config, 3, abortSignal, readResponseBodyText);
-
-    if (!result.ok) {
-      throw new Error(`Custom/OpenAI API error: ${result.status} - ${result.body}`);
-    }
-
-    const parsed = parseOpenAIJsonOrSseWithContext(result.data, result.status);
-    if (parsed.error) {
-      throw new Error(`Custom/OpenAI API error: ${parsed.error}`);
-    }
-
-    if (!parsed.content && parsed.usedSseFallback) {
-      logger.warn('SDK', 'Empty stream response from Custom/OpenAI');
-      return { content: '', tokensUsed: parsed.tokensUsed };
-    }
-
-    if (parsed.usedSseFallback) {
-      logger.debug('SDK', 'Parsed SSE response from Custom/OpenAI while stream=false');
-    }
-
-    return { content: parsed.content, tokensUsed: parsed.tokensUsed };
-  }
-
-  /**
-   * Query OpenAI API with multi-turn conversation (streaming, JSON enforced)
-   */
-  private async queryOpenAIJsonMultiTurnStream(
-    history: ConversationMessage[],
-    config: CustomAgentConfig,
-    abortSignal?: AbortSignal,
-    sessionIdHeader?: string
-  ): Promise<{ content: string; tokensUsed?: number }> {
-    const messages = this.toOpenAIMessages(history);
-    const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
-
-    logger.debug('SDK', `Querying Custom/OpenAI JSON multi-turn stream (${config.model})`, {
-      turns: history.length,
-      totalChars
-    });
-
-    const url = buildApiUrl(config.apiUrl, config.protocol, config.model);
-
-    const result = await fetchWithTimeoutAndRetry(url, {
-      method: 'POST',
-      headers: buildBearerJsonHeaders(config.apiKey, sessionIdHeader),
-      body: JSON.stringify(buildOpenAIJsonRequestBody(config.model, messages, true, sessionIdHeader)),
-    }, config, 3, abortSignal, parseOpenAISseStreamFromResponse);
-
-    if (!result.ok) {
-      throw new Error(`Custom/OpenAI API error: ${result.status} - ${result.body}`);
-    }
-
-    const { content, tokensUsed, error } = result.data;
-    if (error) {
-      throw new Error(`Custom/OpenAI API error: ${error}`);
-    }
-
-    if (!content) {
-      logger.warn('SDK', 'Empty stream response from Custom/OpenAI');
-      return { content: '' };
-    }
-
-    return { content, tokensUsed };
-  }
-
-  /**
-   * Query Codex Responses API with multi-turn conversation (JSON enforced)
-   */
-  private async queryCodexJsonMultiTurn(
-    history: ConversationMessage[],
-    config: CustomAgentConfig,
-    abortSignal?: AbortSignal,
-    sessionIdHeader?: string
-  ): Promise<{ content: string; tokensUsed?: number }> {
-    const messages = this.toOpenAIMessages(history);
-    const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
-
-    logger.debug('SDK', `Querying Custom/Codex JSON multi-turn (${config.model})`, {
-      turns: history.length,
-      totalChars
-    });
-
-    const url = buildApiUrl(config.apiUrl, config.protocol, config.model);
-
-    const result = await fetchWithTimeoutAndRetry(url, {
-      method: 'POST',
-      headers: buildBearerJsonHeaders(config.apiKey, sessionIdHeader),
-      body: JSON.stringify(buildCodexJsonRequestBody(config.model, messages, false, sessionIdHeader)),
-    }, config, 3, abortSignal, parseCodexSseStreamFromResponse);
-
-    if (!result.ok) {
-      throw new Error(`Custom/Codex API error: ${result.status} - ${result.body}`);
-    }
-
-    const { content, tokensUsed, error } = result.data;
-    const codexError = error;
-    if (codexError) {
-      throw new Error(`Custom/Codex API error: ${codexError}`);
-    }
-
-    return {
-      content,
-      tokensUsed
+    signal?: AbortSignal,
+    perAttemptTimeoutMs?: number,
+    paidSendBudget?: PaidSendBudget,
+    label?: ObserverRequestLabel,
+  ): Promise<ProviderQueryResult> {
+    if (!config.apiUrl || !config.model) throw this.missingApiKeyError();
+    const url = buildApiUrl(config.apiUrl, config.protocol, config.model, config.streaming);
+    const sessionId = label?.contentSessionId !== undefined
+      ? (label.contentSessionId.trim() || (label.generationId ? `custom-${label.generationId}` : resolveRequestSessionId('').sessionId))
+      : undefined;
+    const messages = this.conversationToOpenAIMessages(history, config.systemPrompt);
+    const plainText = config.plainText || label?.kind === 'field_compression' || label?.kind === 'telegram_wrapup';
+    const maxOutputTokens = resolveObserverMaxOutputTokens();
+    const reasoningOff = resolveOpenAICompatReasoning(config.reasoning) !== 'on';
+    const clientAttemptId = paidSendBudget?.clientAttemptId ?? randomUUID();
+    const timeoutMs = config.totalTimeoutSeconds > 0
+      ? Math.min(perAttemptTimeoutMs ?? Infinity, config.totalTimeoutSeconds * 1000)
+      : perAttemptTimeoutMs;
+    const streamed = config.protocol === 'openai' && config.streaming && streamsChatCompletion(url);
+    const liveness = {
+      ...resolveStreamLiveness(timeoutMs ?? (streamed ? undefined : resolveLlmTimeoutMs()), resolveStreamIdleTimeoutMs()),
+      ...(config.firstTokenTimeoutSeconds > 0 ? { firstChunkTimeoutMs: config.firstTokenTimeoutSeconds * 1000 } : {}),
     };
+
+    return withKeyPool({ poolId: 'custom', keys: resolvePoolKeys(config), label: `Custom/${config.protocol}`, rateLimitUntilNextKey }, ({ key, poolSize }) =>
+      withRetry(async attemptSignal => {
+        if (config.protocol !== 'openai') {
+          const body = config.protocol === 'gemini'
+            ? {
+              generationConfig: buildGeminiGenerationConfig(config.model, !plainText, reasoningOff),
+              ...(messages.some(message => message.role === 'system') ? {
+                systemInstruction: { parts: messages.filter(message => message.role === 'system').map(message => ({ text: message.content })) },
+              } : {}),
+              contents: messages.filter(message => message.role !== 'system').map(message => ({
+                role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: message.content }],
+              })),
+            }
+            : buildCodexJsonRequestBody(config.model, messages, config.streaming, sessionId);
+          if (config.protocol === 'codex') {
+            if (plainText) delete body.text;
+            if (!reasoningOff) delete body.reasoning;
+          }
+          return this.queryNative(url, body, config, key, attemptSignal, sessionId, clientAttemptId);
+        }
+
+        const body = buildOpenAIJsonRequestBody(config.model, messages, streamed, sessionId);
+        delete body.max_tokens;
+        if (plainText) delete body.response_format;
+        if (!reasoningOff) {
+          delete body.reasoning_effort;
+          delete body.thinkingConfig;
+          delete body.thinking;
+        }
+        const send = async (reasoning: boolean) => {
+          const exchange = await sendChatCompletion({
+            url,
+            headers: { ...buildBearerJsonHeaders(key, sessionId), 'x-client-request-id': clientAttemptId },
+            body: { ...body, ...(reasoning ? { reasoning: REASONING_DISABLED } : {}) },
+            maxOutputTokens,
+            signal: attemptSignal,
+            liveness,
+            stream: streamed,
+            nonStreamTimeoutMs: timeoutMs ?? resolveLlmTimeoutMs(),
+            label: 'Custom/OpenAI',
+            classify: input => classifyOpenAICompatError({ ...input, endpointLabel: 'Custom/OpenAI', requestUrl: url }),
+          });
+          const data = exchange.body as OpenAIResponse;
+          if (data.error) throw classifyOpenAICompatError({
+            status: exchange.status, bodyText: JSON.stringify(data), headers: exchange.headers,
+            cause: new Error(formatOpenAIError(data.error) ?? 'Custom/OpenAI error'), endpointLabel: 'Custom/OpenAI', requestUrl: url,
+          });
+          return data;
+        };
+        let data: OpenAIResponse;
+        const includeReasoning = reasoningOff && !endpointRejectsReasoningField(url);
+        try {
+          data = await send(includeReasoning);
+        } catch (error) {
+          const detail = error instanceof Error ? `${error.message}\n${error.cause instanceof Error ? error.cause.message : ''}` : String(error);
+          if (!includeReasoning || !isClassified(error) || error.kind !== 'unrecoverable' || !isUnknownReasoningParameter(detail)) throw error;
+          rememberEndpointRejectsReasoningField(url);
+          data = await send(false);
+        }
+        let choice = data.choices?.[0];
+        const firstContent = stripLeadingThinkBlock(assistantText(choice?.message?.content));
+        if (isLengthTruncatedEmptyReply(firstContent, choice?.finish_reason) && !reasoningOff && !endpointRejectsReasoningField(url)
+          && (!paidSendBudget || paidSendBudget.spentPaidSends + 1 < paidSendBudget.maxPaidSends)
+          && claimReasoningBudgetRetry(paidSendBudget)) {
+          const firstUsage = data.usage;
+          // Only the known empty-reasoning failure buys one extra send, under the same budget/deadline.
+          try {
+            data = await send(true);
+            const combined = combineBilledChatUsage(
+              { promptTokens: firstUsage?.prompt_tokens, completionTokens: firstUsage?.completion_tokens, totalTokens: firstUsage?.total_tokens },
+              { promptTokens: data.usage?.prompt_tokens, completionTokens: data.usage?.completion_tokens, totalTokens: data.usage?.total_tokens },
+            );
+            data.usage = { prompt_tokens: combined.promptTokens, completion_tokens: combined.completionTokens, total_tokens: combined.totalTokens };
+            choice = data.choices?.[0];
+          } catch (error) {
+            if (signal?.aborted) throw error;
+            logger.warn('SDK', 'Custom/OpenAI reasoning retry failed; keeping the billed empty reply', {}, error as Error);
+          }
+        }
+        return {
+          content: stripLeadingThinkBlock(assistantText(choice?.message?.content)),
+          inputTokens: data.usage?.prompt_tokens,
+          outputTokens: data.usage?.completion_tokens,
+          tokensUsed: data.usage?.total_tokens,
+          servedModel: data.model,
+          finishReason: choice?.finish_reason,
+        };
+      }, {
+        label: `Custom/${config.protocol} ${config.model}`,
+        abortSignal: signal,
+        perAttemptTimeoutMs: timeoutMs,
+        paidSendBudget,
+        clientAttemptId,
+        ...(config.protocol === 'openai' ? { attemptDeadlineOwnedByCaller: true, ...(streamed ? { retryBeforeOutput: true } : {}) } : {}),
+        // Condensation has its own outer deadline and cannot start a retry after it.
+        ...(label?.kind === 'field_compression' ? { maxRetries: 0 } : {}),
+        ...retryPolicyForPool(poolSize),
+      }),
+    );
   }
 
-  /**
-   * Query Codex Responses API with multi-turn conversation (streaming, JSON enforced)
-   */
-  private async queryCodexJsonMultiTurnStream(
-    history: ConversationMessage[],
+  /** Native Gemini and Responses share framing, cancellation and failure accounting. */
+  private async queryNative(
+    url: string,
+    body: Record<string, unknown>,
     config: CustomAgentConfig,
-    abortSignal?: AbortSignal,
-    sessionIdHeader?: string
-  ): Promise<{ content: string; tokensUsed?: number }> {
-    const messages = this.toOpenAIMessages(history);
-    const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
-
-    logger.debug('SDK', `Querying Custom/Codex JSON multi-turn stream (${config.model})`, {
-      turns: history.length,
-      totalChars
-    });
-
-    const url = buildApiUrl(config.apiUrl, config.protocol, config.model);
-
-    const result = await fetchWithTimeoutAndRetry(url, {
-      method: 'POST',
-      headers: buildBearerJsonHeaders(config.apiKey, sessionIdHeader),
-      body: JSON.stringify(buildCodexJsonRequestBody(config.model, messages, true, sessionIdHeader)),
-    }, config, 3, abortSignal, parseCodexSseStreamFromResponse);
-
-    if (!result.ok) {
-      throw new Error(`Custom/Codex API error: ${result.status} - ${result.body}`);
-    }
-
-    const { content, tokensUsed, error } = result.data;
-    if (error) {
-      throw new Error(`Custom/Codex API error: ${error}`);
-    }
-
-    if (!content) {
-      logger.warn('SDK', 'Empty stream response from Custom/Codex');
-      return { content: '' };
-    }
-
-    return { content, tokensUsed };
-  }
-
-  /**
-   * Get Custom configuration from settings
-   */
-  private getCustomConfig(): CustomAgentConfig {
-    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
-
-    const protocol = parseCustomProtocol(settings.CLAUDE_MEM_CUSTOM_PROTOCOL);
-
-    return {
-      apiUrl: settings.CLAUDE_MEM_CUSTOM_API_URL || '',
-      apiKey: settings.CLAUDE_MEM_CUSTOM_API_KEY || getCredential('CUSTOM_API_KEY') || '',
-      model: settings.CLAUDE_MEM_CUSTOM_MODEL || 'gpt-4o',
-      protocol,
-      streaming: settings.CLAUDE_MEM_CUSTOM_STREAMING !== 'false',
-      maxContextMessages: parseOptionalPositiveInt(settings.CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES),
-      maxTokens: parseOptionalPositiveInt(settings.CLAUDE_MEM_CUSTOM_MAX_TOKENS),
-      firstTokenTimeoutSeconds: parseOptionalPositiveInt(settings.CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT),
-      totalTimeoutSeconds: parseOptionalPositiveInt(settings.CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT),
+    apiKey: string,
+    signal: AbortSignal,
+    sessionId: string | undefined,
+    clientAttemptId: string,
+  ): Promise<ProviderQueryResult> {
+    const controller = new AbortController();
+    let firstTokenTimer: ReturnType<typeof setTimeout> | undefined;
+    let totalTimer: ReturnType<typeof setTimeout> | undefined;
+    let response: Response | undefined;
+    let outputStarted = false;
+    let bodyStarted = false;
+    let terminal = false;
+    let content = '';
+    let completedText = '';
+    let result: ProviderQueryResult = { content: '' };
+    const label = `Custom/${config.protocol === 'gemini' ? 'Gemini' : 'Codex'}`;
+    const classify = (cause: unknown, status?: number, bodyText?: string, headers?: Headers) => {
+      if (config.protocol === 'gemini') {
+        // Native Gemini has structured quota windows, retry hints and 400 auth failures.
+        if (status !== undefined && status >= 200 && status < 300 && bodyText) {
+          try {
+            const code = Number(JSON.parse(bodyText)?.error?.code);
+            if (Number.isInteger(code) && code >= 400 && code < 600) status = code;
+          } catch { /* The output parser reports malformed response bodies. */ }
+        }
+        return classifyGeminiError({ cause, status, bodyText, headers });
+      }
+      return classifyOpenAICompatError({ cause, status, bodyText, headers, endpointLabel: label, requestUrl: url });
     };
+    const abort = () => controller.abort(signal.reason);
+    const timeout = () => controller.abort(new Error(`${label} request timeout`));
+    if (signal.aborted) abort();
+    else signal.addEventListener('abort', abort, { once: true });
+    if (config.firstTokenTimeoutSeconds > 0) firstTokenTimer = setTimeout(timeout, config.firstTokenTimeoutSeconds * 1000);
+    if (config.totalTimeoutSeconds > 0) totalTimer = setTimeout(timeout, config.totalTimeoutSeconds * 1000);
+
+    const apply = (data: GeminiResponse & CodexResponse & { type?: string; delta?: string; text?: string; response?: CodexResponse }) => {
+      if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('response is not a JSON object');
+      const nested = data.response;
+      if (data.error || nested?.error) {
+        throw classify(new Error(formatOpenAIError(data.error ?? nested?.error) ?? 'API error'), response?.status,
+          JSON.stringify({ error: data.error ?? nested?.error }), response?.headers);
+      }
+      if (config.protocol === 'gemini') {
+        const candidate = data.candidates?.[0];
+        const parts = candidate?.content?.parts;
+        if (parts?.some(part => !!part.text)) outputStarted = true;
+        content += extractResponseText(parts);
+        if (candidate?.finishReason) { terminal = true; result.finishReason = candidate.finishReason; }
+        if (data.modelVersion) result.servedModel = data.modelVersion;
+        if (data.usageMetadata) {
+          result.inputTokens = data.usageMetadata.promptTokenCount;
+          const candidates = data.usageMetadata.candidatesTokenCount;
+          const thoughts = data.usageMetadata.thoughtsTokenCount;
+          result.outputTokens = candidates === undefined && thoughts === undefined ? undefined : (candidates ?? 0) + (thoughts ?? 0);
+          result.tokensUsed = data.usageMetadata.totalTokenCount;
+        }
+        return;
+      }
+      if (data.type === 'response.output_text.delta' && typeof data.delta === 'string') {
+        content += data.delta;
+        outputStarted ||= !!data.delta;
+      } else if (data.type === 'response.output_text.done' && typeof data.text === 'string') {
+        // Multiple output parts each emit done: their full text must not replace earlier parts.
+        if (!content) completedText += data.text;
+        outputStarted ||= !!data.text;
+      } else if (data.type?.includes('reasoning') && (data.delta || data.text)) {
+        outputStarted = true;
+      }
+      const payload = nested ?? data;
+      const fullText = extractCodexResponseText(payload);
+      if (fullText) { completedText = fullText; outputStarted = true; }
+      if (payload.model) result.servedModel = payload.model;
+      if (payload.usage) {
+        result.inputTokens = payload.usage.input_tokens;
+        result.outputTokens = payload.usage.output_tokens;
+        result.tokensUsed = payload.usage.total_tokens;
+      }
+      if (payload.status === 'failed' || data.type === 'response.failed' || data.type === 'error') {
+        throw new Error(`${label} response failed`);
+      }
+      if (payload.status === 'incomplete' || data.type === 'response.incomplete') {
+        terminal = true;
+        result.finishReason = payload.incomplete_details?.reason === 'max_output_tokens' ? 'length' : payload.incomplete_details?.reason ?? 'incomplete';
+      } else if (payload.status === 'completed' || data.type === 'response.completed') {
+        terminal = true;
+        result.finishReason = 'stop';
+      }
+    };
+
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          ...(config.protocol === 'gemini' ? buildGeminiJsonHeaders(apiKey, sessionId) : buildBearerJsonHeaders(apiKey, sessionId)),
+          'x-client-request-id': clientAttemptId,
+        },
+        body: JSON.stringify(body), signal: controller.signal,
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw classify(new Error(`${label} HTTP ${response.status}`), response.status, text, response.headers);
+      }
+      const read = async () => {
+        const chunks = (async function* () {
+          if (!response!.body) return;
+          for await (const chunk of iterateByteStream(response!.body)) {
+            if (chunk.byteLength) bodyStarted = true;
+            if (chunk.byteLength && firstTokenTimer) { clearTimeout(firstTokenTimer); firstTokenTimer = undefined; }
+            yield chunk;
+          }
+        })();
+        // Sniff framing as well as Content-Type: gateways sometimes preserve neither stream flag nor header.
+        const iterator = chunks[Symbol.asyncIterator]();
+        const leading: Uint8Array[] = [];
+        let prefix = '';
+        let done = false;
+        while (prefix.trim().length < 6) {
+          const part = await iterator.next();
+          if (part.done) { done = true; break; }
+          leading.push(part.value);
+          prefix += new TextDecoder().decode(part.value);
+        }
+        const source = (async function* () {
+          try {
+            yield* leading;
+            if (!done) while (true) {
+              const part = await iterator.next();
+              if (part.done) break;
+              yield part.value;
+            }
+          } finally { await iterator.return?.(); }
+        })();
+        const sse = (response!.headers.get('content-type') ?? '').includes('text/event-stream') || /^\s*(?:data:|event:|id:|retry:|:)/.test(prefix);
+        if (sse) {
+          for await (const event of readSseEvents(source)) {
+            if (event.data === '[DONE]') { terminal = true; break; }
+            if (event.data) apply(JSON.parse(event.data));
+          }
+          if (!terminal) throw new Error('stream ended before the reply finished');
+        } else {
+          const decoder = new TextDecoder();
+          let text = '';
+          for await (const chunk of source) text += decoder.decode(chunk, { stream: true });
+          apply(JSON.parse(text + decoder.decode()));
+        }
+      };
+      let rejectAbort: (() => void) | undefined;
+      const aborted = new Promise<never>((_, reject) => {
+        rejectAbort = () => reject(controller.signal.reason ?? new DOMException('Aborted', 'AbortError'));
+        if (controller.signal.aborted) rejectAbort();
+        else controller.signal.addEventListener('abort', rejectAbort, { once: true });
+      });
+      try { await Promise.race([read(), aborted]); }
+      finally { if (rejectAbort) controller.signal.removeEventListener('abort', rejectAbort); }
+      return { ...result, content: completedText || content };
+    } catch (error) {
+      if (signal.aborted) throw error;
+      if (isClassified(error) && !outputStarted) throw error;
+      if (outputStarted || (bodyStarted && response?.ok)) throw new ClassifiedProviderError(`${label} response could not be read: ${error instanceof Error ? error.message : String(error)}`, {
+        kind: 'unrecoverable', paidSendOutcome: 'output_failure', cause: error,
+      });
+      throw classify(error);
+    } finally {
+      if (firstTokenTimer) clearTimeout(firstTokenTimer);
+      if (totalTimer) clearTimeout(totalTimer);
+      signal.removeEventListener('abort', abort);
+      controller.abort();
+    }
   }
 }
 
-/**
- * Check if Custom provider is available (has URL and API key configured)
- */
-export function isCustomAvailable(): boolean {
-  const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
-  return !!(settings.CLAUDE_MEM_CUSTOM_API_URL && (settings.CLAUDE_MEM_CUSTOM_API_KEY || getCredential('CUSTOM_API_KEY')));
+export function resolveCustomConfig(settingsPath: string = USER_SETTINGS_PATH): CustomAgentConfig {
+  const settings = SettingsDefaultsManager.loadFromFile(settingsPath);
+  const apiUrl = (settings.CLAUDE_MEM_CUSTOM_API_URL || '').trim();
+  const apiKeys = keysForEndpoint(apiUrl, buildKeyPool(
+    settings.CLAUDE_MEM_CUSTOM_API_KEY || getCredential('CUSTOM_API_KEY') || '',
+    settings.CLAUDE_MEM_CUSTOM_API_KEYS || getCredential('CUSTOM_API_KEYS') || '',
+  ));
+  return {
+    apiUrl, apiKey: apiKeys[0] ?? '', apiKeys,
+    model: (settings.CLAUDE_MEM_CUSTOM_MODEL || 'gpt-4o').trim(),
+    protocol: parseCustomProtocol(settings.CLAUDE_MEM_CUSTOM_PROTOCOL),
+    streaming: settings.CLAUDE_MEM_CUSTOM_STREAMING !== 'false',
+    reasoning: settings.CLAUDE_MEM_CUSTOM_REASONING,
+    maxContextMessages: parseOptionalPositiveInt(settings.CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES),
+    maxTokens: parseOptionalPositiveInt(settings.CLAUDE_MEM_CUSTOM_MAX_TOKENS),
+    firstTokenTimeoutSeconds: parseOptionalPositiveInt(settings.CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT),
+    totalTimeoutSeconds: parseOptionalPositiveInt(settings.CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT),
+  };
 }
 
-/**
- * Check if Custom is the selected provider
- */
+export function isCustomAvailable(settingsPath: string = USER_SETTINGS_PATH): boolean {
+  const config = resolveCustomConfig(settingsPath);
+  return !!(config.apiUrl && config.model && (config.apiKeys?.length || isLocalEndpointUrl(config.apiUrl)));
+}
+
 export function isCustomSelected(): boolean {
-  const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
-  return settings.CLAUDE_MEM_PROVIDER === 'custom';
+  return SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH).CLAUDE_MEM_PROVIDER === 'custom';
 }
 
-export const __testOnly = {
-  parseOpenAISseStream,
-  parseCustomProtocol,
-  parseOptionalPositiveInt,
-};
+export const __testOnly = { parseOpenAISseStream, parseCustomProtocol, parseOptionalPositiveInt };

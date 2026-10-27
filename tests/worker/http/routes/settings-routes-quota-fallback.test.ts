@@ -68,6 +68,17 @@ describe('SettingsRoutes — quota fallback keys', () => {
     expect(persisted.CLAUDE_MEM_QUOTA_FALLBACK_MODEL).toBe('claude-haiku-4-5-20251001');
   });
 
+  it('saves Custom as a quota fallback target with its reasoning setting', () => {
+    const { jsonSpy } = post(handler, {
+      CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER: 'custom',
+      CLAUDE_MEM_CUSTOM_REASONING: 'on',
+    });
+    expect(jsonSpy).toHaveBeenCalledWith({ success: true, message: 'Settings updated successfully' });
+    const persisted = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(persisted.CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER).toBe('custom');
+    expect(persisted.CLAUDE_MEM_CUSTOM_REASONING).toBe('on');
+  });
+
   it('turns the fallback off with an empty value', () => {
     post(handler, { CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER: 'claude' });
     const { jsonSpy } = post(handler, { CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER: '' });
@@ -81,7 +92,7 @@ describe('SettingsRoutes — quota fallback keys', () => {
     expect(statusSpy).toHaveBeenCalledWith(400);
     expect(jsonSpy).toHaveBeenCalledWith({
       success: false,
-      error: 'CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER must be "claude" (or empty, the default), "gemini", "openrouter", "openai-compatible", or "off"',
+      error: 'CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER must be "claude" (or empty, the default), "gemini", "openrouter", "openai-compatible", "custom", or "off"',
     });
     expect(readFileSync(settingsPath, 'utf-8')).toBe(before);
   });

@@ -116,6 +116,20 @@ describe('buildObservationPromptJson', () => {
 });
 
 describe('JSON framing prompts with a real mode', () => {
+  it('includes recorded context when a JSON observer generation restarts', () => {
+    const mode = ModeManager.getInstance().loadMode('code');
+    const priorContext = 'The observer already recorded the database migration.';
+    for (const prompt of [
+      buildInitPromptJson('proj', 'session-1', 'check the version', mode, priorContext),
+      buildContinuationPromptJson('check the version', 2, 'session-1', mode, priorContext),
+    ]) {
+      expect(prompt).toContain(priorContext);
+      expect(prompt).toContain('do not re-record it');
+      expect(prompt).toContain('reply with exactly {"skip":true}');
+      expect(prompt).not.toContain('<skip_summary');
+    }
+  });
+
   it('never tell the JSON observer to answer in XML', () => {
     const mode = ModeManager.getInstance().loadMode('code');
     const prompts = {

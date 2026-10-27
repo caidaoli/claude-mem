@@ -17,7 +17,7 @@ Add these to `~/.claude-mem/settings.json`, or set them in the viewer under **Se
 
 | Setting | Values | Meaning |
 |---|---|---|
-| `CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER` | `claude` (the default; `""` means the same), `gemini`, `openrouter`, `openai-compatible`, `off` | Where observation work goes while the selected provider can't serve. `off` turns the fallback off: work waits for the provider. |
+| `CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER` | `claude` (the default; `""` means the same), `gemini`, `openrouter`, `openai-compatible`, `custom`, `off` | Where observation work goes while the selected provider can't serve. `off` turns the fallback off: work waits for the provider. |
 | `CLAUDE_MEM_QUOTA_FALLBACK_MODEL` | `""` or a Claude model id or alias | The model for a **Claude** fallback run. Empty keeps `CLAUDE_MEM_MODEL` and tier routing. Ignored for every other fallback. |
 | `CLAUDE_MEM_QUOTA_FALLBACK_AUTH_METHOD` | `""` (the default, off), `subscription`, `api-key` | For a **Claude** observer: the other credential to run on while the primary one is held for quota. Tried before `CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER`. See below. |
 

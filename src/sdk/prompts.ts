@@ -175,8 +175,9 @@ ${buildSessionContextHeader(userPrompt)}
 ${getPrompt(mode, 'header_memory_start')}`;
 }
 
-export function buildInitPromptJson(project: string, sessionId: string, userPrompt: string, mode: ModeConfig): string {
+export function buildInitPromptJson(project: string, sessionId: string, userPrompt: string, mode: ModeConfig, priorContext: string = ''): string {
   return `${observerInstructions(mode, 'json')}
+${wrapPriorContext(priorContext)}
 
 ${buildSessionContextHeader(userPrompt)}
 
@@ -520,12 +521,17 @@ Never reply with an empty response, or with prose such as "Skipping", "No substa
 }
 
 export function buildObservationPromptJson(obs: Observation, mode: ModeConfig): string {
+  return renderObservationPromptJson(buildObservationPromptParts(obs), mode);
+}
+
+/** JSON instructions applied to the same bounded evidence as the XML observer. */
+export function renderObservationPromptJson(parts: ObservationPromptParts, mode: ModeConfig): string {
   const languageInstruction = mode.prompts.language_instruction?.trim();
   const languageSection = languageInstruction ? `\n\n${languageInstruction}` : '';
 
   // The XML prompt's closing instructions demand <observation>/<skip_summary/>;
   // appending a JSON schema after them left the model two contradictory formats.
-  return `${renderObservationEvidence(buildObservationPromptParts(obs))}
+  return `${renderObservationEvidence(parts)}
 Concrete debugging findings from logs, queue state, database rows, session routing, or code-path inspection count as durable discoveries and should be recorded.
 
 ${buildObservationFormatSection(mode, 'json')}
@@ -612,8 +618,8 @@ export function buildContinuationPrompt(
   return buildContinuationPromptInternal(userPrompt, mode, 'xml', priorContext);
 }
 
-export function buildContinuationPromptJson(userPrompt: string, promptNumber: number, contentSessionId: string, mode: ModeConfig): string {
-  return buildContinuationPromptInternal(userPrompt, mode, 'json');
+export function buildContinuationPromptJson(userPrompt: string, promptNumber: number, contentSessionId: string, mode: ModeConfig, priorContext: string = ''): string {
+  return buildContinuationPromptInternal(userPrompt, mode, 'json', priorContext);
 }
 
 function buildContinuationPromptInternal(userPrompt: string, mode: ModeConfig, format: OutputFormat, priorContext: string = ''): string {

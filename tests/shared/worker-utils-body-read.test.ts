@@ -37,3 +37,30 @@ describe('executeWithWorkerFallback body read (#3161)', () => {
     expect((result as { reason?: string }).reason).toBe('worker_body_read_failed');
   });
 });
+
+describe('body first-chunk deadline', () => {
+  it('keeps waiting for the first chunk after HTTP headers arrived', async () => {
+    const { fetchStreamWithIdleTimeout } = await import('../../src/shared/worker-utils.js');
+    global.fetch = (async (_url: unknown, init: RequestInit) => new Response(new ReadableStream({ start(controller) {
+      init.signal!.addEventListener('abort', () => controller.error(init.signal!.reason), { once: true });
+    } }))) as typeof fetch;
+    const response = await fetchStreamWithIdleTimeout('http://localhost/model', {}, {
+      idleTimeoutMs: 500, absoluteCapMs: 1000, firstChunkTimeoutMs: 15,
+    });
+    const consume = async () => { for await (const _chunk of response.chunks) {} };
+    await expect(consume()).rejects.toThrow('first body chunk');
+  });
+
+  it('clears the first-chunk deadline while continuing to enforce the total cap', async () => {
+    const { fetchStreamWithIdleTimeout } = await import('../../src/shared/worker-utils.js');
+    global.fetch = (async (_url: unknown, init: RequestInit) => new Response(new ReadableStream({ start(controller) {
+      controller.enqueue(new TextEncoder().encode('first'));
+      init.signal!.addEventListener('abort', () => controller.error(init.signal!.reason), { once: true });
+    } }))) as typeof fetch;
+    const response = await fetchStreamWithIdleTimeout('http://localhost/model', {}, {
+      idleTimeoutMs: 500, absoluteCapMs: 45, firstChunkTimeoutMs: 10,
+    });
+    const consume = async () => { for await (const _chunk of response.chunks) {} };
+    await expect(consume()).rejects.toThrow('45ms');
+  });
+});

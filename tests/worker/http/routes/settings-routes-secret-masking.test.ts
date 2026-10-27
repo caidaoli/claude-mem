@@ -53,12 +53,13 @@ describe('GET /api/settings masks every secret shape', () => {
     CLAUDE_MEM_GEMINI_API_KEYS: 'AIza-listSECRET0004,AIza-listSECRET0005',
     CLAUDE_MEM_OPENAI_COMPAT_API_KEYS: 'nvapi-lineSECRET0006\nnvapi-lineSECRET0007',
     CLAUDE_MEM_OPENAI_COMPAT_API_KEY: 'nvapi-singleSECRET0008',
+    CLAUDE_MEM_CUSTOM_API_KEYS: ['custom-poolSECRET0009', 'custom-poolSECRET0010'],
   };
 
   it('never returns a stored key in cleartext, whether a string, a comma or newline list, or an array', () => {
     writeFileSync(settingsPath, JSON.stringify(STORED));
     const text = JSON.stringify(call(handlers()['GET /api/settings']).payload);
-    for (const secret of ['singleSECRET0001', 'arraySECRET0002', 'arraySECRET0003', 'listSECRET0004', 'listSECRET0005', 'lineSECRET0006', 'lineSECRET0007', 'singleSECRET0008']) {
+    for (const secret of ['singleSECRET0001', 'arraySECRET0002', 'arraySECRET0003', 'listSECRET0004', 'listSECRET0005', 'lineSECRET0006', 'lineSECRET0007', 'singleSECRET0008', 'poolSECRET0009', 'poolSECRET0010']) {
       expect(text).not.toContain(secret);
     }
   });
@@ -71,11 +72,26 @@ describe('GET /api/settings masks every secret shape', () => {
     expect(posted.status()).toBe(200);
 
     const after = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(after.CLAUDE_MEM_CUSTOM_API_KEYS).toEqual(STORED.CLAUDE_MEM_CUSTOM_API_KEYS);
     expect(after.CLAUDE_MEM_OPENROUTER_API_KEY).toBe(STORED.CLAUDE_MEM_OPENROUTER_API_KEY);
     expect(after.CLAUDE_MEM_OPENROUTER_API_KEYS).toEqual(STORED.CLAUDE_MEM_OPENROUTER_API_KEYS);
     expect(after.CLAUDE_MEM_GEMINI_API_KEYS).toBe(STORED.CLAUDE_MEM_GEMINI_API_KEYS);
     expect(after.CLAUDE_MEM_OPENAI_COMPAT_API_KEYS).toBe(STORED.CLAUDE_MEM_OPENAI_COMPAT_API_KEYS);
     expect(after.CLAUDE_MEM_OPENAI_COMPAT_API_KEY).toBe(STORED.CLAUDE_MEM_OPENAI_COMPAT_API_KEY);
+  });
+
+  it('saves, masks, replaces and clears the Custom key pool', () => {
+    writeFileSync(settingsPath, JSON.stringify(STORED));
+    const routes = handlers();
+    const pool = 'custom-replacementSECRET0011,custom-replacementSECRET0012';
+    expect(call(routes['POST /api/settings'], { CLAUDE_MEM_CUSTOM_API_KEYS: pool }).status()).toBe(200);
+    expect(JSON.parse(readFileSync(settingsPath, 'utf-8')).CLAUDE_MEM_CUSTOM_API_KEYS).toBe(pool);
+    const got = call(routes['GET /api/settings']).payload;
+    expect(JSON.stringify(got)).not.toContain('replacementSECRET');
+    call(routes['POST /api/settings'], got);
+    expect(JSON.parse(readFileSync(settingsPath, 'utf-8')).CLAUDE_MEM_CUSTOM_API_KEYS).toBe(pool);
+    call(routes['POST /api/settings'], { CLAUDE_MEM_CUSTOM_API_KEYS: '' });
+    expect(JSON.parse(readFileSync(settingsPath, 'utf-8')).CLAUDE_MEM_CUSTOM_API_KEYS).toBe('');
   });
 
   it('still takes a real replacement pool from the viewer', () => {

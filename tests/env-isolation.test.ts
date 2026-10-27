@@ -4,6 +4,8 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import {
   envFilePath,
+  getCredential,
+  saveClaudeMemEnv,
   buildIsolatedEnv,
   buildIsolatedEnvWithFreshOAuth,
 } from '../src/shared/EnvManager.js';
@@ -99,6 +101,12 @@ describe('Issue #2375: ANTHROPIC_BASE_URL env-var isolation', () => {
   afterEach(() => {
     clearEnvFile();
     restoreOriginalEnv();
+  });
+
+  it('saves and reads the Custom rotation pool through the credential-file boundary', () => {
+    saveClaudeMemEnv({ CUSTOM_API_KEY: 'primary-custom', CUSTOM_API_KEYS: 'custom-one,custom-two' });
+    expect(getCredential('CUSTOM_API_KEY')).toBe('primary-custom');
+    expect(getCredential('CUSTOM_API_KEYS')).toBe('custom-one,custom-two');
   });
 
   it('leaked ANTHROPIC_BASE_URL is stripped from isolatedEnv', () => {

@@ -23,7 +23,7 @@ afterAll(() => {
   mock.module('../src/services/domain/ModeManager.js', () => realModeManagerSnapshot);
 });
 
-import { parseObservationsJson, parseSummaryJson } from '../src/sdk/parser.js';
+import { parseObservationsJson, parseObservationsJsonResult, parseSummaryJson } from '../src/sdk/parser.js';
 
 let loggerSpies: Array<ReturnType<typeof spyOn>> = [];
 
@@ -42,12 +42,26 @@ describe('parseObservationsJson', () => {
     loggerSpies = [];
   });
 
-  it('treats plain text responses as a skip (no JSON payload)', () => {
+  it('returns no observations through the legacy array API for plain text', () => {
     const result = parseObservationsJson(
       'Empty status checks or requests without execution details are skipped.',
       'test-correlation-id'
     );
     expect(result).toEqual([]);
+  });
+
+  it.each(['', 'Skipped because nothing happened.', '{"observations":', '{"error":"quota exhausted"}', 'null', '[null]'])('rejects unusable JSON output: %s', input => {
+    expect(parseObservationsJsonResult(input)).toEqual({ valid: false });
+  });
+
+  it.each(['{"skip":true}', '{}', '[]', '{"observations":[]}', '```json\n{"skip":true}\n```'])('accepts an explicit JSON skip: %s', input => {
+    expect(parseObservationsJsonResult(input)).toEqual({ valid: true, observations: [], summary: null });
+  });
+
+  it('preserves tolerant fenced JSON extraction in the validity-aware parser', () => {
+    const parsed = parseObservationsJsonResult('Here is the result:\n```json\n{"type":"discovery","title":"Kept"}\n```');
+    expect(parsed.valid).toBe(true);
+    if (parsed.valid) expect(parsed.observations[0].title).toBe('Kept');
   });
 
   it('supports explicit JSON skip sentinel', () => {

@@ -109,7 +109,7 @@ describe('Telegram wrap-up provider reuse', () => {
         undefined,
         undefined,
         undefined,
-        { kind: 'telegram_wrapup', sessionId: anonymousSessionId(input.contentSessionId) },
+        { kind: 'telegram_wrapup', sessionId: anonymousSessionId(input.contentSessionId), contentSessionId: input.contentSessionId },
       );
       expect(config.model).toBe('default-model');
     });

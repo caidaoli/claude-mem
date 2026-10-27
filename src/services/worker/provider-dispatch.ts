@@ -103,7 +103,7 @@ export interface ProviderSelection {
 }
 
 /** What CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER may name. */
-export const QUOTA_FALLBACK_PROVIDERS = ['claude', 'gemini', 'openrouter', 'openai-compatible'] as const;
+export const QUOTA_FALLBACK_PROVIDERS = ['claude', 'gemini', 'openrouter', 'openai-compatible', 'custom'] as const;
 export type QuotaFallbackProvider = typeof QUOTA_FALLBACK_PROVIDERS[number];
 
 /** The CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER value that turns the fallback off. */
@@ -148,6 +148,7 @@ function gatewayFallbackState(): 'not-refusing' | 'refusing' | 'probe' {
  */
 function isFallbackAvailable(provider: QuotaFallbackProvider): boolean {
   switch (provider) {
+    case 'custom': return isCustomAvailable();
     case 'gemini': return isGeminiAvailable();
     case 'openai-compatible': return isOpenAICompatAvailable();
     case 'claude': return canClaudeServeAsFallback();

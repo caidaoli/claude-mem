@@ -1,11 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import express from 'express';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
-import { isReportedReadyForCheck, WorkViewRoutes } from '../../../../src/services/worker/http/routes/WorkViewRoutes.js';
+import { configuredHumanCopyProvider, isReportedReadyForCheck, WorkViewRoutes } from '../../../../src/services/worker/http/routes/WorkViewRoutes.js';
+import { SettingsDefaultsManager } from '../../../../src/shared/SettingsDefaultsManager.js';
 import { contentFingerprint } from '../../../../src/services/work-view/review-store.js';
 import { reduceWorkState } from '../../../../src/services/work-view/data-source.mjs';
 import { HumanCopyWorker } from '../../../../src/services/work-view/human-copy-worker.mjs';
@@ -67,6 +68,61 @@ async function review(request: any, checked = true, headers: Record<string, stri
     body: JSON.stringify({ requestId: request.id, expectedFingerprint: request.contentFingerprint, checked }),
   });
 }
+
+describe('configured My Work copy provider', () => {
+  for (const selected of ['custom', 'openai-compatible'] as const) {
+    it(`publishes ${selected} titles and summaries without changing recorded work`, async () => {
+      const before = (await snapshot()).humanRequests[0];
+      const settings = {
+        ...SettingsDefaultsManager.getAllDefaults(), CLAUDE_MEM_PROVIDER: selected,
+        CLAUDE_MEM_CUSTOM_API_URL: 'http://localhost:1234', CLAUDE_MEM_CUSTOM_MODEL: 'custom-model',
+        CLAUDE_MEM_OPENAI_COMPAT_BASE_URL: 'http://localhost:1234/v1', CLAUDE_MEM_OPENAI_COMPAT_MODEL: 'compat-model',
+      };
+      const generator = {
+        title: '查看工作进展',
+        async generateHumanCopy(input: any) {
+          return { output: { title: this.title, summary: '工作记录已整理完成。', next: '',
+            workstreams: input.workstreams.map((stream: { id: string }) => ({ id: stream.id, title: '工作记录', summary: '可以查看进展。' })) } };
+        },
+      };
+      const unused = { generateHumanCopy: async () => { throw new Error('Wrong provider selected'); } };
+      const settingsSpy = spyOn(SettingsDefaultsManager, 'loadFromFile').mockReturnValue(settings);
+      let provider;
+      try {
+        provider = configuredHumanCopyProvider(join(directory, 'settings.json'), {
+          custom: selected === 'custom' ? generator : unused,
+          'openai-compatible': selected === 'openai-compatible' ? generator : unused,
+        });
+      } finally { settingsSpy.mockRestore(); }
+      expect(provider).not.toBeNull();
+      await stop();
+      await start(new HumanCopyWorker({ provider, cachePath: null, quietMs: 0, minIntervalMs: 0 }));
+      let request: any;
+      for (let attempt = 0; attempt < 50 && request?.humanCopy?.state !== 'current'; attempt++) {
+        request = (await snapshot()).humanRequests[0];
+        if (request.humanCopy.state !== 'current') await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      expect(request.humanCopy).toMatchObject({ state: 'current', title: generator.title, summary: '工作记录已整理完成。' });
+      expect(request.contentFingerprint).toBe(before.contentFingerprint);
+      expect(request.lifecycle).toEqual(before.lifecycle);
+    });
+  }
+
+  it('leaves unsupported or incomplete providers unavailable', () => {
+    const settings = { ...SettingsDefaultsManager.getAllDefaults(), CLAUDE_MEM_PROVIDER: 'custom', CLAUDE_MEM_CUSTOM_API_URL: '' };
+    const settingsSpy = spyOn(SettingsDefaultsManager, 'loadFromFile').mockReturnValue(settings);
+    const providers = { custom: { generateHumanCopy: async () => { throw new Error('Must not run'); } } };
+    try {
+      expect(configuredHumanCopyProvider(undefined, providers)).toBeNull();
+      settings.CLAUDE_MEM_PROVIDER = 'claude';
+      expect(configuredHumanCopyProvider(undefined, providers)).toBeNull();
+      settings.CLAUDE_MEM_PROVIDER = 'openai-compatible';
+      settings.CLAUDE_MEM_OPENAI_COMPAT_PRESET = 'custom';
+      settings.CLAUDE_MEM_OPENAI_COMPAT_BASE_URL = '';
+      expect(configuredHumanCopyProvider(undefined, providers)).toBeNull();
+    } finally { settingsSpy.mockRestore(); }
+  });
+});
 
 // A real linked conversation, kept deliberately small. Updates below come
 // through this separate writer connection, just as imported corrections do.

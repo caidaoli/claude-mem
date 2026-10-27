@@ -8,11 +8,15 @@ import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js
 import { USER_SETTINGS_PATH } from '../../shared/paths.js';
 import {
   buildInitPrompt,
+  buildInitPromptJson,
   buildObservationPromptParts,
   renderObservationPrompt,
+  renderObservationPromptJson,
   type ObservationPromptParts,
   buildSummaryPrompt,
+  buildSummaryPromptJson,
   buildContinuationPrompt,
+  buildContinuationPromptJson,
   splitFramingPrompt,
 } from '../../sdk/prompts.js';
 import type { ActiveSession, ConversationMessage, PendingMessageWithId } from '../worker-types.js';
@@ -33,6 +37,7 @@ import { recycleObserverConversation, loadSessionStartContext, openObserverGener
 import { optimizeObservationFields, buildFieldCompressionPrompt, type CompressedField } from './field-optimizer.js';
 import { resolveFieldOptimizeTimeoutMs } from './retry.js';
 import { buildTelegramWrapupPrompt, type TelegramWrapupFormatterInput } from '../integrations/TelegramWrapupNotifier.js';
+import { humanCopyProvider } from '../work-view/human-copy-worker.mjs';
 
 import {
   processAgentResponse,
@@ -71,9 +76,11 @@ export interface ProviderQueryResult {
  * provider ignores it.
  */
 export interface ObserverRequestLabel {
-  kind: 'init' | 'observation' | 'summary' | 'field_compression' | 'telegram_wrapup';
+  kind: 'init' | 'observation' | 'summary' | 'field_compression' | 'telegram_wrapup' | 'human_copy';
   /** anonymousSessionId() of the observed session. */
   sessionId: string;
+  /** Custom's existing Session_id wire contract; other providers use sessionId. */
+  contentSessionId?: string;
   /**
    * session.observerGenerationId when the request belongs to an observer
    * generation. Absent for the wrap-up, which belongs to none.
@@ -96,6 +103,7 @@ function generationLabel(session: ActiveSession, kind: ObserverRequestLabel['kin
   return {
     kind,
     sessionId: anonymousSessionId(session.contentSessionId),
+    contentSessionId: session.contentSessionId,
     generationId: session.observerGenerationId,
   };
 }
@@ -137,6 +145,13 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
    * preserves that per-provider divergence.
    */
   protected abstract readonly forwardEmptyMessageResponse: boolean;
+
+  protected readonly outputFormat: 'xml' | 'json' = 'xml';
+  protected readonly humanCopyLanguage: string = '';
+
+  protected getMode(): ModeConfig {
+    return ModeManager.getInstance().getActiveMode();
+  }
 
   constructor(dbManager: DatabaseManager, sessionManager: SessionManager) {
     this.dbManager = dbManager;
@@ -238,7 +253,7 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
       undefined,
       undefined,
       undefined,
-      { kind: 'telegram_wrapup', sessionId: anonymousSessionId(input.contentSessionId) },
+      { kind: 'telegram_wrapup', sessionId: anonymousSessionId(input.contentSessionId), contentSessionId: input.contentSessionId },
     );
     if (!result.content?.trim()) {
       const error = new Error(`${this.providerName} returned no text for the Telegram wrap-up`);
@@ -246,6 +261,34 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
       throw error;
     }
     return result.content;
+  }
+
+  /** Standalone display copy: reuse the transport without writing observer history or memories. */
+  async generateHumanCopy(input: unknown): Promise<Record<string, unknown>> {
+    const config = this.getConfig();
+    if (!config.apiKey && this.requiresApiKey(config)) throw this.missingApiKeyError();
+    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const model = resolveSummaryTierModel(config.model, settings);
+    const sessionId = anonymousSessionId(`human-copy:${JSON.stringify(input)}`);
+    return humanCopyProvider(async messages => {
+      const systemPrompt = messages.filter(message => message.role === 'system').map(message => message.content).join('\n\n');
+      const history = messages.filter((message): message is ConversationMessage => message.role !== 'system');
+      const result = await this.query(
+        history, { ...config, model, systemPrompt }, AbortSignal.timeout(90_000), 90_000, undefined,
+        { kind: 'human_copy', sessionId, contentSessionId: `human-copy-${sessionId}` },
+      );
+      const usage = {
+        ...(result.inputTokens !== undefined ? { prompt_tokens: result.inputTokens } : {}),
+        ...(result.outputTokens !== undefined ? { completion_tokens: result.outputTokens } : {}),
+        ...(result.tokensUsed !== undefined ? { total_tokens: result.tokensUsed } : {}),
+      };
+      return {
+        content: result.content,
+        usage: Object.keys(usage).length ? usage : null,
+        model: result.servedModel ?? model,
+        finishReason: result.finishReason,
+      };
+    }, this.humanCopyLanguage)(input);
   }
 
   /** Estimate token count for a single message body. */
@@ -289,9 +332,10 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
    * Studio reject all three, and an empty init reply or an empty observation
    * reply produces them. A request never carries an empty message list.
    */
-  protected conversationToOpenAIMessages(history: ConversationMessage[]): OpenAIChatMessage[] {
+  protected conversationToOpenAIMessages(history: ConversationMessage[], systemPrompt?: string): OpenAIChatMessage[] {
     const { system, turns } = this.anchorFraming(history);
-    const anchor: OpenAIChatMessage[] = system ? [{ role: 'system', content: system }] : [];
+    const instructions = systemPrompt ?? system;
+    const anchor: OpenAIChatMessage[] = instructions ? [{ role: 'system', content: instructions }] : [];
 
     let newestNonEmptyContent: string | null = null;
     for (const msg of turns) {
@@ -382,18 +426,20 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
     // cap both scale with the model's window (#3625).
     session.observerContextWindowTokens = await this.resolveContextWindow(config);
 
-    const mode = ModeManager.getInstance().getActiveMode();
+    const mode = this.getMode();
     // Seed the generation with what this session already observed, so a
     // conversation that starts partway through (a recycle, or a resume after a
     // quota pause) continues from the memory rather than from nothing (#3800).
     const priorContext = await loadSessionStartContext(session);
+    const init = this.outputFormat === 'json' ? buildInitPromptJson : buildInitPrompt;
+    const continuation = this.outputFormat === 'json' ? buildContinuationPromptJson : buildContinuationPrompt;
     // Prompt 0 means no user_prompts row exists for this session (a
     // transcript-ingested turn with no anchor). Treat it, like the genuine
     // first prompt, as an init rather than an empty continuation the model
     // rejects as prose (#3653).
     const initPrompt = session.lastPromptNumber <= 1
-      ? buildInitPrompt(session.project, session.contentSessionId, session.userPrompt, mode, priorContext)
-      : buildContinuationPrompt(session.userPrompt, session.lastPromptNumber, session.contentSessionId, mode, priorContext);
+      ? init(session.project, session.contentSessionId, session.userPrompt, mode, priorContext)
+      : continuation(session.userPrompt, session.lastPromptNumber, session.contentSessionId, mode, priorContext);
 
     // Every request re-sends the history, so a restart must not carry the
     // previous attempt's turns into the new generation.
@@ -464,7 +510,7 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
       const originalTimestamp = session.earliestPendingTimestamp;
 
       if (message.type === 'observation') {
-        await this.processObservationMessage(session, message, worker, config, originalTimestamp, lastCwd);
+        await this.processObservationMessage(session, message, worker, config, originalTimestamp, lastCwd, mode);
       } else if (message.type === 'summarize') {
         await this.processSummaryMessage(session, message, worker, config, mode, originalTimestamp, lastCwd);
       }
@@ -502,8 +548,10 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
   protected readonly rejectAbortedObservation: boolean = false;
 
   /** Providers may extend an observation request with immediately available work. */
-  protected observationTurnPrompt(_session: ActiveSession, _message: PendingMessageWithId, prompt: ObservationPromptParts): string {
-    return renderObservationPrompt(prompt);
+  protected observationTurnPrompt(_session: ActiveSession, _message: PendingMessageWithId, prompt: ObservationPromptParts, mode: ModeConfig): string {
+    return this.outputFormat === 'json'
+      ? renderObservationPromptJson(prompt, mode)
+      : renderObservationPrompt(prompt);
   }
 
   private async processObservationMessage(
@@ -512,7 +560,8 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
     worker: WorkerRef | undefined,
     config: TConfig,
     originalTimestamp: number | null,
-    lastCwd: string | undefined
+    lastCwd: string | undefined,
+    mode: ModeConfig
   ): Promise<void> {
     if (!session.memorySessionId) {
       throw new Error('Cannot process observations: memorySessionId not yet captured. This session may need to be reinitialized.');
@@ -563,7 +612,7 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
       cwd: message.cwd
     }, fieldMaxChars, takeObserverSchemaReminder(session));
 
-    const turnPrompt = this.observationTurnPrompt(session, message, obsPrompt);
+    const turnPrompt = this.observationTurnPrompt(session, message, obsPrompt, mode);
     if (this.rejectAbortedObservation) session.abortController.signal.throwIfAborted();
     session.conversationHistory.push({ role: 'user', content: turnPrompt });
 
@@ -593,7 +642,10 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
       session.lastFinishReason = obsResponse.finishReason ?? null;
       await processAgentResponse(
         obsResponse.content || '', session, this.dbManager, this.sessionManager,
-        worker, tokensUsed, originalTimestamp, this.providerName, lastCwd, obsResponse.servedModel ?? config.model, responseContext
+        worker, tokensUsed, originalTimestamp, this.providerName, lastCwd, obsResponse.servedModel ?? config.model,
+        this.outputFormat === 'json'
+          ? { parseJsonObservation: true, observationText: obsResponse.content || '', context: responseContext }
+          : responseContext
       );
     } else {
       logger.warn('SDK', `Empty ${this.providerName} observation response, leaving queue intact`, {
@@ -614,7 +666,8 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
     if (!session.memorySessionId) {
       throw new Error('Cannot process summary: memorySessionId not yet captured. This session may need to be reinitialized.');
     }
-    const summaryPrompt = buildSummaryPrompt({
+    const summary = this.outputFormat === 'json' ? buildSummaryPromptJson : buildSummaryPrompt;
+    const summaryPrompt = summary({
       id: session.sessionDbId,
       memory_session_id: session.memorySessionId,
       project: session.project,
@@ -650,13 +703,25 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
       session.lastFinishReason = summaryResponse.finishReason ?? null;
       await processAgentResponse(
         summaryResponse.content || '', session, this.dbManager, this.sessionManager,
-        worker, tokensUsed, originalTimestamp, this.providerName, lastCwd, summaryResponse.servedModel ?? summaryConfig.model, responseContext
+        worker, tokensUsed, originalTimestamp, this.providerName, lastCwd, summaryResponse.servedModel ?? summaryConfig.model,
+        this.outputFormat === 'json'
+          ? { parseJsonSummary: true, summaryText: summaryResponse.content || '', context: responseContext }
+          : responseContext
       );
     } else {
       logger.warn('SDK', `Empty ${this.providerName} summary response, leaving queue intact`, {
         sessionId: session.sessionDbId
       });
     }
+  }
+
+  /** Preserve a provider's explicit history limits without changing stored turns. */
+  protected prepareQueryHistory(history: ConversationMessage[], _config: TConfig, _session: ActiveSession): ConversationMessage[] {
+    return history;
+  }
+
+  protected querySignal(_session: ActiveSession): AbortSignal | undefined {
+    return undefined;
   }
 
   /**
@@ -676,7 +741,8 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
   ): Promise<ProviderQueryResult> {
     try {
       return await this.query(
-        session.conversationHistory, config, undefined, undefined, paidSendBudget, generationLabel(session, kind),
+        this.prepareQueryHistory(session.conversationHistory, config, session), config, this.querySignal(session),
+        undefined, paidSendBudget, generationLabel(session, kind),
       );
     } catch (error: unknown) {
       if (!isClassified(error) || paidSendOutcomeOf(error) !== 'output_failure') throw error;
