@@ -328,6 +328,33 @@ describe('overall requests and progress reviews', () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+  it('after a goal is dropped, align-input offers only the previous links to current goals, which record-alignment accepts', () => {
+  const dir = ledgerDir();
+  try {
+    const database = fixtureDatabase();
+    saveGoals(database, '2026-10-01T10:00:00Z');
+    const goal = database.prepare('INSERT INTO work_state_entries (project, list_name, fields, created_at_epoch) VALUES (?, ?, ?, ?)');
+    goal.run('owner', 'owner-goals', JSON.stringify({ task: 'Priority: Price page', status: 'todo', goal_kind: 'priority', rank: 2, title: 'Price page' }), 6);
+    let output: any;
+    const run = (argv: string[], now = NOW) => { runCli(argv, { dir, database, now, print: (value: unknown) => { output = value; } }); return output; };
+    const write = (name: string, value: unknown) => { const path = join(dir, name); writeFileSync(path, JSON.stringify(value)); return path; };
+    const cards = groupIdFor(key('a')), pricing = groupIdFor(key('c'));
+    run(['apply', write('d1.json', { groups: [{ title: 'Release cards', conversations: [key('a')] }, { title: 'Pricing page', conversations: [key('c')] }] })]);
+    run(['record-alignment', write('a1.json', { links: [
+      { groupId: cards, goal: 'Priority: Ship cards', evidence: 'The cards.' },
+      { groupId: cards, goal: 'Priority: Price page', evidence: 'The cards show prices.' },
+      { groupId: pricing, goal: 'Priority: Ship cards', evidence: 'Shipped with the cards.' },
+    ] })]);
+    goal.run('owner', 'owner-goals', JSON.stringify({ task: 'Priority: Ship cards', status: 'dropped' }), 7);
+    const input = run(['align-input']);
+    expect(input.groups.map((entry: { groupId: string }) => entry.groupId)).toEqual([cards, pricing]);
+    expect(input.previous.links).toEqual({ [cards]: [{ goal: 'Priority: Price page', evidence: 'The cards show prices.' }] });
+    // Keeping every offered link is a valid answer.
+    expect(run(['record-alignment', write('a2.json', { links: input.previous.links[cards].map((link: object) => ({ groupId: cards, ...link })), unaligned: [pricing] })])).toEqual({ aligned: 1, unaligned: 1 });
+    expect(run(['align-input']).groups).toEqual([]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
   it('a re-review that adds an owner preference, a ship date fix or a regression reaches the story, at the same state and percent', () => {
   const dir = ledgerDir();
   try {

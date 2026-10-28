@@ -692,7 +692,9 @@ export function runCli(argv, { dir = LEDGER_DIR, database = null, now = Date.now
     const goals = readGoals(db());
     const due = alignmentDue(ledger, goals);
     const groups = due.map((groupId) => alignmentRecord(ledger, groupId));
-    const previousLinks = Object.fromEntries(due.filter((id) => ledger.alignment?.links?.[id]).map((id) => [id, ledger.alignment.links[id]]));
+    // Only links to current goals: the agent keeps previous links, and one to a dropped goal is refused.
+    const current = new Set(goals.goals.map((goal) => goal.goal));
+    const previousLinks = Object.fromEntries(due.map((id) => [id, (ledger.alignment?.links?.[id] ?? []).filter((link) => current.has(link.goal))]).filter(([, links]) => links.length));
     return print({ goals, groups, previous: ledger.alignment ? { alignedAt: ledger.alignment.alignedAt ?? null, links: previousLinks } : null });
   }
   if (command === 'record-alignment') {
