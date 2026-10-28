@@ -181,6 +181,8 @@ describe('refresh task', () => {
       expect(STEP_MODELS.grouping).toEqual({ 'claude-code': { model: 'haiku' }, codex: { model: 'gpt-6-luna', reasoningEffort: 'low' }, gemini: { model: 'flash-lite' } });
       // Custom has no light model of its own; its careful steps take the summary tier.
       expect(STEP_MODELS.review).toEqual({ 'claude-code': { model: 'sonnet' }, codex: {}, gemini: { model: 'flash' }, custom: { model: '$TIER:summary' } });
+      // Alignment is light everywhere but Custom, whose light model cannot keep a long all-groups answer consistent.
+      expect(STEP_MODELS.alignment).toEqual({ ...STEP_MODELS.grouping, custom: { model: '$TIER:summary' } });
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

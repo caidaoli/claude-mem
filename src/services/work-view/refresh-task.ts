@@ -32,7 +32,9 @@ const REVIEW_BATCH = 8;
 const LIGHT: StepModels = { 'claude-code': { model: 'haiku' }, codex: { model: 'gpt-6-luna', reasoningEffort: 'low' }, gemini: { model: 'flash-lite' } };
 // Custom has one configured model; its careful steps take the summary tier (CLAUDE_MEM_TIER_SUMMARY_MODEL), like session summaries.
 const CAREFUL: StepModels = { 'claude-code': { model: 'sonnet' }, codex: {}, gemini: { model: 'flash' }, custom: { model: '$TIER:summary' } };
-export const STEP_MODELS = { goals: CAREFUL, grouping: LIGHT, review: CAREFUL, alignment: LIGHT, story: CAREFUL } as const;
+// Alignment decides every listed group in one answer; on Custom's light model 70 of 201 groups came back both linked and unaligned (Oct 28).
+const ALIGNMENT: StepModels = { ...LIGHT, custom: CAREFUL.custom };
+export const STEP_MODELS = { goals: CAREFUL, grouping: LIGHT, review: CAREFUL, alignment: ALIGNMENT, story: CAREFUL } as const;
 type Step = keyof typeof STEP_MODELS;
 
 const strictObject = (properties: Record<string, unknown>) => ({ type: 'object', additionalProperties: false, required: Object.keys(properties), properties });
