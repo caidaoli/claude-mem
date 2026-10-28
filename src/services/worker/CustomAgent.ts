@@ -11,7 +11,9 @@ import type { ActiveSession, ConversationMessage } from '../worker-types.js';
 import { ModeManager } from '../domain/ModeManager.js';
 import type { ModeConfig } from '../domain/types.js';
 import type { WorkerRef } from './agents/index.js';
-import { OpenAICompatibleProvider, assistantText, type ObserverRequestLabel, type ProviderQueryResult } from './OpenAICompatibleProvider.js';
+import { OpenAICompatibleProvider, anonymousSessionId, assistantText, type ObserverRequestLabel, type ProviderQueryResult } from './OpenAICompatibleProvider.js';
+import { resolveSummaryTierModel } from './model-aliases.js';
+import type { StepModels } from '../agent-runner/run.js';
 import { classifyGeminiError } from './GeminiProvider.js';
 import { classifyOpenAICompatError, isLocalEndpointUrl, stripLeadingThinkBlock } from './OpenAICompatProvider.js';
 import { ClassifiedProviderError, isClassified, rateLimitUntilNextKey } from './provider-errors.js';
@@ -70,6 +72,8 @@ export interface CustomAgentConfig {
   plainText?: boolean;
   /** Standalone display-copy instructions; never persisted as observer history. */
   systemPrompt?: string;
+  /** Send no output cap, so the model answers at its own length (My Work's automatic refresh). */
+  uncappedOutput?: boolean;
   reasoning?: string;
   model: string;
   protocol: CustomProtocol;
@@ -299,10 +303,10 @@ function isGemini25FlashModel(model: string): boolean {
  * Build Gemini generation config with optional JSON mode
  * For Gemini 3 models, thinkingLevel: 'low' speeds up responses ('minimal' is rejected by 3.7+ Flash and Pro).
  */
-function buildGeminiGenerationConfig(model: string, jsonMode: boolean = false, reasoningOff: boolean = true): Record<string, unknown> {
+function buildGeminiGenerationConfig(model: string, jsonMode: boolean, reasoningOff: boolean, maxOutputTokens: number | undefined): Record<string, unknown> {
   const config: Record<string, unknown> = {
     temperature: 0.3,
-    maxOutputTokens: resolveObserverMaxOutputTokens(),
+    ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
   };
 
   if (jsonMode) {
@@ -669,6 +673,23 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
       : null;
   }
 
+  /** One read-only question from My Work's automatic refresh (refresh-task.ts), answered as text the
+   * refresh parses. Careful steps ask for `$TIER:summary`, resolved like session summaries; the rest use the Custom model. */
+  async askRefresh(prompt: string, models: StepModels): Promise<string> {
+    const config = this.getConfig();
+    if (!config.apiKey && this.requiresApiKey(config)) throw this.missingApiKeyError();
+    const model = models.custom?.model === '$TIER:summary'
+      ? resolveSummaryTierModel(config.model, SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH))
+      : config.model;
+    const sessionId = anonymousSessionId(`work-view-refresh:${prompt}`);
+    const result = await this.query(
+      [{ role: 'user', content: prompt }], { ...config, model, uncappedOutput: true }, undefined, undefined, undefined,
+      { kind: 'work_view_refresh', sessionId, contentSessionId: `work-view-refresh-${sessionId}` },
+    );
+    if (!result.content?.trim()) throw new Error(`${this.providerName} returned no text for the My Work refresh (finish reason: ${result.finishReason ?? 'unknown'})`);
+    return result.content;
+  }
+
   async startSession(session: ActiveSession, worker?: WorkerRef): Promise<void> {
     // The persisted id is the FK target even when a fallback left another id in memory.
     const persisted = this.dbManager.getSessionStore().getSessionById(session.sessionDbId)?.memory_session_id;
@@ -959,7 +980,7 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
       : undefined;
     const messages = this.conversationToOpenAIMessages(history, config.systemPrompt);
     const plainText = config.plainText || label?.kind === 'field_compression' || label?.kind === 'telegram_wrapup';
-    const maxOutputTokens = resolveObserverMaxOutputTokens();
+    const maxOutputTokens = config.uncappedOutput ? undefined : resolveObserverMaxOutputTokens();
     const reasoningOff = resolveOpenAICompatReasoning(config.reasoning) !== 'on';
     const clientAttemptId = paidSendBudget?.clientAttemptId ?? randomUUID();
     const timeoutMs = config.totalTimeoutSeconds > 0
@@ -976,7 +997,7 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
         if (config.protocol !== 'openai') {
           const body = config.protocol === 'gemini'
             ? {
-              generationConfig: buildGeminiGenerationConfig(config.model, !plainText, reasoningOff),
+              generationConfig: buildGeminiGenerationConfig(config.model, !plainText, reasoningOff, maxOutputTokens),
               ...(messages.some(message => message.role === 'system') ? {
                 systemInstruction: { parts: messages.filter(message => message.role === 'system').map(message => ({ text: message.content })) },
               } : {}),
@@ -988,6 +1009,7 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
           if (config.protocol === 'codex') {
             if (plainText) delete body.text;
             if (!reasoningOff) delete body.reasoning;
+            if (maxOutputTokens === undefined) delete body.max_output_tokens;
           }
           return this.queryNative(url, body, config, key, attemptSignal, sessionId, clientAttemptId);
         }

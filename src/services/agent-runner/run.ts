@@ -36,12 +36,15 @@ import { logger } from '../../utils/logger.js';
 import { runtimeReadRoots } from './runtime-read-roots.js';
 import { detectUsableAgents, GEMINI_NO_MCP_SERVERS, runCommand, type CommandResult, type UsableAgent, type UsableAgentId } from './detect.js';
 
-/** The model one step runs on: a Claude Code alias, a Codex model id (with reasoning effort) or a Gemini alias.
- * A missing entry or field leaves that CLI's own default. */
+/** The model one step runs on: a Claude Code alias, a Codex model id (with reasoning effort), a Gemini alias
+ * or a Custom `$TIER:` alias. A missing entry or field leaves that backend's own default. */
 export { GEMINI_NO_MCP_SERVERS };
 
+/** A backend a task runs on: a detected agent CLI, or the Custom provider asked directly (no tools, inputs inline). */
+export type TaskAgentId = UsableAgentId | 'custom';
+
 export interface StepModel { model?: string; reasoningEffort?: string }
-export type StepModels = Partial<Record<UsableAgentId, StepModel>>;
+export type StepModels = Partial<Record<TaskAgentId, StepModel>>;
 
 /** A JSON Schema for a step's answer, strict-mode shaped (every property required, no extra properties). */
 export type AnswerSchema = Record<string, unknown>;
@@ -69,7 +72,7 @@ export interface AgentTask {
   cwd: string;
   claudeCode: ClaudeCodeTaskOptions;
   /** Drives the agent step by step; returns a short result line. */
-  run: (ask: AskAgent, agent: UsableAgentId) => Promise<string>;
+  run: (ask: AskAgent, agent: TaskAgentId) => Promise<string>;
   /** Input every backend reads, prepared once a logged-in agent is found (e.g. the owner's prompts file). */
   prepare?: () => Promise<void>;
 }

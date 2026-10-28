@@ -158,6 +158,8 @@ See [OpenAI-Compatible Provider](usage/openai-compatible-provider) for presets a
 
 My Work generates readable request titles, summaries and workstream descriptions with the selected `custom`, `openai-compatible`, or `openrouter` provider. Custom supports all three protocols and writes display copy in Chinese. Custom and OpenAI-compatible reuse their configured endpoint, key pool and summary-tier model (when tier routing is enabled). Generation uses the existing debounce and cache, and does not change recorded work status or observations.
 
+While `custom` is the selected, configured provider, My Work's automatic refresh (`CLAUDE_MEM_WORK_VIEW_AUTO_REFRESH`) runs on Custom instead of a detected agent CLI. Grouping and goal alignment use `CLAUDE_MEM_CUSTOM_MODEL`; goals, request reviews and the build story use `CLAUDE_MEM_TIER_SUMMARY_MODEL` (when tier routing is enabled). The input files go inside the prompt, and these requests send no output cap, so `CLAUDE_MEM_OBSERVER_MAX_OUTPUT_TOKENS` does not truncate them. A failed refresh is reported in My Work and is not retried on Claude Code, Codex or Gemini.
+
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `CLAUDE_MEM_CUSTOM_API_URL` | — | Endpoint base URL |

@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
-import { configuredHumanCopyProvider, isReportedReadyForCheck, WorkViewRoutes } from '../../../../src/services/worker/http/routes/WorkViewRoutes.js';
+import { configuredHumanCopyProvider, configuredRefreshAsk, isReportedReadyForCheck, WorkViewRoutes } from '../../../../src/services/worker/http/routes/WorkViewRoutes.js';
 import { SettingsDefaultsManager } from '../../../../src/shared/SettingsDefaultsManager.js';
 import { contentFingerprint } from '../../../../src/services/work-view/review-store.js';
 import { reduceWorkState } from '../../../../src/services/work-view/data-source.mjs';
@@ -120,6 +120,27 @@ describe('configured My Work copy provider', () => {
       settings.CLAUDE_MEM_OPENAI_COMPAT_PRESET = 'custom';
       settings.CLAUDE_MEM_OPENAI_COMPAT_BASE_URL = '';
       expect(configuredHumanCopyProvider(undefined, providers)).toBeNull();
+    } finally { settingsSpy.mockRestore(); }
+  });
+});
+
+describe('configuredRefreshAsk', () => {
+  it('answers the automatic refresh on Custom only while Custom is selected and configured', async () => {
+    const settings = { ...SettingsDefaultsManager.getAllDefaults(), CLAUDE_MEM_PROVIDER: 'custom',
+      CLAUDE_MEM_CUSTOM_API_URL: 'http://localhost:1234', CLAUDE_MEM_CUSTOM_MODEL: 'custom-model' };
+    const custom = { asked: [] as string[], async askRefresh(prompt: string) { this.asked.push(prompt); return 'answer'; } };
+    const settingsSpy = spyOn(SettingsDefaultsManager, 'loadFromFile').mockReturnValue(settings);
+    try {
+      const ask = configuredRefreshAsk(undefined, custom);
+      expect(ask).not.toBeNull();
+      expect(await ask!('group these', {})).toBe('answer');
+      expect(custom.asked).toEqual(['group these']);
+      expect(configuredRefreshAsk(undefined, null)).toBeNull();
+      settings.CLAUDE_MEM_PROVIDER = 'claude';
+      expect(configuredRefreshAsk(undefined, custom)).toBeNull();
+      settings.CLAUDE_MEM_PROVIDER = 'custom';
+      settings.CLAUDE_MEM_CUSTOM_API_URL = '';
+      expect(configuredRefreshAsk(undefined, custom)).toBeNull();
     } finally { settingsSpy.mockRestore(); }
   });
 });

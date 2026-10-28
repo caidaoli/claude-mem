@@ -4,18 +4,17 @@
  * every request that is due. No day window beyond the skill's own default,
  * no group cap and no time limit (owner rule, Oct 22).
  *
- * Every backend (Claude Code, Codex, Gemini) runs the same way: the worker
- * runs the skills' CLI and scripts, asks the read-only agent one JSON
- * question per step, and saves the answer through the same validators the
- * skills' CLI uses.
+ * Every backend (Claude Code, Codex, Gemini, or the Custom provider when it
+ * is selected) runs the same way: the worker runs the skills' CLI and
+ * scripts, asks the read-only agent one JSON question per step, and saves the
+ * answer through the same validators the skills' CLI uses.
  */
 
 import { spawn } from 'child_process';
 import { randomBytes } from 'crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import type { AgentTask, AnswerSchema, AskAgent, StepModels } from '../agent-runner/run.js';
-import type { UsableAgentId } from '../agent-runner/detect.js';
+import type { AgentTask, AnswerSchema, AskAgent, StepModels, TaskAgentId } from '../agent-runner/run.js';
 import { runCommand } from '../agent-runner/detect.js';
 import { writeOwnerPromptsFile, type OwnerPromptsFile } from '../prompt-import/owner-prompts-file.js';
 import { resolvePythonCommand } from './python.js';
@@ -31,7 +30,8 @@ const REVIEW_BATCH = 8;
  * progress, write the story and pick verbatim quotes. Codex's careful steps use its CLI default model.
  * Ids checked against claude --help (aliases), codex-cli 0.163.0 models_cache.json and gemini 0.49.0 aliases. */
 const LIGHT: StepModels = { 'claude-code': { model: 'haiku' }, codex: { model: 'gpt-6-luna', reasoningEffort: 'low' }, gemini: { model: 'flash-lite' } };
-const CAREFUL: StepModels = { 'claude-code': { model: 'sonnet' }, codex: {}, gemini: { model: 'flash' } };
+// Custom has one configured model; its careful steps take the summary tier (CLAUDE_MEM_TIER_SUMMARY_MODEL), like session summaries.
+const CAREFUL: StepModels = { 'claude-code': { model: 'sonnet' }, codex: {}, gemini: { model: 'flash' }, custom: { model: '$TIER:summary' } };
 export const STEP_MODELS = { goals: CAREFUL, grouping: LIGHT, review: CAREFUL, alignment: LIGHT, story: CAREFUL } as const;
 type Step = keyof typeof STEP_MODELS;
 
@@ -48,7 +48,7 @@ export const GROUPING_ANSWER_SCHEMA: AnswerSchema = strictObject({
 });
 
 /** When each step ran, for refresh.json's run record (not shown in My Work). */
-export interface StepTiming { step: string; agent: UsableAgentId; startedAt: string; finishedAt: string; groups?: number }
+export interface StepTiming { step: string; agent: TaskAgentId; startedAt: string; finishedAt: string; groups?: number }
 
 export interface RefreshTaskOptions {
   needs: RefreshNeeds;
@@ -126,19 +126,21 @@ export function buildRefreshTask(options: RefreshTaskOptions): AgentTask & { ste
   };
 
   const steps: StepTiming[] = [];
-  const run = async (askBackend: AskAgent, agent: UsableAgentId): Promise<string> => {
+  const run = async (askBackend: AskAgent, agent: TaskAgentId): Promise<string> => {
     const runDir = join(ledgerDir, 'agent-runs', randomBytes(6).toString('hex'));
     mkdirSync(runDir, { recursive: true });
     let fileNumber = 0;
+    // Gemini and Custom have no file tools: the input files go inside the prompt.
+    const inline = agent === 'gemini' || agent === 'custom';
     const inlineEvidence = new Map<string, string>();
-    if (agent === 'gemini' && needs.goalsStale) {
+    if (inline && needs.goalsStale) {
       for (const name of ['owner-prompts.md', 'new-owner-prompts.md']) {
         const path = join(goalsFolder, name);
         if (existsSync(path)) inlineEvidence.set(path, readFileSync(path, 'utf8'));
       }
     }
     const ask: AskAgent = (prompt, models, schema) => {
-      const supplied = agent === 'gemini' ? [...inlineEvidence].filter(([path]) => prompt.includes(path)) : [];
+      const supplied = inline ? [...inlineEvidence].filter(([path]) => prompt.includes(path)) : [];
       return askBackend(supplied.length ? `${prompt}\n\nThe following input files are supplied inline; no file tools are available:\n${supplied.map(([path, contents]) => `--- ${path} ---\n${contents}`).join('\n\n')}` : prompt, models, schema);
     };
     const writeInput = (name: string, value: unknown) => {

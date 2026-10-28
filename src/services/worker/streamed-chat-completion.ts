@@ -140,7 +140,8 @@ export interface ChatCompletionRequest {
   /** The request body without the output cap; `max_tokens` is added here. */
   body: Record<string, unknown>;
   requestCompression?: RequestCompression;
-  maxOutputTokens: number;
+  /** Unset: no cap is sent, so the endpoint's own limit applies. */
+  maxOutputTokens?: number;
   signal: AbortSignal;
   /**
    * Set: stream under these liveness rules (withRetry arms no deadline). Null:
@@ -330,7 +331,7 @@ async function sniffExchange(opened: OpenedExchange): Promise<{ opened: OpenedEx
  */
 export async function sendChatCompletion(request: ChatCompletionRequest): Promise<ChatCompletionExchange> {
   const { max_tokens: _ignoredCap, ...bodyWithoutCap } = request.body;
-  const bodies = [
+  const bodies = request.maxOutputTokens === undefined ? [bodyWithoutCap] : [
     { ...bodyWithoutCap, max_tokens: request.maxOutputTokens },
     { ...bodyWithoutCap, max_completion_tokens: request.maxOutputTokens },
   ];

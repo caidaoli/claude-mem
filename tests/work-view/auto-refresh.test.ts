@@ -140,7 +140,7 @@ describe('refresh task', () => {
     expect(JSON.stringify(task)).not.toMatch(/bypass|dangerous/i);
   });
 
-  it('every backend (read-only): the worker groups, reviews and retells from the agent\'s JSON through the validators', async () => {
+  for (const backend of ['gemini', 'custom'] as const) it(`every backend (read-only, ${backend}): the worker groups, reviews and retells from the agent's JSON through the validators`, async () => {
     const dir = mkdtempSync(join(tmpdir(), 'auto-refresh-inline-'));
     try {
       const database = fixtureDatabase();
@@ -152,7 +152,7 @@ describe('refresh task', () => {
         prompts.push(prompt);
         models.push(stepModels);
         expect(prompt).toMatch(/read-only sandbox/);
-        // Codex and Gemini run without MCP servers: no instruction to search memory, the evidence is inline.
+        // Codex, Gemini and Custom run without MCP servers: no instruction to search memory, the evidence is inline.
         expect(prompt).toMatch(/You have no memory tools/);
         expect(prompt).not.toMatch(/with its MCP tools/);
         expect(prompt).not.toContain('${CLAUDE_SKILL_DIR}');
@@ -170,7 +170,7 @@ describe('refresh task', () => {
         if (prompt.includes('Do only section 4')) return JSON.stringify({ narrative: 'One request is under way.', preferences: [] });
         throw new Error(`Unexpected prompt: ${prompt.slice(-200)}`);
       };
-      expect(await task.run(ask, 'gemini')).toBe('1 new conversations grouped, 1 requests reviewed, story written.');
+      expect(await task.run(ask, backend)).toBe('1 new conversations grouped, 1 requests reviewed, story written.');
       const ledger = readLedger(dir);
       expect(Object.values(ledger.groups.groups).map((group: any) => group.title)).toEqual(['Release cards']);
       expect(Object.values(ledger.progress).map((review: any) => review.percent)).toEqual([40]);
@@ -179,7 +179,8 @@ describe('refresh task', () => {
       // Grouping runs on the light models; reviews and the story on the careful ones.
       expect(models).toEqual([STEP_MODELS.grouping, STEP_MODELS.review, STEP_MODELS.review, STEP_MODELS.story]);
       expect(STEP_MODELS.grouping).toEqual({ 'claude-code': { model: 'haiku' }, codex: { model: 'gpt-6-luna', reasoningEffort: 'low' }, gemini: { model: 'flash-lite' } });
-      expect(STEP_MODELS.review).toEqual({ 'claude-code': { model: 'sonnet' }, codex: {}, gemini: { model: 'flash' } });
+      // Custom has no light model of its own; its careful steps take the summary tier.
+      expect(STEP_MODELS.review).toEqual({ 'claude-code': { model: 'sonnet' }, codex: {}, gemini: { model: 'flash' }, custom: { model: '$TIER:summary' } });
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

@@ -567,6 +567,31 @@ describe('CustomAgent session behavior', () => {
     expect(f.storeObservations.mock.calls[0][3]).toMatchObject(summary);
   });
 
+  for (const protocol of ['openai', 'gemini', 'codex'] as const) it(`answers ${protocol} My Work refresh steps uncapped, careful steps on the summary-tier model`, async () => {
+    settings.CLAUDE_MEM_CUSTOM_PROTOCOL = protocol;
+    settings.CLAUDE_MEM_TIER_SUMMARY_MODEL = 'custom-summary-model';
+    const reply = (text: string) => protocol === 'openai' ? chat(text) : protocol === 'gemini' ? gemini(text) : codex(text);
+    replies.push(reply('light answer'), reply('careful answer'));
+    const f = fixture();
+    expect(await f.agent.askRefresh('group these', { custom: {} })).toBe('light answer');
+    expect(await f.agent.askRefresh('review these', { custom: { model: '$TIER:summary' } })).toBe('careful answer');
+    const modelOf = (request: typeof requests[number]) => protocol === 'gemini' ? request.url.match(/\/models\/([^:]+):/)?.[1] : request.body.model;
+    expect(requests.map(modelOf)).toEqual(['gpt-4o', 'custom-summary-model']);
+    for (const { body } of requests) {
+      expect(body.max_tokens).toBeUndefined();
+      expect(body.max_completion_tokens).toBeUndefined();
+      expect(body.max_output_tokens).toBeUndefined();
+      expect(body.generationConfig?.maxOutputTokens).toBeUndefined();
+    }
+    expect(JSON.stringify(requests[0].body)).toContain('group these');
+    expect(f.storeObservations).not.toHaveBeenCalled();
+  });
+
+  it('fails a My Work refresh step when the provider returns no text', async () => {
+    replies.push(chat(''));
+    await expect(fixture().agent.askRefresh('group these', { custom: {} })).rejects.toThrow('no text for the My Work refresh');
+  });
+
   for (const protocol of ['openai', 'gemini', 'codex'] as const) it(`condenses oversized ${protocol} fields as text before the JSON observation`, async () => {
     settings.CLAUDE_MEM_CUSTOM_PROTOCOL = protocol;
     settings.CLAUDE_MEM_OBSERVER_CONTEXT_WINDOW = '8192';

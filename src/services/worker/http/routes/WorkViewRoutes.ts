@@ -22,11 +22,11 @@ import { MY_RULES_LIST, renderRulesFile, ruleRowFields, type SavedRule } from '.
 import { AGENT_LIFECYCLE_LIST, agentStopFields } from '../../../work-view/agent-lifecycle.mjs';
 import { getProjectContext } from '../../../../utils/project-name.js';
 import { chatCompletionsHumanCopyProvider, HumanCopyWorker } from '../../../work-view/human-copy-worker.mjs';
-import { AutoRefreshWorker } from '../../../work-view/auto-refresh-worker.mjs';
+import { AutoRefreshWorker, type RefreshJobOutcome } from '../../../work-view/auto-refresh-worker.mjs';
 import { buildRefreshTask } from '../../../work-view/refresh-task.js';
 import { HostedIntent } from '../../../work-view/hosted-intent.js';
 import { cmemProOrigin } from '../../../../shared/cmem-gateway.js';
-import { runAgentTask } from '../../../agent-runner/run.js';
+import { runAgentTask, type AgentTask, type AskAgent } from '../../../agent-runner/run.js';
 import { ledgerSignature, readLedger } from '../../../work-view/request-groups.mjs';
 import { BaseRouteHandler } from '../BaseRouteHandler.js';
 import { isForeignLoopbackBrowserWrite } from './SettingsRoutes.js';
@@ -136,6 +136,8 @@ interface WorkViewOptions {
   humanCopyProviders?: HumanCopyGenerators;
   /** Runs owner-goals and request-progress when something is due. Omitted: on for the default ledger only. */
   autoRefresh?: AutoRefreshWorker | null;
+  /** Answers the default automatic refresh itself while Custom is the selected, configured provider. */
+  customRefresh?: CustomRefresh | null;
   /** Overall-request ledger written by the request-progress skill; null disables it. */
   ledgerDir?: string | null;
   /** Saves one work-state row (rule changes). Without it, rules are read-only. */
@@ -205,9 +207,29 @@ export function configuredHumanCopyProvider(settingsPath = USER_SETTINGS_PATH, p
   });
 }
 
-/** My Work's automatic refresh on the user's own logged-in agent, unless
- * CLAUDE_MEM_WORK_VIEW_AUTO_REFRESH is 'false' (checked on every tick). */
-export function defaultAutoRefresh(ledgerDir: string, settingsPath = USER_SETTINGS_PATH, setupPath = setupStatePath(), setupActive = () => false): AutoRefreshWorker {
+type CustomRefresh = { askRefresh: AskAgent };
+
+/** The automatic refresh's answerer while Custom is the selected, configured provider; null runs it on the agent CLIs. */
+export function configuredRefreshAsk(settingsPath = USER_SETTINGS_PATH, custom: CustomRefresh | null = null): AskAgent | null {
+  if (!custom) return null;
+  const settings = SettingsDefaultsManager.loadFromFile(settingsPath, true, { readOnly: true });
+  return settings.CLAUDE_MEM_PROVIDER === 'custom' && isCustomAvailable(settingsPath) ? custom.askRefresh.bind(custom) : null;
+}
+
+/** The refresh answered by Custom, in the agent runner's result shape. A failure waits for the next check:
+ * no agent CLI is tried, so the owner's subscriptions are never spent while Custom is selected. */
+async function runOnCustom(task: AgentTask, ask: AskAgent): Promise<RefreshJobOutcome> {
+  try {
+    await task.prepare?.();
+    return { state: 'ok', agent: 'custom', result: (await task.run(ask, 'custom')).slice(0, 4000), error: null };
+  } catch (error) {
+    return { state: 'failed', agent: 'custom', result: null, error: (error instanceof Error ? error.message : String(error)).slice(0, 500) };
+  }
+}
+
+/** My Work's automatic refresh on Custom when it is selected, otherwise on the user's own logged-in agent,
+ * unless CLAUDE_MEM_WORK_VIEW_AUTO_REFRESH is 'false' (checked on every tick). */
+export function defaultAutoRefresh(ledgerDir: string, settingsPath = USER_SETTINGS_PATH, setupPath = setupStatePath(), setupActive = () => false, custom: CustomRefresh | null = null): AutoRefreshWorker {
   const openDatabase = () => {
     const database = new Database(DB_PATH, { readonly: true, create: false });
     database.exec('PRAGMA busy_timeout = 1500');
@@ -221,7 +243,8 @@ export function defaultAutoRefresh(ledgerDir: string, settingsPath = USER_SETTIN
       && SettingsDefaultsManager.loadFromFile(settingsPath, true, { readOnly: true }).CLAUDE_MEM_WORK_VIEW_AUTO_REFRESH !== 'false',
     runJob: async ({ needs, reason }) => {
       const task = buildRefreshTask({ needs, reason, dataDir: DATA_DIR, ledgerDir, pluginRoot: getPackageRoot(), openDatabase });
-      return { ...(await runAgentTask(task)), steps: task.steps };
+      const ask = configuredRefreshAsk(settingsPath, custom);
+      return { ...(await (ask ? runOnCustom(task, ask) : runAgentTask(task))), steps: task.steps };
     },
     log: (level, message, data) => (level === 'info' ? logger.info : logger.warn).call(logger, 'WORKER', message, data),
   });
@@ -275,7 +298,7 @@ export class WorkViewRoutes extends BaseRouteHandler {
     // A test or demo with its own ledger never starts an agent unless it passes one in.
     this.autoRefresh = options.autoRefresh === undefined
       ? (options.ledgerDir === undefined && ledgerDir ? defaultAutoRefresh(ledgerDir, options.settingsPath, options.setupStatePath,
-        () => this.setupIsActive()) : null)
+        () => this.setupIsActive(), options.customRefresh ?? null) : null)
       : options.autoRefresh;
     this.autoRefresh?.start();
     this.appendWorkStateEntry = options.appendWorkStateEntry ?? null;

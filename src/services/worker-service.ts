@@ -588,6 +588,7 @@ export class WorkerService implements WorkerRef {
 
     this.workViewRoutes = new WorkViewRoutes({
       humanCopyProviders: { custom: this.customAgent, 'openai-compatible': this.openAICompatAgent },
+      customRefresh: this.customAgent,
       getLocalDeviceId: () => this.dbManager.getCloudSync()?.status().deviceId ?? '',
       // My Rules saves as work-state rows, so a rule change syncs like any other write.
       appendWorkStateEntry: (entry) => {

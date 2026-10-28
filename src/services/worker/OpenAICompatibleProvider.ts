@@ -76,7 +76,7 @@ export interface ProviderQueryResult {
  * provider ignores it.
  */
 export interface ObserverRequestLabel {
-  kind: 'init' | 'observation' | 'summary' | 'field_compression' | 'telegram_wrapup' | 'human_copy';
+  kind: 'init' | 'observation' | 'summary' | 'field_compression' | 'telegram_wrapup' | 'human_copy' | 'work_view_refresh';
   /** anonymousSessionId() of the observed session. */
   sessionId: string;
   /** Custom's existing Session_id wire contract; other providers use sessionId. */
