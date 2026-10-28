@@ -592,6 +592,22 @@ describe('CustomAgent session behavior', () => {
     await expect(fixture().agent.askRefresh('group these', { custom: {} })).rejects.toThrow('no text for the My Work refresh');
   });
 
+  for (const protocol of ['openai', 'gemini', 'codex'] as const) it(`waits past the observer's ${protocol} timeouts for a long My Work refresh answer`, async () => {
+    settings.CLAUDE_MEM_CUSTOM_PROTOCOL = protocol;
+    settings.CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT = '1';
+    settings.CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT = '1';
+    settings.CLAUDE_MEM_LLM_TIMEOUT_MS = '500';
+    replies.push(async signal => {
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, 1100);
+        signal.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+      });
+      return protocol === 'openai' ? chat('aligned') : protocol === 'gemini' ? gemini('aligned') : codex('aligned');
+    });
+    expect(await fixture().agent.askRefresh('align these', { custom: { model: '$TIER:summary' } })).toBe('aligned');
+    expect(requests).toHaveLength(1);
+  });
+
   for (const protocol of ['openai', 'gemini', 'codex'] as const) it(`condenses oversized ${protocol} fields as text before the JSON observation`, async () => {
     settings.CLAUDE_MEM_CUSTOM_PROTOCOL = protocol;
     settings.CLAUDE_MEM_OBSERVER_CONTEXT_WINDOW = '8192';

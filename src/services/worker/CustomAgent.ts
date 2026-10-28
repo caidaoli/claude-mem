@@ -88,6 +88,8 @@ export interface CustomAgentConfig {
 // Fork: Custom always writes Chinese, whatever language the active mode asks for.
 const CUSTOM_OBSERVATION_LANGUAGE = 'LANGUAGE REQUIREMENTS: Please write the observation data in 中文';
 const CUSTOM_SUMMARY_LANGUAGE = 'LANGUAGE REQUIREMENTS: Please write ALL summary content (request, investigated, learned, completed, next_steps, notes) in 中文';
+/** Per-attempt deadline for one My Work refresh step: a whole-ledger answer can take minutes. The worker checks every 10 minutes. */
+const WORK_VIEW_REFRESH_TIMEOUT_MS = 10 * 60_000;
 
 function withCustomLanguage(mode: ModeConfig): ModeConfig {
   const setLanguage = (text: string, requirement: string) =>
@@ -682,8 +684,10 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
       ? resolveSummaryTierModel(config.model, SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH))
       : config.model;
     const sessionId = anonymousSessionId(`work-view-refresh:${prompt}`);
+    // One long background answer: the observer's output cap and first-token/total timeouts do not apply, only its own deadline.
     const result = await this.query(
-      [{ role: 'user', content: prompt }], { ...config, model, uncappedOutput: true }, undefined, undefined, undefined,
+      [{ role: 'user', content: prompt }], { ...config, model, uncappedOutput: true, firstTokenTimeoutSeconds: 0, totalTimeoutSeconds: 0 },
+      undefined, WORK_VIEW_REFRESH_TIMEOUT_MS, undefined,
       { kind: 'work_view_refresh', sessionId, contentSessionId: `work-view-refresh-${sessionId}` },
     );
     if (!result.content?.trim()) throw new Error(`${this.providerName} returned no text for the My Work refresh (finish reason: ${result.finishReason ?? 'unknown'})`);
