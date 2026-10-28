@@ -32,6 +32,7 @@ import { MAX_LLM_TIMEOUT_MS, parseTimeoutMs } from './retry.js';
 import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH } from '../../shared/paths.js';
 import { logger } from '../../utils/logger.js';
+import { encodeJsonRequestBody, type RequestCompression } from './request-compression.js';
 
 /** Silence after which a streamed LLM request is given up (no token, no ping). */
 export const DEFAULT_LLM_STREAM_IDLE_TIMEOUT_MS = 90_000;
@@ -138,6 +139,7 @@ export interface ChatCompletionRequest {
   headers: Record<string, string>;
   /** The request body without the output cap; `max_tokens` is added here. */
   body: Record<string, unknown>;
+  requestCompression?: RequestCompression;
   maxOutputTokens: number;
   signal: AbortSignal;
   /**
@@ -246,10 +248,11 @@ async function openExchange(
   body: Record<string, unknown>,
   streamThisSend: boolean,
 ): Promise<OpenedExchange> {
+  const encoded = await encodeJsonRequestBody(body, request.requestCompression);
   const init: RequestInit = {
     method: 'POST',
-    headers: request.headers,
-    body: JSON.stringify(body),
+    headers: { ...request.headers, ...encoded.headers },
+    body: encoded.body,
     signal: request.signal,
   };
   try {

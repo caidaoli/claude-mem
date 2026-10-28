@@ -124,6 +124,7 @@ export interface Settings {
   CLAUDE_MEM_CUSTOM_REASONING?: string;
   CLAUDE_MEM_CUSTOM_MODEL?: string;
   CLAUDE_MEM_CUSTOM_PROTOCOL?: string;  // 'openai' | 'gemini' | 'codex'
+  CLAUDE_MEM_CUSTOM_REQUEST_COMPRESSION?: string;  // 'none' | 'gzip' | 'zstd'
   CLAUDE_MEM_CUSTOM_STREAMING?: string;  // 'true' | 'false'
   CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES?: string;  // '0' = disabled
   CLAUDE_MEM_CUSTOM_MAX_TOKENS?: string;  // '0' = disabled

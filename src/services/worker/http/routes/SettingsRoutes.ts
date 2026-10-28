@@ -274,6 +274,7 @@ export class SettingsRoutes extends BaseRouteHandler {
       'CLAUDE_MEM_CUSTOM_MODEL',
       'CLAUDE_MEM_CUSTOM_PROTOCOL',
       'CLAUDE_MEM_CUSTOM_STREAMING',
+      'CLAUDE_MEM_CUSTOM_REQUEST_COMPRESSION',
       'CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES',
       'CLAUDE_MEM_CUSTOM_MAX_TOKENS',
       'CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT',
@@ -423,6 +424,11 @@ export class SettingsRoutes extends BaseRouteHandler {
     if (settings.CLAUDE_MEM_CUSTOM_REASONING !== undefined
       && !['off', 'on'].includes(settings.CLAUDE_MEM_CUSTOM_REASONING)) {
       return { valid: false, error: 'CLAUDE_MEM_CUSTOM_REASONING must be "off" (default) or "on"' };
+    }
+
+    if (settings.CLAUDE_MEM_CUSTOM_REQUEST_COMPRESSION !== undefined
+      && !['none', 'gzip', 'zstd'].includes(settings.CLAUDE_MEM_CUSTOM_REQUEST_COMPRESSION)) {
+      return { valid: false, error: 'CLAUDE_MEM_CUSTOM_REQUEST_COMPRESSION must be "none", "gzip", or "zstd"' };
     }
 
     const customNumericRanges: Array<{ key: string; min: number; max: number }> = [

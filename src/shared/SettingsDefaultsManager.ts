@@ -230,6 +230,7 @@ export interface SettingsDefaults {
   CLAUDE_MEM_CUSTOM_MODEL: string;        // Model name
   CLAUDE_MEM_CUSTOM_PROTOCOL: string;     // 'openai' | 'gemini' | 'codex'
   CLAUDE_MEM_CUSTOM_STREAMING: string;    // 'true' | 'false'
+  CLAUDE_MEM_CUSTOM_REQUEST_COMPRESSION: string; // 'none' | 'gzip' | 'zstd'
   CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES: string;  // Max messages (0 = disabled)
   CLAUDE_MEM_CUSTOM_MAX_TOKENS: string;   // Max tokens (0 = disabled)
   CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT: string;  // First token timeout in seconds (0 = disabled)
@@ -519,6 +520,7 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_CUSTOM_MODEL: 'gpt-4o',  // Default model name
     CLAUDE_MEM_CUSTOM_PROTOCOL: 'openai',  // Default to OpenAI protocol
     CLAUDE_MEM_CUSTOM_STREAMING: 'true',  // Enable streaming by default
+    CLAUDE_MEM_CUSTOM_REQUEST_COMPRESSION: 'none', // Upstream must support compressed request bodies
     CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES: '0',  // Disabled by default
     CLAUDE_MEM_CUSTOM_MAX_TOKENS: '0',  // Disabled by default
     CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT: '0',  // Disabled by default (seconds)

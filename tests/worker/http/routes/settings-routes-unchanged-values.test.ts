@@ -46,6 +46,23 @@ describe('a viewer save is judged on what it changes', () => {
     else writeFileSync(settingsPath, prior, 'utf-8');
   });
 
+  it('round-trips Custom request compression and rejects invalid updates', () => {
+    writeFileSync(settingsPath, '{}');
+    const routes = handlers();
+    expect(call(routes['GET /api/settings']).payload.CLAUDE_MEM_CUSTOM_REQUEST_COMPRESSION).toBe('none');
+    for (const compression of ['gzip', 'zstd', 'none']) {
+      const saved = call(routes['POST /api/settings'], { CLAUDE_MEM_CUSTOM_REQUEST_COMPRESSION: compression });
+      expect(saved.status()).toBe(200);
+      expect(JSON.parse(readFileSync(settingsPath, 'utf8')).CLAUDE_MEM_CUSTOM_REQUEST_COMPRESSION).toBe(compression);
+      expect(call(routes['GET /api/settings']).payload.CLAUDE_MEM_CUSTOM_REQUEST_COMPRESSION).toBe(compression);
+    }
+    for (const value of ['br', '', true]) {
+      const saved = call(routes['POST /api/settings'], { CLAUDE_MEM_CUSTOM_REQUEST_COMPRESSION: value });
+      expect(saved.status()).toBe(400);
+      expect(JSON.parse(readFileSync(settingsPath, 'utf8')).CLAUDE_MEM_CUSTOM_REQUEST_COMPRESSION).toBe('none');
+    }
+  });
+
   for (const [key, value] of [
     ['CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER', 'codex'],
     ['CLAUDE_MEM_OPENROUTER_REASONING_EFFORT', 'xhigh'],

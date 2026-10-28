@@ -748,6 +748,19 @@ export function ContextSettingsModal({
                     </select>
                   </FormField>
                   <FormField
+                    label={t.settings.requestCompression}
+                    tooltip={t.settings.requestCompressionTooltip}
+                  >
+                    <select
+                      value={formState.CLAUDE_MEM_CUSTOM_REQUEST_COMPRESSION || 'none'}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_CUSTOM_REQUEST_COMPRESSION', e.target.value)}
+                    >
+                      <option value="none">{t.settings.requestCompressionNone}</option>
+                      <option value="gzip">gzip</option>
+                      <option value="zstd">zstd</option>
+                    </select>
+                  </FormField>
+                  <FormField
                     label={t.settings.maxContextMessages}
                     tooltip={t.settings.maxContextMessagesTooltip}
                   >

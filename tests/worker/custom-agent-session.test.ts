@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
+import * as zlib from 'node:zlib';
 
-import { CustomAgent, isCustomAvailable } from '../../src/services/worker/CustomAgent.js';
+import { CustomAgent, isCustomAvailable, resolveCustomConfig } from '../../src/services/worker/CustomAgent.js';
 import { SettingsDefaultsManager } from '../../src/shared/SettingsDefaultsManager.js';
 import { ModeManager } from '../../src/services/domain/ModeManager.js';
 import * as EnvManager from '../../src/shared/EnvManager.js';
@@ -85,7 +86,7 @@ describe('CustomAgent session behavior', () => {
   let settings: ReturnType<typeof SettingsDefaultsManager.getAllDefaults>;
   let mode: any;
   let credential: string | undefined;
-  let requests: Array<{ url: string; body: any; headers: Record<string, string>; signal: AbortSignal }>;
+  let requests: Array<{ url: string; body: any; rawBody: string | Uint8Array; headers: Record<string, string>; signal: AbortSignal }>;
   let replies: Array<Response | ((signal: AbortSignal) => Response | Promise<Response>)>;
 
   function chat(content = observation, usage: Record<string, number> = { prompt_tokens: 7, completion_tokens: 5, total_tokens: 12 }) {
@@ -150,12 +151,86 @@ describe('CustomAgent session behavior', () => {
     spyOn(EnvManager, 'getCredential').mockImplementation(key => key === 'CUSTOM_API_KEY' ? credential : undefined);
     spyOn(contextGenerator, 'generateContext').mockResolvedValue('Prior session memory');
     global.fetch = mock(async (url: any, options: any) => {
-      requests.push({ url: String(url), body: JSON.parse(options.body), headers: options.headers, signal: options.signal });
+      const encoding = new Headers(options.headers).get('content-encoding');
+      const json = encoding === 'gzip' ? zlib.gunzipSync(options.body).toString('utf8')
+        : encoding === 'zstd' ? zlib.zstdDecompressSync(options.body).toString('utf8') : options.body;
+      requests.push({ url: String(url), body: JSON.parse(json), rawBody: options.body, headers: options.headers, signal: options.signal });
       const reply = replies.shift() ?? chat();
       return typeof reply === 'function' ? reply(options.signal) : reply;
     }) as any;
   });
   afterEach(() => { global.fetch = originalFetch; mock.restore(); });
+
+  for (const protocol of ['openai', 'gemini', 'codex'] as const) {
+    for (const compression of ['none', 'gzip', 'zstd'] as const) {
+      for (const streaming of [false, true]) {
+        it(`preserves ${protocol} JSON with ${compression} request compression (streaming=${streaming})`, async () => {
+          spyOn(Date, 'now').mockReturnValue(1_793_145_600_000);
+          settings.CLAUDE_MEM_CUSTOM_PROTOCOL = protocol;
+          settings.CLAUDE_MEM_CUSTOM_STREAMING = String(streaming);
+          const reply = () => {
+            if (!streaming) return protocol === 'openai' ? chat() : protocol === 'gemini' ? gemini() : codex();
+            if (protocol === 'openai') return sse([{ choices: [{ delta: { content: observation }, finish_reason: 'stop' }], usage: { prompt_tokens: 7, completion_tokens: 5, total_tokens: 12 } }]);
+            if (protocol === 'gemini') return sse([{ candidates: [{ content: { parts: [{ text: observation }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 7, candidatesTokenCount: 5, totalTokenCount: 12 } }]);
+            return sse([{ type: 'response.completed', response: { status: 'completed', output: [{ content: [{ type: 'output_text', text: observation }] }], usage: { input_tokens: 7, output_tokens: 5, total_tokens: 12 } } }]);
+          };
+          replies.push(reply(), reply());
+          const baseline = fixture();
+          await baseline.agent.startSession(baseline.session);
+          settings.CLAUDE_MEM_CUSTOM_REQUEST_COMPRESSION = compression;
+          const compressed = fixture();
+          await compressed.agent.startSession(compressed.session);
+          expect(requests).toHaveLength(2);
+          expect(requests[1].body).toEqual(requests[0].body);
+          expect(new Headers(requests[1].headers).get('content-encoding')).toBe(compression === 'none' ? null : compression);
+          expect(new Headers(requests[1].headers).get('content-type')).toBe('application/json');
+          if (compression === 'none') expect(typeof requests[1].rawBody).toBe('string');
+          else {
+            expect(requests[1].rawBody).toBeInstanceOf(Uint8Array);
+            expect(requests[1].rawBody.length).toBeLessThan(Buffer.byteLength(requests[0].rawBody));
+          }
+          expect(compressed.storeObservations).toHaveBeenCalledTimes(1);
+          expect(compressed.session.cumulativeInputTokens).toBe(7);
+        });
+      }
+    }
+  }
+
+  it('defaults old configurations to no compression and rejects invalid values', () => {
+    delete (settings as any).CLAUDE_MEM_CUSTOM_REQUEST_COMPRESSION;
+    expect(resolveCustomConfig().requestCompression).toBe('none');
+    settings.CLAUDE_MEM_CUSTOM_REQUEST_COMPRESSION = 'br';
+    expect(() => resolveCustomConfig()).toThrow('CLAUDE_MEM_CUSTOM_REQUEST_COMPRESSION');
+    expect(requests).toHaveLength(0);
+  });
+
+  it('reports failed zstd compression before sending a request', async () => {
+    settings.CLAUDE_MEM_CUSTOM_REQUEST_COMPRESSION = 'zstd';
+    spyOn(zlib, 'zstdCompress').mockImplementation(((_data: unknown, callback: Function) => callback(new Error('compression failed'))) as any);
+    await expect(fixture().agent.formatTelegramWrapup({ summaryText: 'done' } as any)).rejects.toMatchObject({ kind: 'setup_required' });
+    expect(requests).toHaveLength(0);
+  });
+
+  for (const compression of ['gzip', 'zstd'] as const) {
+    it(`recompresses changed OpenAI retry bodies with ${compression}`, async () => {
+      settings.CLAUDE_MEM_CUSTOM_REQUEST_COMPRESSION = compression;
+      settings.CLAUDE_MEM_CUSTOM_STREAMING = 'true';
+      replies.push(
+        new Response(JSON.stringify({ error: { message: 'stream_options is not supported' } }), { status: 400 }),
+        new Response(JSON.stringify({ error: { message: "Unsupported parameter: 'max_tokens'. Use 'max_completion_tokens' instead." } }), { status: 400 }),
+        chat(),
+      );
+      const f = fixture();
+      await f.agent.startSession(f.session);
+      expect(requests).toHaveLength(3);
+      expect(requests[0].body.stream).toBe(true);
+      expect(requests[1].body.stream).toBeUndefined();
+      expect(requests[2].body.max_tokens).toBeUndefined();
+      expect(requests[2].body.max_completion_tokens).toBeGreaterThan(0);
+      for (const request of requests) expect(new Headers(request.headers).get('content-encoding')).toBe(compression);
+      expect(f.storeObservations).toHaveBeenCalledTimes(1);
+    });
+  }
 
   it('does not send or store a bare init by default', async () => {
     const f = fixture([]);

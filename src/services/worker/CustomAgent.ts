@@ -27,6 +27,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import type { Tiktoken } from 'tiktoken';
+import { encodeJsonRequestBody, parseRequestCompression, type RequestCompression } from './request-compression.js';
 
 // tiktoken is external (wasm sidecar) and the worker bundle is shared by every
 // hook, which may run from a plugin cache without node_modules. Load it on first
@@ -73,6 +74,7 @@ export interface CustomAgentConfig {
   model: string;
   protocol: CustomProtocol;
   streaming: boolean;
+  requestCompression?: RequestCompression;
   maxContextMessages: number;  // 0 = disabled
   maxTokens: number;  // 0 = disabled
   firstTokenTimeoutSeconds: number;  // 0 = disabled (time to first body chunk, not HTTP headers)
@@ -1003,6 +1005,7 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
             url,
             headers: { ...buildBearerJsonHeaders(key, sessionId), 'x-client-request-id': clientAttemptId },
             body: { ...body, ...(reasoning ? { reasoning: REASONING_DISABLED } : {}) },
+            requestCompression: config.requestCompression,
             maxOutputTokens,
             signal: attemptSignal,
             liveness,
@@ -1166,13 +1169,15 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
     };
 
     try {
+      const encoded = await encodeJsonRequestBody(body, config.requestCompression);
       response = await fetch(url, {
         method: 'POST',
         headers: {
           ...(config.protocol === 'gemini' ? buildGeminiJsonHeaders(apiKey, sessionId) : buildBearerJsonHeaders(apiKey, sessionId)),
           'x-client-request-id': clientAttemptId,
+          ...encoded.headers,
         },
-        body: JSON.stringify(body), signal: controller.signal,
+        body: encoded.body, signal: controller.signal,
       });
       if (!response.ok) {
         const text = await response.text();
@@ -1259,6 +1264,7 @@ export function resolveCustomConfig(settingsPath: string = USER_SETTINGS_PATH): 
     model: (settings.CLAUDE_MEM_CUSTOM_MODEL || 'gpt-4o').trim(),
     protocol: parseCustomProtocol(settings.CLAUDE_MEM_CUSTOM_PROTOCOL),
     streaming: settings.CLAUDE_MEM_CUSTOM_STREAMING !== 'false',
+    requestCompression: parseRequestCompression(settings.CLAUDE_MEM_CUSTOM_REQUEST_COMPRESSION),
     reasoning: settings.CLAUDE_MEM_CUSTOM_REASONING,
     maxContextMessages: parseOptionalPositiveInt(settings.CLAUDE_MEM_CUSTOM_MAX_CONTEXT_MESSAGES),
     maxTokens: parseOptionalPositiveInt(settings.CLAUDE_MEM_CUSTOM_MAX_TOKENS),

@@ -165,6 +165,7 @@ My Work generates readable request titles, summaries and workstream descriptions
 | `CLAUDE_MEM_CUSTOM_API_KEY` | — | Endpoint key, or `CUSTOM_API_KEY` in `~/.claude-mem/.env`. Local endpoints may omit it |
 | `CLAUDE_MEM_CUSTOM_API_KEYS` | — | Additional keys, separated by commas or newlines, or `CUSTOM_API_KEYS` in `~/.claude-mem/.env`. Custom has its own rotation cooldown pool |
 | `CLAUDE_MEM_CUSTOM_REASONING` | `off` | `off` applies low/off reasoning hints supported by the selected protocol; `on` leaves reasoning to the endpoint |
+| `CLAUDE_MEM_CUSTOM_REQUEST_COMPRESSION` | `none` | `none`, `gzip`, or `zstd`. Compresses JSON request bodies for all three Custom protocols using `Content-Encoding`; the endpoint must support the selected encoding. Reduces upload bytes, not model tokens. zstd requires runtime support; unavailable encoders fail before sending. No automatic uncompressed retry |
 | `CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT` | `0` | Seconds until the first response body chunk; headers alone do not satisfy it. `0` disables this extra deadline |
 | `CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT` | `0` | Seconds for the complete request. `0` now uses the shared provider timeout defaults instead of disabling all deadlines |
 
