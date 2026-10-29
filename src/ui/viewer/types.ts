@@ -116,6 +116,8 @@ export interface Settings {
   CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER?: string;
   CLAUDE_MEM_QUOTA_FALLBACK_MODEL?: string;
   CLAUDE_MEM_QUOTA_FALLBACK_AUTH_METHOD?: string;
+  CLAUDE_MEM_WORK_VIEW_COPY_PROVIDER?: string;
+  CLAUDE_MEM_WORK_VIEW_COPY_MODEL?: string;
 
   // Custom Provider Configuration
   CLAUDE_MEM_CUSTOM_API_URL?: string;

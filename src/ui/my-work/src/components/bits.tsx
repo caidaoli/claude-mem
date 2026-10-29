@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { motion } from 'motion/react'
 import { BotIcon, CornerLeftUpIcon, RefreshCwIcon, StarIcon, UserIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -12,7 +13,17 @@ import { Req } from '@/spec/req'
 import { agentById, deviceById, isSampleHref, measuredEstimate, SAMPLE_DEVICES, useWorkModel, type Device, type LiveState, type Request, type Run, type SkillRun } from '@/data'
 import type { ConnectionStatus } from '@/live/connection-status'
 import type { AutoRefresh } from '@/live/work-data-source'
+import { focusAreaLabel, resolveFocusAreaId } from '@/live/to-focus-model'
 import { AgentMark } from './brand'
+
+/**
+ * The sliding highlight behind the active choice in a nav or toggle group (the `layoutId` pattern from aceternity/tabs).
+ * Render it inside the active item only; the item needs `relative` and its content `relative` to sit above it.
+ * Each group passes its own `layoutId` so pills never jump between groups.
+ */
+export function ActivePill({ layoutId, className }: { layoutId: string; className?: string }) {
+  return <motion.span layoutId={layoutId} transition={{ type: 'spring', bounce: 0.3, duration: 0.6 }} className={cn('absolute inset-0 rounded-[inherit] bg-accent', className)} />
+}
 
 export interface Workspace { mode: 'home' | 'web'; team: boolean; connected: boolean }
 export const WorkspaceContext = createContext<Workspace>({ mode: 'home', team: false, connected: false })
@@ -46,17 +57,20 @@ export const STATE_LABEL: Record<LiveState, string> = {
 /** Attention first: what waits on you, then what to check, then what is moving, then the rest. */
 export const ATTENTION_ORDER: LiveState[] = ['your-move', 'needs-check', 'working', 'idle', 'shipped']
 
+/** Each state's colors, shared by the badge and the List view's flipboard so both read as the same state. */
+export const STATE_SURFACE: Record<LiveState, string> = {
+  working: 'border-working-border bg-working text-working-foreground',
+  'needs-check': 'border-review-border bg-review text-review-foreground',
+  'your-move': 'border-attention-border bg-attention font-medium text-attention-foreground',
+  idle: 'border-idle-border bg-idle text-idle-foreground',
+  shipped: 'border-shipped-border bg-shipped text-shipped-foreground',
+}
+
 /** One glance tells working, done-but-unchecked, waiting on you and shipped apart (§6). State is the only thing colored. */
 export function StateBadge({ state }: { state: LiveState }) {
   return (
     <Req ids={['R6.2']}>
-      <Badge variant="outline" className={cn('shrink-0 gap-1.5 font-normal', {
-        'border-working-border bg-working text-working-foreground': state === 'working',
-        'border-review-border bg-review text-review-foreground': state === 'needs-check',
-        'border-attention-border bg-attention font-medium text-attention-foreground': state === 'your-move',
-        'border-idle-border bg-idle text-idle-foreground': state === 'idle',
-        'border-shipped-border bg-shipped text-shipped-foreground': state === 'shipped',
-      })}>
+      <Badge variant="outline" className={cn('shrink-0 gap-1.5 font-normal', STATE_SURFACE[state])}>
         <span className={cn('size-1.5 rounded-full', {
           'bg-working-foreground motion-safe:animate-pulse': state === 'working',
           'bg-review-foreground': state === 'needs-check',
@@ -71,23 +85,23 @@ export function StateBadge({ state }: { state: LiveState }) {
 }
 
 /**
- * Links a request to the goal it serves, or says it serves none (decision 1).
- * A quiet link, not a colored pill: color is reserved for state. Opens My Goals on that goal.
+ * The focus area a request sits in: the area's name, "Other", or "Sorting…" before the next refresh places it.
+ * A quiet link, not a colored pill: color is reserved for state. Opens My Work on that area.
  */
-export function GoalChip({ goalId, onOpen }: { goalId?: string | null; onOpen?: (goalId: string) => void }) {
-  const { priorities, openAsks } = useWorkModel()
-  // Resolved through the loaded goals only: a goal id the model doesn't have reads "Goal not linked yet".
-  const goal = goalId ? [...priorities, ...openAsks].find((entry) => entry.id === goalId) ?? null : null
+export function FocusAreaChip({ focusAreaId, onOpen }: { focusAreaId?: string; onOpen?: (focusAreaId: string) => void }) {
+  const { focusAreas } = useWorkModel()
+  const placed = resolveFocusAreaId(focusAreaId, focusAreas)
+  const label = focusAreaLabel(focusAreaId, focusAreas)
   return (
-    <Req ids={['D1']}>
-      {goal ? (
-        <button type="button" onClick={(event) => { event.stopPropagation(); onOpen?.(goal.id) }} className="inline-flex min-h-11 max-w-full items-center gap-1.5 self-start text-left text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline md:min-h-6">
+    <Req ids={['R16.5']}>
+      {placed ? (
+        <button type="button" onClick={(event) => { event.stopPropagation(); onOpen?.(placed) }} className="inline-flex min-h-11 max-w-full items-center gap-1.5 self-start text-left text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline md:min-h-6">
           <CornerLeftUpIcon className="size-3.5 shrink-0" />
-          <span className="truncate">{goal.title}</span>
+          <span className="truncate">{label}</span>
         </button>
       ) : (
-        // Not linked yet is not the same claim as "serves no goal".
-        <span className="inline-flex min-h-6 items-center gap-1.5 self-start text-xs text-muted-foreground/80 italic">{goalId === null ? t('No goal') : t('Goal not linked yet')}</span>
+        // Not placed yet is not the same claim as Other: the next refresh places it.
+        <span className="inline-flex min-h-6 items-center gap-1.5 self-start text-xs text-muted-foreground/80 italic">{label}</span>
       )}
     </Req>
   )
@@ -183,7 +197,8 @@ export function LiveIndicator() {
               {live && <span className="absolute inline-flex size-full rounded-full bg-shipped-foreground/40 motion-safe:animate-ping" />}
               <span className={cn('relative inline-flex size-2 rounded-full', live ? 'bg-shipped-foreground' : connection.tone === 'warning' ? 'bg-attention-foreground' : 'bg-idle-foreground')} />
             </span>
-            {demonstration ? t('Live') : t(connection.label)}
+            {/* Phone: the dot alone (its colour carries the state, the tooltip the words) so the page title keeps whole words. */}
+            <span className="sr-only sm:not-sr-only">{demonstration ? t('Live') : t(connection.label)}</span>
           </span>
         </TooltipTrigger>
         <TooltipContent className="max-w-72">

@@ -263,12 +263,12 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
     return result.content;
   }
 
-  /** Standalone display copy: reuse the transport without writing observer history or memories. */
-  async generateHumanCopy(input: unknown): Promise<Record<string, unknown>> {
+  /** Standalone display copy: reuse the transport without writing observer history or memories.
+   * Runs on `modelOverride` when given, otherwise on the summary tier. */
+  async generateHumanCopy(input: unknown, modelOverride?: string): Promise<Record<string, unknown>> {
     const config = this.getConfig();
     if (!config.apiKey && this.requiresApiKey(config)) throw this.missingApiKeyError();
-    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
-    const model = resolveSummaryTierModel(config.model, settings);
+    const model = modelOverride || resolveSummaryTierModel(config.model, SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH));
     const sessionId = anonymousSessionId(`human-copy:${JSON.stringify(input)}`);
     return humanCopyProvider(async messages => {
       const systemPrompt = messages.filter(message => message.role === 'system').map(message => message.content).join('\n\n');

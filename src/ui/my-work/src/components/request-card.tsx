@@ -1,8 +1,12 @@
 import { useEffect, useState } from 'react'
 import { CheckIcon } from 'lucide-react'
+import { useReducedMotion } from 'motion/react'
 import { Shimmer } from '@/components/ai-elements/shimmer'
 import { Terminal, TerminalContent } from '@/components/ai-elements/terminal'
-import { Button } from '@/components/ui/button'
+import { EncryptedText } from '@/components/aceternity/encrypted-text'
+import { GlowingEffect } from '@/components/aceternity/glowing-effect'
+import { SaveButton } from '@/components/save-button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { t } from '@/i18n'
@@ -11,7 +15,7 @@ import { isCardDeliverable } from '@/lib/deliverables'
 import { PRODUCT_ICON } from '@/lib/product-icons'
 import { Req } from '@/spec/req'
 import { requestById, updateRequest, useFreshlyUpdated, type Request } from '@/data'
-import { AgentIcon, GoalChip, NextMove, ProductLink, ProgressMeter, StateBadge, useWorkspace } from './bits'
+import { AgentIcon, FocusAreaChip, NextMove, ProductLink, ProgressMeter, StateBadge, useWorkspace } from './bits'
 
 /**
  * Decision 5: while a request has only agent data, the card shows the agent's own lines as a terminal,
@@ -20,6 +24,9 @@ import { AgentIcon, GoalChip, NextMove, ProductLink, ProgressMeter, StateBadge, 
  * newer model brings its first title. Reduced motion: the animation classes are motion-safe only.
  */
 const FRESH_TITLE_FOR_MS = 4000
+// While fresh, the title decrypts from scramble into its text (EncryptedText), paced to finish in the first
+// half of the fresh window so it settles before the card turns back to plain text.
+const DECRYPT_TITLE_IN_MS = FRESH_TITLE_FOR_MS / 2
 function useAgentViewTransform(request: Request) {
   const [phase, setPhase] = useState<'agent' | 'translating' | 'fresh' | 'human'>(request.title ? 'human' : 'agent')
   const untitled = !request.title && !!request.resolvesTo
@@ -86,7 +93,7 @@ export function OpenFollowUps({ request, limit }: { request: Request; limit?: nu
             <li key={followUp.text} className="flex min-h-11 items-center gap-2 text-sm md:min-h-9">
               <span className="w-12 shrink-0 text-[11px] font-medium text-muted-foreground uppercase">{t(followUp.tag)}</span>
               <span className="min-w-0 flex-1 truncate">{followUp.text}</span>
-              {inStore && <Button variant="ghost" size="sm" className="h-11 shrink-0 text-xs md:h-7" onClick={(event) => { event.stopPropagation(); finish(followUp.text) }}><CheckIcon />{t('Done')}</Button>}
+              {inStore && <SaveButton className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'h-11 shrink-0 text-xs md:h-7')} onClick={() => finish(followUp.text)}><CheckIcon />{t('Done')}</SaveButton>}
             </li>
           ))}
         </ul>
@@ -99,7 +106,7 @@ export function OpenFollowUps({ request, limit }: { request: Request; limit?: nu
 const CARD_DELIVERABLES = 3
 
 /**
- * What came out of the request, on the front of the card (R5.12): a deck, a
+ * Deliverables, on the front of the card (R5.12): a deck, a
  * report, a page, a PR, each one click away. Bucket copies claude-mem kept are
  * marked as deliverables by the mapper; the drawer keeps the full list with
  * commits and branches.
@@ -136,14 +143,19 @@ export function Deliverables({ request, onOpen }: { request: Request; onOpen: ()
   )
 }
 
-export function RequestCard({ request, onOpen, onOpenGoal }: { request: Request; onOpen: () => void; onOpenGoal: (goalId: string) => void }) {
+export function RequestCard({ request, onOpen, onOpenFocus }: { request: Request; onOpen: () => void; onOpenFocus: (focusAreaId: string) => void }) {
   const { team } = useWorkspace()
   const { phase, text, word } = useAgentViewTransform(request)
   const fresh = phase === 'fresh'
+  const reduceMotion = useReducedMotion()
   // Its recorded content changed in the update just applied (decision 5's "Just updated" dot).
   const contentJustUpdated = useFreshlyUpdated(request.id)
+  // Only a card that needs you gets the edge glow that follows the pointer, so it reads as "this one" (R10.2).
+  const waitingOnYou = request.state === 'your-move' || request.state === 'needs-check'
   return (
     <Req ids={['R1.1', 'R2.1', 'R4.1', 'R3.3', 'R10.2']}>
+      <div className="relative h-full rounded-xl">
+      {waitingOnYou && <GlowingEffect spread={40} glow proximity={64} inactiveZone={0.01} borderWidth={2} disabled={!!reduceMotion} />}
       <Card className="h-full gap-3 py-4 md:py-5">
         <CardHeader className="flex flex-row items-center justify-between gap-2 px-4 md:px-5">
           <div className="flex min-w-0 items-center gap-2">
@@ -162,7 +174,9 @@ export function RequestCard({ request, onOpen, onOpenGoal }: { request: Request;
           {text ? (
             <button type="button" onClick={onOpen} className={cn('-mx-1 space-y-1 rounded-md px-1 text-left focus-visible:outline-2 focus-visible:outline-ring', fresh && 'motion-safe:animate-in motion-safe:fade-in motion-safe:blur-in-sm motion-safe:duration-300')}>
               <Req ids={['R2.6', 'R10.5']}>
-                <h3 className="text-[1.06rem] leading-snug font-semibold tracking-tight">{text.title}</h3>
+                <h3 className="text-[1.06rem] leading-snug font-semibold tracking-tight">
+                  {fresh && !reduceMotion ? <><span className="sr-only">{text.title}</span><span aria-hidden="true"><EncryptedText text={text.title} revealDelayMs={DECRYPT_TITLE_IN_MS / Math.max(1, text.title.length)} /></span></> : text.title}
+                </h3>
               </Req>
               <p className="line-clamp-2 text-sm text-muted-foreground">{text.summary}</p>
             </button>
@@ -187,7 +201,7 @@ export function RequestCard({ request, onOpen, onOpenGoal }: { request: Request;
           <OpenFollowUps request={request} limit={3} />
 
           <div className="mt-auto space-y-3 border-t border-border/70 pt-3">
-            <GoalChip goalId={request.goalId} onOpen={onOpenGoal} />
+            <FocusAreaChip focusAreaId={request.focusAreaId} onOpen={onOpenFocus} />
             <Req ids={['R5.3', 'R5.4', 'R5.5']}>
               <dl className="grid grid-cols-3 gap-2 text-xs">
                 <div><dt className="text-muted-foreground">{t('Stage')}</dt><dd className="mt-0.5 font-medium" title={request.stageNote}>{t(request.stage)}</dd></div>
@@ -199,6 +213,7 @@ export function RequestCard({ request, onOpen, onOpenGoal }: { request: Request;
           </div>
         </CardContent>
       </Card>
+      </div>
     </Req>
   )
 }

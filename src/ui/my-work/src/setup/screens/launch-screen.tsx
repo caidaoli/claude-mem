@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { CmemMark } from '@/components/brand'
+import { SparklesCore } from '@/components/aceternity/sparkles'
 import { t } from '@/i18n'
 import type { SetupTool } from '../setup-data'
 import chatgptMark from '../assets/agents/chatgpt.webp'
@@ -49,7 +50,11 @@ export function LaunchScreen({ tools, onDone }: { tools: SetupTool[]; onDone: ()
     <section aria-labelledby="launch-title">
       <h1 id="launch-title" className="sr-only" tabIndex={-1}>{t('Opening your memory workspace')}</h1>
       <p className="sr-only" role="status" aria-live="polite">{t('Bringing your tools and memory together.')}</p>
-      <div ref={stageRef} className="launch-stage"><span ref={brainRef} className="launch-brain"><CmemMark className="size-full" /></span></div>
+      <div ref={stageRef} className="launch-stage">
+        {/* One sparkle field behind the brain while the tools gather; reduced motion never reaches this step. */}
+        <SparklesCore className="launch-sparkles" background="transparent" particleColor="#5b57e6" minSize={0.6} maxSize={1.6} particleDensity={90} speed={2} />
+        <span ref={brainRef} className="launch-brain"><CmemMark className="size-full" /></span>
+      </div>
     </section>
   )
 }

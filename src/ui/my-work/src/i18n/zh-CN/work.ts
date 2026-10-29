@@ -59,6 +59,8 @@ export const WORK_ZH_CN: Readonly<Record<string, string>> = {
   'No requests match. New work shows up as soon as an agent writes it.': '没有匹配的请求。代理写入新工作后会立即显示在这里。',
   "{count} work record isn't linked to a request yet.": '{count} 条工作记录尚未关联到请求。',
   "{count} work records aren't linked to a request yet.": '{count} 条工作记录尚未关联到请求。',
+  'No requests in this area yet.': '这个关注领域还没有请求。',
+  'A refresh places new requests here, or move one here from its page.': '刷新后新请求会归入这里，你也可以在请求页面把它移到这里。',
 
   // Request card (components/request-card.tsx)
   'Just updated': '刚刚更新',
@@ -104,6 +106,11 @@ export const WORK_ZH_CN: Readonly<Record<string, string>> = {
   '{count} conversation, {sources} sources': '{count} 个会话，{sources} 个来源',
   '{count} conversations, {sources} sources': '{count} 个会话，{sources} 个来源',
   'One conversation so far.': '目前只有一个会话。',
+  'Deliverables': '交付物',
+  'Move to another focus area': '移到其他关注领域',
+  'Moving…': '正在移动…',
+  'Move to…': '移到…',
+  ' · suggested': ' · 建议',
 
   // Shared bits (components/bits.tsx)
   '{agent}, {role}, on {device}': '{agent}，{role}，设备：{device}',
@@ -211,6 +218,9 @@ export const WORK_ZH_CN: Readonly<Record<string, string>> = {
   'Doc': '文档',
   'File': '文件',
   'Link': '链接',
+  'Focus area': '关注领域',
+  'Area not recorded': '未记录关注领域',
+  'Sorting…': '归类中…',
 
   // shadcn ui (components/ui/*)
   'Close': '关闭',

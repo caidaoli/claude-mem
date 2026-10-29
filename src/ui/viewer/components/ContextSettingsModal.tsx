@@ -883,6 +883,34 @@ export function ContextSettingsModal({
               )}
 
               <FormField
+                label={t.settings.workViewCopyProvider}
+                tooltip={t.settings.workViewCopyProviderTooltip}
+              >
+                <select
+                  value={formState.CLAUDE_MEM_WORK_VIEW_COPY_PROVIDER || ''}
+                  onChange={(e) => updateSetting('CLAUDE_MEM_WORK_VIEW_COPY_PROVIDER', e.target.value)}
+                >
+                  <option value="">{t.settings.workViewCopyProviderPrimary}</option>
+                  <option value="openrouter">OpenRouter</option>
+                  <option value="openai-compatible">{t.settings.quotaFallbackOpenaiCompat}</option>
+                  <option value="custom">{t.settings.customOption}</option>
+                  <option value="off">{t.settings.workViewCopyProviderOff}</option>
+                </select>
+              </FormField>
+              <FormField
+                label={t.settings.workViewCopyModel}
+                tooltip={t.settings.workViewCopyModelTooltip}
+              >
+                <input
+                  type="text"
+                  maxLength={200}
+                  value={formState.CLAUDE_MEM_WORK_VIEW_COPY_MODEL || ''}
+                  onChange={(e) => updateSetting('CLAUDE_MEM_WORK_VIEW_COPY_MODEL', e.target.value)}
+                  placeholder={t.settings.workViewCopyModelPlaceholder}
+                />
+              </FormField>
+
+              <FormField
                 label={t.settings.quotaFallback}
                 tooltip={t.settings.quotaFallbackTooltip}
               >

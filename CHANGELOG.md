@@ -4,6 +4,72 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [15.5.0] - 2026-10-29
+
+## Features
+
+- **My Work / My Focus:** Aceternity components across My Work and My Focus (#5136)
+- **Observer:** opt-in OpenAI-compatible batching (#5117)
+- **Work view:** summary provider selection is now explicit (#5104)
+- **Telemetry:** count My Work viewer opens and page switches in PostHog (#5107)
+
+## Fixes
+
+### Work view / My Work
+- Keep the build story under its cap with part budgets (#5128)
+- Stop failing refreshes from flooding agents and retrying forever (#5108)
+- Preserve rejected answers in refresh corrections (#5113)
+- Render recorded group titles and review summaries (#5114)
+
+### Redaction
+- Redact values under bare `token`, `secret` and `api_key` keys (#5130)
+- Redact the bearer token of an Authorization header object (#5129)
+- Pair `MYSQL_PWD` and `dbPassword` keys in structured payloads (#5111)
+- Redact Slack app-level (`xapp-`) and refresh (`xoxe-`) tokens (#5119)
+
+### Antigravity / MCP
+- Record agy MCP calls under their real tool name and a stable id (#5170)
+- Resolve Antigravity project context (#5105)
+- Use `%I`, not `%~I`, in the Windows 8.3 short-path lookup (#5099)
+
+### Worker, install and agents
+- Guard `POST /api/logs/clear` against foreign localhost origins (#5123)
+- Port reclaim reads the port owner, command line and name from `/proc` on Linux (#5101)
+- Clear `last-install-error.json` when an install or repair finishes (#5102)
+- `backup-setup` stops when the installed claude-mem has no backups (#5103)
+- Launch Codex through its resolved executable (#5112)
+- Pi: give the session-start context request the hooks' API budget (#5118)
+
+### Tests
+- Syntax-check the committed plugin bundles, not the built ones (#5137)
+
+**Full changelog:** https://github.com/thedotmack/claude-mem/compare/v15.4.0...v15.5.0
+
+## [15.4.0] - 2026-10-28
+
+## My Work: focus areas, and requests that file themselves
+
+### Focus areas are the top level of My Work (#5131)
+- **MY FOCUS rail.** Your focus areas are listed in priority order, with a needs-you count on each. Every request sits in exactly one area, or in **Other**. On phones the areas appear as a chip row.
+- **Area header.** Each area page shows its goal sentence, combined progress, your own quotes, the asks you haven't started yet, and a link to Past focus. The My Goals page is retired; its content now lives here.
+- **Suggested.** New areas appear here by themselves. You can Keep, Rename, Merge or Dismiss each one, with Undo. Your decisions sync across computers and a refresh never overrides them.
+- **Owner-goals sorts what it mines.** It applies three tests in order, so each statement becomes exactly one focus area, ask or rule. Priorities and open asks no longer duplicate each other.
+- **The Focus step replaces Align in the automatic refresh.** It places every request, and it proposes new areas from Other or from a request that holds several separate asks.
+- **Request cards.** Every card shows its area, and request detail has **Move to…**. "What came out of it" is now called **Deliverables**.
+
+### The judge files new conversations under their request (#5110)
+- **Before any grouping agent runs,** each new conversation is filed: a code link (the same work-state list or `request_id`) joins at once. On CMEM Pro, or with your own OpenRouter key, Jev also checks whether the conversation continues one of your open requests. At a check score of 0.8 or more it joins. Between 0.5 and 0.8 you get a **Join / Not this** suggestion on the card. Otherwise it starts its own request.
+- **Focus areas too.** On the same installs, Jev suggests a focus area for each request before the Focus step runs. The pick is only a hint to the Focus agent for now: automatic placement waits until enough of your own moves exist to calibrate a cutoff.
+- **Without Jev,** everything works as before.
+
+### A request keeps its conversations across project roots (#5106)
+- A request whose decision names its project root keeps conversations from other roots, and later refreshes can still add to it.
+
+### Fixes
+- The sync-api query-plan test applies its own schema, so it no longer fails depending on test order.
+
+**CMEM Pro:** the Jev decisions gateway (`/api/inference/v1/decisions`) is live for Pro subscribers.
+
 ## [15.3.0] - 2026-10-26
 
 ## What changed

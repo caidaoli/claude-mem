@@ -70,57 +70,49 @@ async function review(request: any, checked = true, headers: Record<string, stri
 }
 
 describe('configured My Work copy provider', () => {
-  for (const selected of ['custom', 'openai-compatible'] as const) {
-    it(`publishes ${selected} titles and summaries without changing recorded work`, async () => {
-      const before = (await snapshot()).humanRequests[0];
-      const settings = {
-        ...SettingsDefaultsManager.getAllDefaults(), CLAUDE_MEM_PROVIDER: selected,
-        CLAUDE_MEM_CUSTOM_API_URL: 'http://localhost:1234', CLAUDE_MEM_CUSTOM_MODEL: 'custom-model',
-        CLAUDE_MEM_OPENAI_COMPAT_BASE_URL: 'http://localhost:1234/v1', CLAUDE_MEM_OPENAI_COMPAT_MODEL: 'compat-model',
-      };
-      const generator = {
-        title: '查看工作进展',
-        async generateHumanCopy(input: any) {
-          return { output: { title: this.title, summary: '工作记录已整理完成。', next: '',
-            workstreams: input.workstreams.map((stream: { id: string }) => ({ id: stream.id, title: '工作记录', summary: '可以查看进展。' })) } };
-        },
-      };
-      const unused = { generateHumanCopy: async () => { throw new Error('Wrong provider selected'); } };
-      const settingsSpy = spyOn(SettingsDefaultsManager, 'loadFromFile').mockReturnValue(settings);
-      let provider;
-      try {
-        provider = configuredHumanCopyProvider(join(directory, 'settings.json'), {
-          custom: selected === 'custom' ? generator : unused,
-          'openai-compatible': selected === 'openai-compatible' ? generator : unused,
-        });
-      } finally { settingsSpy.mockRestore(); }
-      expect(provider).not.toBeNull();
-      await stop();
-      await start(new HumanCopyWorker({ provider, cachePath: null, quietMs: 0, minIntervalMs: 0 }));
-      let request: any;
-      for (let attempt = 0; attempt < 50 && request?.humanCopy?.state !== 'current'; attempt++) {
-        request = (await snapshot()).humanRequests[0];
-        if (request.humanCopy.state !== 'current') await new Promise(resolve => setTimeout(resolve, 20));
-      }
-      expect(request.humanCopy).toMatchObject({ state: 'current', title: generator.title, summary: '工作记录已整理完成。' });
-      expect(request.contentFingerprint).toBe(before.contentFingerprint);
-      expect(request.lifecycle).toEqual(before.lifecycle);
-    });
-  }
+  const settingsFile = (settings: Record<string, string>) => {
+    const path = join(directory, 'settings.json');
+    writeFileSync(path, JSON.stringify({ CLAUDE_MEM_PROVIDER: 'custom', CLAUDE_MEM_CUSTOM_API_URL: 'http://localhost:1234', CLAUDE_MEM_CUSTOM_MODEL: 'custom-model', ...settings }));
+    return path;
+  };
+  const customGenerator = () => ({
+    models: [] as Array<string | undefined>,
+    async generateHumanCopy(input: any, model?: string) {
+      this.models.push(model);
+      return { output: { title: '查看工作进展', summary: '工作记录已整理完成。', next: '',
+        workstreams: input.workstreams.map((stream: { id: string }) => ({ id: stream.id, title: '工作记录', summary: '可以查看进展。' })) } };
+    },
+    async askRefresh() { return ''; },
+  });
 
-  it('leaves unsupported or incomplete providers unavailable', () => {
-    const settings = { ...SettingsDefaultsManager.getAllDefaults(), CLAUDE_MEM_PROVIDER: 'custom', CLAUDE_MEM_CUSTOM_API_URL: '' };
-    const settingsSpy = spyOn(SettingsDefaultsManager, 'loadFromFile').mockReturnValue(settings);
-    const providers = { custom: { generateHumanCopy: async () => { throw new Error('Must not run'); } } };
-    try {
-      expect(configuredHumanCopyProvider(undefined, providers)).toBeNull();
-      settings.CLAUDE_MEM_PROVIDER = 'claude';
-      expect(configuredHumanCopyProvider(undefined, providers)).toBeNull();
-      settings.CLAUDE_MEM_PROVIDER = 'openai-compatible';
-      settings.CLAUDE_MEM_OPENAI_COMPAT_PRESET = 'custom';
-      settings.CLAUDE_MEM_OPENAI_COMPAT_BASE_URL = '';
-      expect(configuredHumanCopyProvider(undefined, providers)).toBeNull();
-    } finally { settingsSpy.mockRestore(); }
+  it('publishes Custom titles and summaries on the summary tier while Custom is the primary provider, without changing recorded work', async () => {
+    const before = (await snapshot()).humanRequests[0];
+    const custom = customGenerator();
+    const provider = configuredHumanCopyProvider(settingsFile({ CLAUDE_MEM_TIER_SUMMARY_MODEL: 'summary-model' }), custom);
+    expect(provider.isAvailable?.()).toBe(true);
+    await stop();
+    await start(new HumanCopyWorker({ provider, cachePath: null, quietMs: 0, minIntervalMs: 0 }));
+    let request: any;
+    for (let attempt = 0; attempt < 50 && request?.humanCopy?.state !== 'current'; attempt++) {
+      request = (await snapshot()).humanRequests[0];
+      if (request.humanCopy.state !== 'current') await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    expect(request.humanCopy).toMatchObject({ state: 'current', title: '查看工作进展', summary: '工作记录已整理完成。' });
+    expect(request.contentFingerprint).toBe(before.contentFingerprint);
+    expect(request.lifecycle).toEqual(before.lifecycle);
+    expect(custom.models).toEqual(['summary-model']);
+  });
+
+  it('runs Custom wording on the copy model override, and only when Custom is selected and configured', async () => {
+    const custom = customGenerator();
+    await configuredHumanCopyProvider(settingsFile({ CLAUDE_MEM_TIER_SUMMARY_MODEL: 'summary-model', CLAUDE_MEM_WORK_VIEW_COPY_MODEL: 'copy-model' }), custom)({ workstreams: [] });
+    expect(custom.models).toEqual(['copy-model']);
+    // Selected explicitly while another provider is primary.
+    expect(configuredHumanCopyProvider(settingsFile({ CLAUDE_MEM_PROVIDER: 'claude', CLAUDE_MEM_WORK_VIEW_COPY_PROVIDER: 'custom' }), custom).isAvailable?.()).toBe(true);
+    expect(configuredHumanCopyProvider(settingsFile({ CLAUDE_MEM_PROVIDER: 'claude' }), custom).isAvailable?.()).toBe(false);
+    expect(configuredHumanCopyProvider(settingsFile({ CLAUDE_MEM_WORK_VIEW_COPY_PROVIDER: 'off' }), custom).isAvailable?.()).toBe(false);
+    expect(configuredHumanCopyProvider(settingsFile({ CLAUDE_MEM_CUSTOM_API_URL: '' }), custom).isAvailable?.()).toBe(false);
+    expect(configuredHumanCopyProvider(settingsFile({}), null).isAvailable?.()).toBe(false);
   });
 });
 
