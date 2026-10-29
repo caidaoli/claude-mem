@@ -656,6 +656,26 @@ describe('CustomAgent session behavior', () => {
     expect(requests[0].body.generationConfig?.thinkingConfig).toBeUndefined();
   });
 
+  for (const protocol of ['openai', 'gemini', 'codex'] as const) it(`keeps ${protocol} reasoning off for the observer but not for the summary tier`, async () => {
+    settings.CLAUDE_MEM_CUSTOM_PROTOCOL = protocol;
+    settings.CLAUDE_MEM_CUSTOM_MODEL = protocol === 'gemini' ? 'gemini-3.5-flash-lite' : 'gpt-5.4';
+    settings.CLAUDE_MEM_TIER_SUMMARY_MODEL = protocol === 'gemini' ? 'gemini-3.8-flash-high' : 'gpt-5.5';
+    const summary = JSON.stringify({ request: '请求', investigated: '调查', learned: '了解', completed: '完成', next_steps: '后续', notes: null });
+    const reply = (text?: string) => protocol === 'openai' ? chat(text) : protocol === 'gemini' ? gemini(text) : codex(text);
+    replies.push(reply(), reply(summary), reply('careful answer'));
+    const f = fixture([toolMessage, { type: 'summarize', _persistentId: 103, last_assistant_message: 'done' }]);
+    await f.agent.startSession(f.session);
+    await f.agent.askRefresh('review these', { custom: { model: '$TIER:summary' } });
+    expect(requests).toHaveLength(3);
+    const forcedOff = ({ body }: typeof requests[number]) => protocol === 'gemini' ? body.generationConfig?.thinkingConfig
+      : protocol === 'codex' ? body.reasoning : { reasoning: body.reasoning, reasoning_effort: body.reasoning_effort };
+    expect(forcedOff(requests[0])).toEqual(protocol === 'gemini' ? { thinkingLevel: 'low' }
+      : protocol === 'codex' ? { effort: 'low' } : { reasoning: { enabled: false }, reasoning_effort: 'low' });
+    for (const request of requests.slice(1)) {
+      expect(forcedOff(request)).toEqual(protocol === 'openai' ? { reasoning: undefined, reasoning_effort: undefined } : undefined);
+    }
+  });
+
   for (const allowance of [1, 2]) it(`bounds the empty-reasoning retry to ${allowance} paid sends`, async () => {
     settings.CLAUDE_MEM_CUSTOM_REASONING = 'on';
     replies.push(new Response(JSON.stringify({ choices: [{ message: { content: '' }, finish_reason: 'length' }],

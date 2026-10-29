@@ -985,7 +985,11 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
     const messages = this.conversationToOpenAIMessages(history, config.systemPrompt);
     const plainText = config.plainText || label?.kind === 'field_compression' || label?.kind === 'telegram_wrapup';
     const maxOutputTokens = config.uncappedOutput ? undefined : resolveObserverMaxOutputTokens();
-    const reasoningOff = resolveOpenAICompatReasoning(config.reasoning) !== 'on';
+    // reasoning=off tunes the Custom model; the summary tier (CLAUDE_MEM_TIER_SUMMARY_MODEL) keeps its own thinking level.
+    const customModel = this.getConfig().model;
+    const onSummaryTier = config.model !== customModel
+      && config.model === resolveSummaryTierModel(customModel, SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH));
+    const reasoningOff = !onSummaryTier && resolveOpenAICompatReasoning(config.reasoning) !== 'on';
     const clientAttemptId = paidSendBudget?.clientAttemptId ?? randomUUID();
     const timeoutMs = config.totalTimeoutSeconds > 0
       ? Math.min(perAttemptTimeoutMs ?? Infinity, config.totalTimeoutSeconds * 1000)
