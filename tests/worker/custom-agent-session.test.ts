@@ -577,6 +577,8 @@ describe('CustomAgent session behavior', () => {
     expect(await f.agent.askRefresh('review these', { custom: { model: '$TIER:summary' } })).toBe('careful answer');
     const modelOf = (request: typeof requests[number]) => protocol === 'gemini' ? request.url.match(/\/models\/([^:]+):/)?.[1] : request.body.model;
     expect(requests.map(modelOf)).toEqual(['gpt-4o', 'custom-summary-model']);
+    // Every refresh request shares one cache key, whatever its prompt.
+    expect(requests[1].headers.Session_id).toBe(requests[0].headers.Session_id);
     for (const { body } of requests) {
       expect(body.max_tokens).toBeUndefined();
       expect(body.max_completion_tokens).toBeUndefined();

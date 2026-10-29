@@ -683,7 +683,8 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
     const model = models.custom?.model === '$TIER:summary'
       ? resolveSummaryTierModel(config.model, SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH))
       : config.model;
-    const sessionId = anonymousSessionId(`work-view-refresh:${prompt}`);
+    // One cache key for every refresh request: the steps share the inlined skill as a prefix, and a retry repeats its first ask.
+    const sessionId = anonymousSessionId('work-view-refresh');
     // One long background answer: the observer's output cap and first-token/total timeouts do not apply, only its own deadline.
     const result = await this.query(
       [{ role: 'user', content: prompt }], { ...config, model, uncappedOutput: true, firstTokenTimeoutSeconds: 0, totalTimeoutSeconds: 0 },

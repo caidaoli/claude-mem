@@ -147,7 +147,7 @@ describe('refresh task', () => {
       const task = buildRefreshTask({ needs: { due: 0, ungrouped: 1, goalsStale: false, unaligned: 0, needed: true }, reason: 'scheduled', dataDir: dir, ledgerDir: dir, pluginRoot: PLUGIN_ROOT, openDatabase: handle(database), now: () => NOW });
       const prompts: string[] = [];
       const models: unknown[] = [];
-      let reviewAnswers = 0;
+      let reviewAnswers = 0, storyAnswers = 0;
       const ask = async (prompt: string, stepModels: unknown) => {
         prompts.push(prompt);
         models.push(stepModels);
@@ -167,17 +167,26 @@ describe('refresh task', () => {
           expect(prompt).toMatch(/refused for these groups/);
           return JSON.stringify({ reviews: [{ groupId: show.groupId, state: 'in-progress', percent: 40, summary: 'Cards are being built.', reviewBasis: show.reviewBasis }] });
         }
-        if (prompt.includes('Do only section 4')) return JSON.stringify({ narrative: 'One request is under way.', preferences: [] });
+        // The first story answer holds no JSON; the refusal is sent back and fixed.
+        if (prompt.includes('Do only section 4')) return storyAnswers++ ? JSON.stringify({ narrative: 'One request is under way.', preferences: [] }) : 'Not ready.';
         throw new Error(`Unexpected prompt: ${prompt.slice(-200)}`);
       };
       expect(await task.run(ask, backend)).toBe('1 new conversations grouped, 1 requests reviewed, story written.');
+      // Grouping's input is inline already, so it is not supplied a second time.
+      const groupingInput = /```json\n([\s\S]*?)\n```/.exec(prompts[0])![1];
+      expect(prompts[0].split(groupingInput)).toHaveLength(2);
+      // A retry repeats the whole first ask (inline files included) and only then gives the refusal.
+      const [story, storyRetry] = prompts.filter(prompt => prompt.includes('Do only section 4'));
+      expect(story).toContain('supplied inline');
+      expect(storyRetry.startsWith(story)).toBe(true);
+      expect(storyRetry.slice(story.length)).toBe('\n\nYour previous answer was refused: The answer held no JSON object.\nFix it and answer again.');
       const ledger = readLedger(dir);
       expect(Object.values(ledger.groups.groups).map((group: any) => group.title)).toEqual(['Release cards']);
       expect(Object.values(ledger.progress).map((review: any) => review.percent)).toEqual([40]);
       expect(ledger.story.narrative).toBe('One request is under way.');
       expect(prompts.filter(prompt => prompt.includes('section 3'))).toHaveLength(0);
       // Grouping runs on the light models; reviews and the story on the careful ones.
-      expect(models).toEqual([STEP_MODELS.grouping, STEP_MODELS.review, STEP_MODELS.review, STEP_MODELS.story]);
+      expect(models).toEqual([STEP_MODELS.grouping, STEP_MODELS.review, STEP_MODELS.review, STEP_MODELS.story, STEP_MODELS.story]);
       expect(STEP_MODELS.grouping).toEqual({ 'claude-code': { model: 'haiku' }, codex: { model: 'gpt-6-luna', reasoningEffort: 'low' }, gemini: { model: 'flash-lite' } });
       // Custom has no light model of its own; its careful steps take the summary tier.
       expect(STEP_MODELS.review).toEqual({ 'claude-code': { model: 'sonnet' }, codex: {}, gemini: { model: 'flash' }, custom: { model: '$TIER:summary' } });

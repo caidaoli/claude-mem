@@ -141,9 +141,12 @@ export function buildRefreshTask(options: RefreshTaskOptions): AgentTask & { ste
         if (existsSync(path)) inlineEvidence.set(path, readFileSync(path, 'utf8'));
       }
     }
-    const ask: AskAgent = (prompt, models, schema) => {
-      const supplied = inline ? [...inlineEvidence].filter(([path]) => prompt.includes(path)) : [];
-      return askBackend(supplied.length ? `${prompt}\n\nThe following input files are supplied inline; no file tools are available:\n${supplied.map(([path, contents]) => `--- ${path} ---\n${contents}`).join('\n\n')}` : prompt, models, schema);
+    /** A retry's refusal goes after the inline files, so the retry starts with the whole first ask (prompt caching). */
+    const ask = (prompt: string, models: StepModels, schema?: AnswerSchema, refusal = '') => {
+      // Grouping and alignment already carry their input inline: name the file, do not send it twice.
+      const supplied = inline ? [...inlineEvidence].filter(([path, contents]) => prompt.includes(path) && !prompt.includes(contents)) : [];
+      const evidence = supplied.length ? `\n\nThe following input files are supplied inline; no file tools are available:\n${supplied.map(([path, contents]) => `--- ${path} ---\n${contents}`).join('\n\n')}` : '';
+      return askBackend(`${prompt}${evidence}${refusal && `\n\n${refusal}`}`, models, schema);
     };
     const writeInput = (name: string, value: unknown) => {
       const path = join(runDir, `${++fileNumber}-${name}.json`);
@@ -180,7 +183,7 @@ export function buildRefreshTask(options: RefreshTaskOptions): AgentTask & { ste
       let refusal: string | null = null;
       let answer = '';
       for (let attempt = 0; attempt < 2; attempt++) {
-        answer = await ask(refusal ? `${question}\n\nYour previous answer was refused: ${refusal}\nFix it and answer again.` : question, STEP_MODELS[name], answerSchema);
+        answer = await ask(question, STEP_MODELS[name], answerSchema, refusal ? `Your previous answer was refused: ${refusal}\nFix it and answer again.` : '');
         try { return await save(parseAgentJson(answer)); }
         catch (error) { refusal = error instanceof Error ? error.message : String(error); }
       }
