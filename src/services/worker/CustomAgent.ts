@@ -86,8 +86,12 @@ export interface CustomAgentConfig {
 }
 
 // Fork: Custom always writes Chinese, whatever language the active mode asks for.
-const CUSTOM_OBSERVATION_LANGUAGE = 'LANGUAGE REQUIREMENTS: Please write the observation data in 中文';
-const CUSTOM_SUMMARY_LANGUAGE = 'LANGUAGE REQUIREMENTS: Please write ALL summary content (request, investigated, learned, completed, next_steps, notes) in 中文';
+// Lite models sometimes \u-escape every Chinese character in JSON mode and then
+// garble one escape (`\u6784\u寤`); the reply fails to parse and the batch is
+// resent in a fresh generation. Asking for literal characters avoids that mode.
+const LITERAL_CHINESE = 'Write the Chinese characters themselves; never write them as \\uXXXX escape sequences.';
+const CUSTOM_OBSERVATION_LANGUAGE = `LANGUAGE REQUIREMENTS: Please write the observation data in 中文. ${LITERAL_CHINESE}`;
+const CUSTOM_SUMMARY_LANGUAGE = `LANGUAGE REQUIREMENTS: Please write ALL summary content (request, investigated, learned, completed, next_steps, notes) in 中文. ${LITERAL_CHINESE}`;
 /** Per-attempt deadline for one My Work refresh step: a whole-ledger answer can take minutes. The worker checks every 10 minutes. */
 const WORK_VIEW_REFRESH_TIMEOUT_MS = 10 * 60_000;
 
