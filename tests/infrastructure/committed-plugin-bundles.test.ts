@@ -17,7 +17,7 @@ afterAll(() => rmSync(committedPluginRoot, { recursive: true, force: true }));
 
 const committedPluginScripts = execFileSync(
   'git',
-  ['ls-files', '--', 'plugin/scripts', 'plugin/sqlite', 'plugin/ui'],
+  ['ls-tree', '-r', '--name-only', 'HEAD', '--', 'plugin/scripts', 'plugin/sqlite', 'plugin/ui'],
   { cwd: projectRoot, encoding: 'utf-8' },
 )
   .split('\n')

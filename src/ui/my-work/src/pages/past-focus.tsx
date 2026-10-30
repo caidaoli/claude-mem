@@ -12,7 +12,8 @@ import { t } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { timesLabel } from '@/lib/words'
 import { Req } from '@/spec/req'
-import { SAMPLE_RUNS, useWorkModel, type PastPeriod } from '@/data'
+import { SAMPLE_RUNS, type PastPeriod } from '@/data'
+import { useWorkModel } from '@/store'
 import { resolveFocusAreaId } from '@/live/to-focus-model'
 
 /**

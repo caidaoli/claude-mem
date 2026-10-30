@@ -38,6 +38,7 @@ import { optimizeObservationFields, buildFieldCompressionPrompt, type Compressed
 import { resolveFieldOptimizeTimeoutMs } from './retry.js';
 import { buildTelegramWrapupPrompt, type TelegramWrapupFormatterInput } from '../integrations/TelegramWrapupNotifier.js';
 import { humanCopyProvider } from '../work-view/human-copy-worker.mjs';
+import { freezeResponseMedia, type PreparedTurnMedia, type TurnImageRequest } from '../media/inference.js';
 
 import {
   processAgentResponse,
@@ -68,6 +69,12 @@ export interface ProviderQueryResult {
    * the reply off (#3868).
    */
   finishReason?: string;
+  /**
+   * The request labels of the images the accepted request actually carried.
+   * Empty when the turn had images but was sent (or resent) text-only; absent
+   * when the turn had none.
+   */
+  deliveredImageLabels?: string[];
 }
 
 /**
@@ -193,7 +200,25 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
     perAttemptTimeoutMs?: number,
     paidSendBudget?: PaidSendBudget,
     label?: ObserverRequestLabel,
+    /**
+     * This observation turn's image side refs. Passed only by the observation
+     * path, never by summary, wrap-up or condensation requests, and never
+     * stored in history. Providers without image support ignore it.
+     */
+    turnImages?: TurnImageRequest,
   ): Promise<ProviderQueryResult>;
+
+  /**
+   * The current observation turn's images, when this provider and its
+   * configured endpoint qualify for image input. The default sends none.
+   */
+  protected async prepareObservationMedia(
+    _session: ActiveSession,
+    _messages: PendingMessageWithId[],
+    _config: TConfig,
+  ): Promise<PreparedTurnMedia | null> {
+    return null;
+  }
 
   /**
    * One bounded, standalone call that condenses an oversized tool payload.
@@ -586,7 +611,7 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
     // rather than a head/tail slice with the middle cut out (#3800). The field
     // cap scales with the model's window (#3625).
     // A newer user prompt may arrive while the payload is being condensed.
-    const responseContext = {
+    let responseContext = {
       ...snapshotResponseContext(session),
       promptNumber: message.prompt_number ?? session.lastPromptNumber,
     };
@@ -611,6 +636,12 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
       created_at_epoch: originalTimestamp ?? Date.now(),
       cwd: message.cwd
     }, fieldMaxChars, takeObserverSchemaReminder(session));
+    // Bounded per-turn side refs: loaded here, sent with this request only,
+    // and released when the turn returns. History keeps the string turn.
+    let turnMedia = message.mediaRefs?.length ? await this.prepareObservationMedia(session, [message], config) : null;
+    if (turnMedia) {
+      responseContext = { ...responseContext, media: freezeResponseMedia(turnMedia, turnMedia.images.length > 0) };
+    }
 
     const turnPrompt = this.observationTurnPrompt(session, message, obsPrompt, mode);
     if (this.rejectAbortedObservation) session.abortController.signal.throwIfAborted();
@@ -622,7 +653,23 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
 
     session.lastPromptSentAt = Date.now();
     session.lastGeneratorSource = 'ingest';
-    const obsResponse = await this.queryObserverTurn(session, config, paidSendBudgetForClaimedBatch(session), 'observation');
+    let obsResponse: ProviderQueryResult;
+    try {
+      obsResponse = await this.queryObserverTurn(
+        session, config, paidSendBudgetForClaimedBatch(session), 'observation',
+        turnMedia?.images.length ? { images: turnMedia.images, maxBodyBytes: turnMedia.maxBodyBytes } : undefined,
+      );
+    } finally {
+      // Clear the derivative bytes as soon as the request settles.
+      if (turnMedia) turnMedia.images.forEach(image => { image.dataUrl = ''; });
+    }
+    if (turnMedia && responseContext.media?.imagesDelivered) {
+      // Only images the accepted request carried can be inspected; a
+      // text-only send or resend marks none.
+      const delivered = obsResponse.deliveredImageLabels ?? [];
+      responseContext = { ...responseContext, media: freezeResponseMedia(turnMedia, delivered.length > 0, delivered) };
+    }
+    turnMedia = null;
 
     // Billed usage counts even when the reply came back empty.
     accumulateObserverUsage(session, obsResponse);
@@ -738,11 +785,12 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
     config: TConfig,
     paidSendBudget: PaidSendBudget | undefined,
     kind: ObserverRequestLabel['kind'],
+    turnImages?: TurnImageRequest,
   ): Promise<ProviderQueryResult> {
     try {
       return await this.query(
         this.prepareQueryHistory(session.conversationHistory, config, session), config, this.querySignal(session),
-        undefined, paidSendBudget, generationLabel(session, kind),
+        undefined, paidSendBudget, generationLabel(session, kind), turnImages,
       );
     } catch (error: unknown) {
       if (!isClassified(error) || paidSendOutcomeOf(error) !== 'output_failure') throw error;

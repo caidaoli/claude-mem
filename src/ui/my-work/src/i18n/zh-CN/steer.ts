@@ -1,5 +1,7 @@
 /** zh-CN for My Goals and My Rules pages, keyed by the English source text. */
 export const STEER_ZH_CN: Readonly<Record<string, string>> = {
+  'Saved {rule}.': '已保存{rule}。',
+  'This rule changed since your edit. Review its current version before changing it again.': '这条规则在你编辑后已发生变化。再次修改前，请先查看当前版本。',
   // My Goals: goal status and request states (pages/my-goals.tsx)
   'Nothing on it': '尚未开始',
   'Waiting on you': '等你处理',

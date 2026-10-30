@@ -16,6 +16,8 @@ export const APP_ZH_CN: Readonly<Record<string, string>> = {
   'Team': '团队',
   'See everyone’s requests on one board, with who asked and where work collides.': '在一块看板上查看所有人的请求，包括谁提出的、哪些工作有冲突。',
   'Start team plan': '开通团队方案',
+  'Retry': '重试',
+  'Saved. Reading the latest work after it failed: {error}': '已保存，但读取最新工作失败：{error}',
   'Reading local work…': '正在读取本地工作…',
   "Can't read local work right now": '暂时无法读取本地工作',
   'Wireframe · sample data': '线框图 · 示例数据',
