@@ -983,7 +983,6 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
     label?: ObserverRequestLabel,
   ): Promise<ProviderQueryResult> {
     if (!config.apiUrl || !config.model) throw this.missingApiKeyError();
-    const url = buildApiUrl(config.apiUrl, config.protocol, config.model, config.streaming);
     const sessionId = label?.contentSessionId !== undefined
       ? (label.contentSessionId.trim() || (label.generationId ? `custom-${label.generationId}` : resolveRequestSessionId('').sessionId))
       : undefined;
@@ -994,12 +993,15 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
     const customModel = this.getConfig().model;
     const onSummaryTier = config.model !== customModel
       && config.model === resolveSummaryTierModel(customModel, SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH));
+    // Long summary requests should deliver chunks even when observation streaming is disabled.
+    const streaming = config.streaming || onSummaryTier || label?.kind === 'summary';
+    const url = buildApiUrl(config.apiUrl, config.protocol, config.model, streaming);
     const reasoningOff = !onSummaryTier && resolveOpenAICompatReasoning(config.reasoning) !== 'on';
     const clientAttemptId = paidSendBudget?.clientAttemptId ?? randomUUID();
     const timeoutMs = config.totalTimeoutSeconds > 0
       ? Math.min(perAttemptTimeoutMs ?? Infinity, config.totalTimeoutSeconds * 1000)
       : perAttemptTimeoutMs;
-    const streamed = config.protocol === 'openai' && config.streaming && streamsChatCompletion(url);
+    const streamed = config.protocol === 'openai' && streaming && streamsChatCompletion(url);
     const liveness = {
       ...resolveStreamLiveness(timeoutMs ?? (streamed ? undefined : resolveLlmTimeoutMs()), resolveStreamIdleTimeoutMs()),
       ...(config.firstTokenTimeoutSeconds > 0 ? { firstChunkTimeoutMs: config.firstTokenTimeoutSeconds * 1000 } : {}),
@@ -1018,7 +1020,7 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
                 role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: message.content }],
               })),
             }
-            : buildCodexJsonRequestBody(config.model, messages, config.streaming, sessionId);
+            : buildCodexJsonRequestBody(config.model, messages, streaming, sessionId);
           if (config.protocol === 'codex') {
             if (plainText) delete body.text;
             if (!reasoningOff) delete body.reasoning;

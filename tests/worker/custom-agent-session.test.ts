@@ -514,7 +514,7 @@ describe('CustomAgent session behavior', () => {
     const { body, url, headers } = requests[0];
     let messages: Array<{ role: string; content: string }>;
     if (protocol === 'gemini') {
-      expect(url).toContain('/v1beta/models/gemini-summary:generateContent');
+      expect(url).toContain('/v1beta/models/gemini-summary:streamGenerateContent?alt=sse');
       expect(headers['x-goog-api-key']).toBe('test-key');
       expect(body.generationConfig.responseMimeType).toBe('application/json');
       messages = [{ role: 'system', content: body.systemInstruction.parts.map((part: any) => part.text).join('') },
@@ -522,11 +522,13 @@ describe('CustomAgent session behavior', () => {
     } else if (protocol === 'codex') {
       expect(url).toBe('https://custom.example.com/v1/responses');
       expect(body.model).toBe('custom-summary');
+      expect(body.stream).toBe(true);
       expect(body.text.format.type).toBe('json_object');
       messages = body.input.map((message: any) => ({ role: message.role, content: message.content.map((part: any) => part.text).join('') }));
     } else {
       expect(url).toBe('https://custom.example.com/v1/chat/completions');
       expect(body.model).toBe('custom-summary');
+      expect(body.stream).toBe(true);
       expect(body.response_format).toEqual({ type: 'json_object' });
       messages = body.messages;
     }
@@ -554,17 +556,40 @@ describe('CustomAgent session behavior', () => {
     expect(f.storeObservations).not.toHaveBeenCalled();
   });
 
-  it('routes a JSON summary to the summary-tier model and stores its fields', async () => {
+  for (const protocol of ['openai', 'gemini', 'codex'] as const) for (const sameModel of [false, true]) it(`streams a ${protocol} summary with observation streaming disabled (same model=${sameModel}) and stores its fields`, async () => {
+    settings.CLAUDE_MEM_CUSTOM_PROTOCOL = protocol;
+    settings.CLAUDE_MEM_CUSTOM_STREAMING = 'false';
     settings.CLAUDE_MEM_TIER_ROUTING_ENABLED = 'true';
-    settings.CLAUDE_MEM_TIER_SUMMARY_MODEL = 'custom-summary-model';
+    settings.CLAUDE_MEM_TIER_SUMMARY_MODEL = sameModel ? settings.CLAUDE_MEM_CUSTOM_MODEL : 'custom-summary-model';
     const summary = { request: '请求', investigated: '调查', learned: '了解', completed: '完成', next_steps: '后续', notes: null };
-    replies.push(chat(JSON.stringify(summary)));
+    const content = JSON.stringify(summary);
+    const parts = [content.slice(0, 20), content.slice(20)];
+    const usage = { prompt_tokens: 7, completion_tokens: 5, total_tokens: 12 };
+    if (protocol === 'openai') {
+      replies.push(sse(parts.map((part, i) => ({ choices: [{ delta: { content: part }, finish_reason: i === 1 ? 'stop' : null }], ...(i === 1 ? { usage } : {}) }))));
+    } else if (protocol === 'gemini') {
+      replies.push(sse(parts.map((part, i) => ({ candidates: [{ content: { parts: [{ text: part }] }, ...(i === 1 ? { finishReason: 'STOP' } : {}) }],
+        ...(i === 1 ? { usageMetadata: { promptTokenCount: 7, candidatesTokenCount: 5, totalTokenCount: 12 } } : {}) })), false));
+    } else {
+      replies.push(sse([...parts.map(delta => ({ type: 'response.output_text.delta', delta })),
+        { type: 'response.completed', response: { status: 'completed', usage: { input_tokens: 7, output_tokens: 5, total_tokens: 12 } } }], false));
+    }
     const f = fixture([{ type: 'summarize', _persistentId: 103, last_assistant_message: 'done' }]);
     await f.agent.startSession(f.session);
-    expect(requests[0].body.model).toBe('custom-summary-model');
-    expect(requests[0].body.response_format).toEqual({ type: 'json_object' });
+    expect(requests).toHaveLength(1);
+    if (protocol === 'gemini') {
+      expect(requests[0].url).toContain(`/models/${settings.CLAUDE_MEM_TIER_SUMMARY_MODEL}:streamGenerateContent?alt=sse`);
+      expect(requests[0].body.generationConfig.responseMimeType).toBe('application/json');
+    } else {
+      expect(requests[0].body.model).toBe(settings.CLAUDE_MEM_TIER_SUMMARY_MODEL);
+      expect(requests[0].body.stream).toBe(true);
+      if (protocol === 'openai') expect(requests[0].body.response_format).toEqual({ type: 'json_object' });
+      else expect(requests[0].body.text.format.type).toBe('json_object');
+    }
     expect(f.storeObservations).toHaveBeenCalledTimes(1);
     expect(f.storeObservations.mock.calls[0][3]).toMatchObject(summary);
+    expect(f.session.cumulativeInputTokens).toBe(7);
+    expect(f.session.cumulativeOutputTokens).toBe(5);
   });
 
   for (const protocol of ['openai', 'gemini', 'codex'] as const) it(`answers ${protocol} My Work refresh steps uncapped, careful steps on the summary-tier model`, async () => {
