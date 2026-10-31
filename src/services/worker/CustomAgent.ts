@@ -983,19 +983,42 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
     label?: ObserverRequestLabel,
   ): Promise<ProviderQueryResult> {
     if (!config.apiUrl || !config.model) throw this.missingApiKeyError();
+    const customModel = this.getConfig().model;
+    const onSummaryTier = config.model !== customModel
+      && config.model === resolveSummaryTierModel(customModel, SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH));
+    if (!onSummaryTier) return this.queryModel(history, config, false, signal, perAttemptTimeoutMs, paidSendBudget, label);
+    try {
+      return await this.queryModel(history, config, true, signal, perAttemptTimeoutMs, paidSendBudget, label);
+    } catch (error) {
+      // A failed summary-tier model hands the same request to the Custom model, within the batch's paid-send budget.
+      if (signal?.aborted || (paidSendBudget && !paidSendBudget.hasRemainingPaidSend())) throw error;
+      logger.warn('SDK', 'Custom summary-tier model failed; retrying on the Custom model', {
+        summaryModel: config.model, customModel, kind: isClassified(error) ? error.kind : 'unclassified',
+      }, error as Error);
+      const result = await this.queryModel(history, { ...config, model: customModel }, false, signal, perAttemptTimeoutMs, paidSendBudget, label);
+      return { ...result, servedModel: result.servedModel ?? customModel };
+    }
+  }
+
+  private async queryModel(
+    history: ConversationMessage[],
+    config: CustomAgentConfig,
+    onSummaryTier: boolean,
+    signal?: AbortSignal,
+    perAttemptTimeoutMs?: number,
+    paidSendBudget?: PaidSendBudget,
+    label?: ObserverRequestLabel,
+  ): Promise<ProviderQueryResult> {
     const sessionId = label?.contentSessionId !== undefined
       ? (label.contentSessionId.trim() || (label.generationId ? `custom-${label.generationId}` : resolveRequestSessionId('').sessionId))
       : undefined;
     const messages = this.conversationToOpenAIMessages(history, config.systemPrompt);
     const plainText = config.plainText || label?.kind === 'field_compression' || label?.kind === 'telegram_wrapup';
     const maxOutputTokens = config.uncappedOutput ? undefined : resolveObserverMaxOutputTokens();
-    // reasoning=off tunes the Custom model; the summary tier (CLAUDE_MEM_TIER_SUMMARY_MODEL) keeps its own thinking level.
-    const customModel = this.getConfig().model;
-    const onSummaryTier = config.model !== customModel
-      && config.model === resolveSummaryTierModel(customModel, SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH));
     // Long summary requests should deliver chunks even when observation streaming is disabled.
     const streaming = config.streaming || onSummaryTier || label?.kind === 'summary';
     const url = buildApiUrl(config.apiUrl, config.protocol, config.model, streaming);
+    // reasoning=off tunes the Custom model; the summary tier (CLAUDE_MEM_TIER_SUMMARY_MODEL) keeps its own thinking level.
     const reasoningOff = !onSummaryTier && resolveOpenAICompatReasoning(config.reasoning) !== 'on';
     const clientAttemptId = paidSendBudget?.clientAttemptId ?? randomUUID();
     const timeoutMs = config.totalTimeoutSeconds > 0

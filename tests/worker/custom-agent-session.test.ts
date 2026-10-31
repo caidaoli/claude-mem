@@ -592,6 +592,58 @@ describe('CustomAgent session behavior', () => {
     expect(f.session.cumulativeOutputTokens).toBe(5);
   });
 
+  const modelNotFound = () => new Response(JSON.stringify({ error: { message: 'model not found' } }), { status: 404 });
+  const summarize = { type: 'summarize', _persistentId: 103, last_assistant_message: 'done' };
+
+  for (const protocol of ['openai', 'gemini', 'codex'] as const) it(`retries a failed ${protocol} summary-tier model on the Custom model`, async () => {
+    settings.CLAUDE_MEM_CUSTOM_PROTOCOL = protocol;
+    settings.CLAUDE_MEM_TIER_SUMMARY_MODEL = 'custom-summary-model';
+    replies.push(modelNotFound(), protocol === 'openai' ? chat('careful answer') : protocol === 'gemini' ? gemini('careful answer') : codex('careful answer'));
+    expect(await fixture().agent.askRefresh('review these', { custom: { model: '$TIER:summary' } })).toBe('careful answer');
+    const modelOf = (request: typeof requests[number]) => protocol === 'gemini' ? request.url.match(/\/models\/([^:]+):/)?.[1] : request.body.model;
+    expect(requests.map(modelOf)).toEqual(['custom-summary-model', 'gpt-4o']);
+  });
+
+  it('stores a session summary under the Custom model after the summary-tier model fails', async () => {
+    settings.CLAUDE_MEM_TIER_SUMMARY_MODEL = 'custom-summary-model';
+    const summary = { request: '请求', investigated: '调查', learned: '了解', completed: '完成', next_steps: '后续', notes: null };
+    replies.push(modelNotFound(), sse([{ choices: [{ delta: { content: JSON.stringify(summary) }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 7, completion_tokens: 5, total_tokens: 12 } }]));
+    const f = fixture([summarize]);
+    await f.agent.startSession(f.session);
+    expect(requests.map(request => request.body.model)).toEqual(['custom-summary-model', 'gpt-4o']);
+    expect(f.storeObservations).toHaveBeenCalledTimes(1);
+    expect(f.storeObservations.mock.calls[0][3]).toMatchObject(summary);
+    expect(f.storeObservations.mock.calls[0][7]).toBe('gpt-4o');
+  });
+
+  it('does not retry a failed summary when the summary tier is the Custom model', async () => {
+    settings.CLAUDE_MEM_TIER_SUMMARY_MODEL = settings.CLAUDE_MEM_CUSTOM_MODEL;
+    replies.push(modelNotFound());
+    await expect(fixture().agent.askRefresh('review these', { custom: { model: '$TIER:summary' } })).rejects.toBeInstanceOf(ClassifiedProviderError);
+    expect(requests).toHaveLength(1);
+  });
+
+  it('does not retry a summary-tier request the session aborted', async () => {
+    settings.CLAUDE_MEM_TIER_SUMMARY_MODEL = 'custom-summary-model';
+    const f = fixture([summarize]);
+    replies.push(() => { f.session.abortController.abort(); return modelNotFound(); });
+    await expect(f.agent.startSession(f.session)).rejects.toBeInstanceOf(Error);
+    expect(requests).toHaveLength(1);
+    expect(f.storeObservations).not.toHaveBeenCalled();
+  });
+
+  it('does not retry a summary-tier request past the batch paid-send budget', async () => {
+    settings.CLAUDE_MEM_TIER_SUMMARY_MODEL = 'custom-summary-model';
+    replies.push(new Response(JSON.stringify({ error: { message: 'upstream failed' } }), { status: 500 }));
+    const f = fixture([summarize]);
+    f.session.paidSendBudget = new PaidSendBudget(103, 1);
+    await f.agent.startSession(f.session).catch(() => {});
+    expect(requests).toHaveLength(1);
+    expect(f.session.paidSendBudget.spentPaidSends).toBe(1);
+    expect(f.storeObservations).not.toHaveBeenCalled();
+  });
+
   for (const protocol of ['openai', 'gemini', 'codex'] as const) it(`answers ${protocol} My Work refresh steps uncapped, careful steps on the summary-tier model`, async () => {
     settings.CLAUDE_MEM_CUSTOM_PROTOCOL = protocol;
     settings.CLAUDE_MEM_TIER_SUMMARY_MODEL = 'custom-summary-model';
