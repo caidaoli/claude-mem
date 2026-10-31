@@ -142,6 +142,8 @@ export const WORK_ZH_CN: Readonly<Record<string, string>> = {
   'this machine': '本机',
   'Star claude-mem on GitHub': '在 GitHub 上为 claude-mem 加星',
   'Star': '加星',
+  'Send feedback about My Work on GitHub': '在 GitHub 上反馈“我的工作”',
+  'Feedback': '反馈',
   'Open the previous memory viewer': '打开旧版记忆查看器',
   'Classic viewer': '经典查看器',
   'Queued for {machine}': '已排队，等待 {machine}',
