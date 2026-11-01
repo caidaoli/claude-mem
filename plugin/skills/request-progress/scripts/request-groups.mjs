@@ -964,6 +964,10 @@ var init_SettingsDefaultsManager = __esm({
         // Disabled by default (seconds)
         CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT: "0",
         // Use shared provider deadlines by default
+        CLAUDE_MEM_CUSTOM_OBSERVATION_BATCH_SIZE: "1",
+        // One event per request unless raised
+        CLAUDE_MEM_CUSTOM_IMAGE_INPUT: "false",
+        // Arbitrary endpoints publish no image capability; opt in
         CLAUDE_MEM_QUOTA_THRESHOLD_FIVE_HOUR: "0.95",
         // Quota guard (#4230): subscription observer stops at this utilization of the window. A provider rejection always stops it
         CLAUDE_MEM_QUOTA_THRESHOLD_SEVEN_DAY: "0.93",

@@ -22,7 +22,7 @@ const BASE_EXCLUDES = [
   'package-lock.json',
   'scripts/package.json',
   'scripts/node_modules',
-  '/workers',
+  '/services/sync-hub',
   // .agents/plugins is source: sync-codex-plugin registers it from here.
   '/.agents/skills/',
   '/.claude/',
