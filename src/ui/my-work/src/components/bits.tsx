@@ -171,8 +171,8 @@ export function ProductLink({ href, children, className }: { href?: string; chil
 }
 
 /** getConnectionStatus's tooltip, rebuilt from its fields so it follows the chosen language. */
-function connectionTooltip({ lastSuccessfulCheckAt, clockSkew }: ConnectionStatus) {
-  return t('Last successful local check: {at}. ', { at: lastSuccessfulCheckAt ?? t('not yet confirmed') })
+function connectionTooltip({ lastSuccessfulCheckAt, clockSkew }: ConnectionStatus, cloud: boolean) {
+  return t(cloud ? 'Last successful cloud check: {at}. ' : 'Last successful local check: {at}. ', { at: lastSuccessfulCheckAt ?? t('not yet confirmed') })
     + (clockSkew ? t('Source and browser clocks differ; freshness uses received heartbeats. ') : '')
     + t('Connection status does not indicate an agent is running.')
 }
@@ -203,7 +203,7 @@ export function LiveIndicator() {
         <TooltipContent className="max-w-72">
           {demonstration
             ? mode === 'home' ? t('Streams from the local worker, localhost:37777 (demonstration)') : t('Checks cmem.ai for new sync changes every few seconds (demonstration)')
-            : <>{t(connection.detail)} {connectionTooltip(connection)}</>}
+            : <>{t(connection.detail)} {connectionTooltip(connection, sourceKind === 'cloud')}</>}
         </TooltipContent>
       </Tooltip>
     </Req>
@@ -232,7 +232,7 @@ export function DeviceFreshness() {
               <span className="text-muted-foreground">{device.syncedMinutesAgo !== 0 ? t('synced {minutes} min ago', { minutes: device.syncedMinutesAgo }) : sourceKind === 'sample' ? t('this machine') : t(connection.label)}</span>
             </div>
           ))}
-          {sourceKind !== 'sample' && <p className="text-xs text-muted-foreground">{connectionTooltip(connection)}</p>}
+          {sourceKind !== 'sample' && <p className="text-xs text-muted-foreground">{connectionTooltip(connection, sourceKind === 'cloud')}</p>}
         </HoverCardContent>
       </HoverCard>
     </Req>

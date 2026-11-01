@@ -112,7 +112,8 @@ function CheckAction({ request }: { request: Request }) {
     )
   }
   if (!request.checkedAt) return noticeLine
-  const savedWhere = sourceKind !== 'sample' ? t('Saved on this machine.') : mode === 'web' ? t('Saved from the web · syncing to {count} machines (demonstration)', { count: devices.length }) : t('Saved on this machine (demonstration)')
+  // A check is private review metadata (review-store), not work state: it does not sync.
+  const savedWhere = sourceKind === 'cloud' ? t('Saved in your cloud viewer only. Your computers do not see this check.') : sourceKind !== 'sample' ? t('Saved on this machine.') : mode === 'web' ? t('Saved from the web · syncing to {count} machines (demonstration)', { count: devices.length }) : t('Saved on this machine (demonstration)')
   return (
     <Req ids={['R6.2', 'R13.7']}>
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-surface p-4 text-sm">

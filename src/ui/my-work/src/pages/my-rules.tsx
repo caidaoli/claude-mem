@@ -141,7 +141,9 @@ const HERE = SAMPLE_DEVICES.find((device) => device.syncedMinutesAgo === 0)!
 const OTHER_MACHINES = SAMPLE_DEVICES.filter((device) => device.id !== HERE.id).map((device) => device.name)
 /** Says where a change is written and how it reaches the other machines. Never claims more than that. */
 const savedWhere = (mode: 'home' | 'web', sample: boolean) => !sample
-  ? t('Saved on this computer as a work-state record. MY-RULES.md is rebuilt here, and the record syncs with the rest of your work state.')
+  ? mode === 'web'
+    ? t('Saved in your cloud viewer as a work-state record. It syncs to your computers, and each rebuilds MY-RULES.md when it pulls it.')
+    : t('Saved on this computer as a work-state record. MY-RULES.md is rebuilt here, and the record syncs with the rest of your work state.')
   : mode === 'web'
     ? t('Saved from the web as a “web” device record. {devices} pull it on their next sync and rebuild MY-RULES.md.', { devices: SAMPLE_DEVICES.map((device) => device.name).join(t(', ')) })
     : t('Saved on {device}. MY-RULES.md is rebuilt here, and the change syncs to {others}.', { device: HERE.name, others: OTHER_MACHINES.join(t(' and ')) })
@@ -492,7 +494,7 @@ function AgentFile({ rules, changed, open, onOpenChange }: { rules: OwnerRule[];
           <ArtifactTitle className="flex items-center gap-1.5 font-mono text-xs"><FileTextIcon className="size-3.5" />{path}</ArtifactTitle>
           <ArtifactDescription className="text-xs">{t(loaded === 1 ? '{count} rule you set or approved. claude-mem writes this file and loads it with your user-level instructions, never a project’s files.' : '{count} rules you set or approved. claude-mem writes this file and loads it with your user-level instructions, never a project’s files.', { count: loaded })}</ArtifactDescription>
           <Button variant="outline" size="sm" className="h-11 text-xs sm:h-8" onClick={() => onOpenChange(true)}>{t('Preview file')}{changed.size > 0 && ` · ${t('{count} changed', { count: changed.size })}`}</Button>
-          {rulesFile && !rulesFile.loadedInClaudeCode && (
+          {rulesFile && !rulesFile.loadedInClaudeCode && sourceKind !== 'cloud' && (
             <div className="space-y-1.5 border-t pt-2">
               <Button size="sm" className="h-11 text-xs sm:h-8" onClick={load}>{t('Load my rules into Claude Code')}</Button>
               <p className="text-xs text-muted-foreground">{t('Only rules you approved are loaded. Adds one line to {path}.', { path: rulesFile.instructionsPath ?? '~/.claude/CLAUDE.md' })}</p>
@@ -529,11 +531,14 @@ function WhereEditsGo() {
   const { mode } = useWorkspace()
   const { sourceKind } = useWorkModel()
   if (sourceKind !== 'sample') {
+    const cloud = sourceKind === 'cloud'
     return (
       <Req ids={['R13.7', 'R13.8', 'R13.1']}>
         <div className="space-y-1.5 text-xs">
-          <p className="font-medium">{t('Your edits save on this computer')}</p>
-          <p className="text-muted-foreground">{t('Each change is a work-state record, so it syncs like the rest of your work state. MY-RULES.md is rebuilt here after every change.')}</p>
+          <p className="font-medium">{t(cloud ? 'Your edits save in your cloud viewer' : 'Your edits save on this computer')}</p>
+          <p className="text-muted-foreground">{t(cloud
+            ? 'Each change is a work-state record, so it syncs to your computers like the rest of your work state. Each one rebuilds MY-RULES.md when it pulls the change.'
+            : 'Each change is a work-state record, so it syncs like the rest of your work state. MY-RULES.md is rebuilt here after every change.')}</p>
         </div>
       </Req>
     )
@@ -641,7 +646,7 @@ function RuleEditor({ draft, error, saving, onChange, onClose, onSave }: { draft
               {error && <p role="alert" className="text-xs text-attention-foreground">{error}</p>}
             </fieldset>
             <DialogFooter className="items-center gap-3 sm:justify-between">
-              <p className="text-xs text-muted-foreground">{sourceKind !== 'sample' ? t('Saves on this computer as a work-state record.') : mode === 'web' ? t('Saves from the web; every machine pulls it down.') : t('Saves on {device} and syncs to your other machines.', { device: HERE.name })}</p>
+              <p className="text-xs text-muted-foreground">{sourceKind === 'cloud' ? t('Saves in your cloud viewer as a work-state record; it syncs to your computers.') : sourceKind !== 'sample' ? t('Saves on this computer as a work-state record.') : mode === 'web' ? t('Saves from the web; every machine pulls it down.') : t('Saves on {device} and syncs to your other machines.', { device: HERE.name })}</p>
               <Button className="h-11 sm:h-9" onClick={onSave} disabled={saving || !canSave}>{t(saving ? 'Saving…' : draft.approving ? 'Save and approve' : 'Save rule')}</Button>
             </DialogFooter>
           </DialogContent>

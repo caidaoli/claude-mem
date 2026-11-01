@@ -9,6 +9,7 @@ import type { OwnerRule, RuleQuote, RuleRecord } from '../data-rules.ts'
 import type { AutoRefresh, BuildStory } from './work-data-source.ts'
 import { measuredEstimate } from './measured-estimate.ts'
 import { getLocale, intlLocale, t } from '../i18n/translate.ts'
+import { repeatsOwnerWords } from './prompt-echo.ts'
 import type { WorkViewAgent, WorkViewBuildStory, WorkViewGoalItem, WorkViewGoalList, WorkViewHumanRequest, WorkViewProgress, WorkViewRefresh, WorkViewRule, WorkViewSnapshot, WorkViewWorkProduct } from './work-view-api-types.ts'
 
 export const THIS_COMPUTER: Device = { id: 'this-computer', name: 'This computer', syncedMinutesAgo: 0, online: true }
@@ -162,6 +163,8 @@ function toRequest(raw: WorkViewHumanRequest, agents: WorkViewAgent[], now: numb
   ].filter((source, index, all) => EVIDENCE_URL.test(source.href) && all.findIndex((other) => other.href === source.href) === index)
   const focusAreaId = resolveFocusAreaId(raw.focusAreaId, focusAreas)
   const title = generatedTitle ? raw.title.trim() || null : copyReady && copy.title?.trim() ? copy.title.trim() : null
+  // Checked against the full prompts here, since the card's quotes are cut to 400 characters.
+  const titleRepeatsPrompt = !!title && repeatsOwnerWords(title, [raw.original, ...raw.scopeUpdates].map((prompt) => prompt.text ?? ''))
 
   return assertConsistentRequest({
     id: raw.id,
@@ -170,6 +173,7 @@ function toRequest(raw: WorkViewHumanRequest, agents: WorkViewAgent[], now: numb
     title,
     // Only an untitled request reads "Title unavailable": a group title stands even when the human-copy writer gave up.
     titleUnavailable: (!title && copy?.state === 'unavailable') || undefined,
+    ...(titleRepeatsPrompt ? { titleRepeatsPrompt } : {}),
     summary: raw.groupId && recordedReview ? (reviewCounts ? recordedReview.summary.trim() || null : null) : copyReady && copy.summary?.trim() ? copy.summary.trim() : null,
     stageNote: copy?.stage?.trim() || undefined,
     ...(focusAreaId ? { focusAreaId } : {}),

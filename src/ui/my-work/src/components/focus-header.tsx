@@ -2,7 +2,7 @@
 // reviewed requests in it, what shipped, the asks nothing is working on yet, the owner's words, and the area menu.
 // Rollup, Quotes and WhyItsHere moved here from the retired goals page unchanged.
 import { useState, type ReactNode } from 'react'
-import { ArrowDownIcon, ArrowUpIcon, CheckIcon, ChevronDownIcon, CircleDashedIcon, MergeIcon, MoreHorizontalIcon, PencilIcon, XIcon } from 'lucide-react'
+import { ArrowDownIcon, ArrowUpIcon, CheckIcon, ChevronDownIcon, CircleDashedIcon, Link2Icon, MergeIcon, MoreHorizontalIcon, PencilIcon, XIcon } from 'lucide-react'
 import { useReducedMotion } from 'motion/react'
 import { EncryptedText } from '@/components/aceternity/encrypted-text'
 import { InlineCitationQuote } from '@/components/ai-elements/inline-citation'
@@ -20,6 +20,8 @@ import { useWorkModel } from '@/store'
 import { formatPromptDay, formatPromptTime, promptDayKey, shipDayKey } from '@/lib/prompt-time'
 import { navWordIn } from '../../../../services/work-view/nav-words.mjs'
 import { AreaEditDialog, type AreaEdit, type FocusChanges } from './focus-changes'
+import { SharedMark, ShareFocusDialog } from './share-focus'
+import { canShareArea } from '@/live/to-shared-focus'
 
 const requestTitle = (request: Request) => request.title ?? t(request.titleUnavailable ? 'Title unavailable' : 'New request, title being written')
 const isReviewed = (request: Request) => request.progress.readings > 0
@@ -152,8 +154,8 @@ function NotStartedAsks({ asks }: { asks: FocusAsk[] }) {
   )
 }
 
-/** Rename, Edit goal, Merge into…, Move up / down (the owner's order), and Done or back in focus. */
-function AreaMenu({ area, changes, onEdit }: { area: FocusArea; changes: FocusChanges; onEdit: (edit: AreaEdit) => void }) {
+/** Rename, Edit goal, Merge into…, Move up / down (the owner's order), Done or back in focus, and Share…. */
+function AreaMenu({ area, changes, onEdit, onShare }: { area: FocusArea; changes: FocusChanges; onEdit: (edit: AreaEdit) => void; onShare: () => void }) {
   const { focusAreas } = useWorkModel()
   // The owner's order covers kept areas only (the worker refuses anything else), all of them at once, as the rail shows them.
   const order = focusAreas.filter((entry) => entry.status === 'kept' && !entry.mergedInto).map((entry) => entry.id)
@@ -177,6 +179,10 @@ function AreaMenu({ area, changes, onEdit }: { area: FocusArea; changes: FocusCh
         {area.status === 'done'
           ? <DropdownMenuItem onSelect={() => changes.apply({ action: 'keep', focusAreaId: area.id })}><CheckIcon />{t('Back in focus')}</DropdownMenuItem>
           : <DropdownMenuItem onSelect={() => changes.apply({ action: 'done', focusAreaId: area.id })}><CheckIcon />{t('Done')}</DropdownMenuItem>}
+        {canShareArea(area) && <>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={onShare}><Link2Icon />{t('Share…')}</DropdownMenuItem>
+        </>}
       </DropdownMenuContent>
     </DropdownMenu>
   )
@@ -198,6 +204,7 @@ function AreaName({ name }: { name: string }) {
 /** One focus area, on top of its requests. `requests` are all of them, closed ones too, as the combined progress counts them. */
 export function FocusHeader({ area, requests, changes }: { area: FocusArea; requests: Request[]; changes: FocusChanges }) {
   const [edit, setEdit] = useState<AreaEdit | null>(null)
+  const [sharing, setSharing] = useState(false)
   const navWord = navWordIn(area.name)
   const status = statusOf(area.latestAt, requests)
   const shipped = requests.filter((request) => request.state === 'shipped').length
@@ -211,12 +218,13 @@ export function FocusHeader({ area, requests, changes }: { area: FocusArea; requ
               <h2 className="text-lg leading-snug font-semibold tracking-tight"><AreaName name={area.name} /></h2>
               {area.status === 'suggested' && <Badge variant="outline" className="font-normal">{t('Suggested')}</Badge>}
               {area.status === 'done' && <Badge variant="outline" className="border-shipped-border font-normal text-shipped-foreground">{t('Done')}</Badge>}
+              <SharedMark focusAreaId={area.id} onOpen={() => setSharing(true)} />
             </div>
             {area.goal ? <p className="text-[0.95rem] leading-snug">{area.goal}</p> : <p className="text-sm text-muted-foreground italic">{t('Write one sentence saying what this area is for (Edit goal).')}</p>}
             {/* The area's own evidence sits with its goal, so it can't be read as belonging to the asks below. */}
             {area.quotes.length > 0 ? <WhyItsHere quotes={area.quotes} /> : area.evidence && <p className="text-xs text-muted-foreground">{t('Why it’s here: {evidence}', { evidence: area.evidence })}</p>}
           </div>
-          <AreaMenu area={area} changes={changes} onEdit={setEdit} />
+          <AreaMenu area={area} changes={changes} onEdit={setEdit} onShare={() => setSharing(true)} />
         </div>
         {navWord && <p className="text-xs text-attention-foreground">{t('“{name}” reuses the page name “{word}”. Rename it so each word means one thing.', { name: area.name, word: navWord })}</p>}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
@@ -238,6 +246,7 @@ export function FocusHeader({ area, requests, changes }: { area: FocusArea; requ
           </Req>
         )}
         <AreaEditDialog edit={edit} changes={changes} onClose={() => setEdit(null)} />
+        {canShareArea(area) && <ShareFocusDialog area={area} open={sharing} onOpenChange={setSharing} />}
       </HeaderFrame>
     </Req>
   )

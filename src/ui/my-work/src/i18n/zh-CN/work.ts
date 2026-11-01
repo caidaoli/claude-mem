@@ -85,6 +85,7 @@ export const WORK_ZH_CN: Readonly<Record<string, string>> = {
   'Done. Check it, then mark this version checked.': '已完成。检查后，将此版本标记为已检查。',
   'Mark checked': '标记为已检查',
   'Saved on this machine.': '已保存在本机。',
+  'Saved in your cloud viewer only. Your computers do not see this check.': '只保存在你的云端查看器中。你的电脑看不到这次检查。',
   'Saved from the web · syncing to {count} machines (demonstration)': '已从网页保存 · 正在同步到 {count} 台机器（演示）',
   'Saved on this machine (demonstration)': '已保存在本机（演示）',
   'Checked {at}.': '已于 {at} 检查。',
@@ -175,6 +176,17 @@ export const WORK_ZH_CN: Readonly<Record<string, string>> = {
   'not yet confirmed': '尚未确认',
   'Source and browser clocks differ; freshness uses received heartbeats. ': '来源与浏览器的时钟不一致，新鲜度以收到的心跳为准。',
   'Connection status does not indicate an agent is running.': '连接状态并不表示有代理正在运行。',
+  // Served by the cloud viewer (live/served-from.ts): the same labels and details, naming the cloud feed
+  'Connecting to cloud feed': '正在连接云端动态',
+  'Waiting for updates synced from your computers.': '等待从你的电脑同步过来的更新。',
+  'Cloud feed stale': '云端动态已过期',
+  'Reconnecting to your cloud viewer. No fresh update has arrived; showing the last received work.': '正在重新连接你的云端查看器。尚未收到新的更新，显示最近收到的工作。',
+  'Reconnecting to cloud feed': '正在重新连接云端动态',
+  'Connection interrupted. Showing the last received work while the cloud feed reconnects.': '连接中断。显示最近收到的工作，等待云端动态恢复。',
+  'Cloud updates have stopped arriving. Showing the last received work.': '云端更新已停止到达。显示最近收到的工作。',
+  'Cloud source unavailable': '云端来源不可用',
+  'Updates are arriving as your computers sync. Each card shows when its work was last updated.': '更新正在随你的电脑同步到达。每张卡片会显示工作最近更新的时间。',
+  'Last successful cloud check: {at}. ': '上次成功的云端检查：{at}。',
 
   // Check results (live/review-response.ts messages and fallbacks)
   'Checked locally.': '已在本地检查。',
