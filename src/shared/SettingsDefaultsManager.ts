@@ -277,6 +277,8 @@ export interface SettingsDefaults {
   CLAUDE_MEM_CUSTOM_MAX_TOKENS: string;   // Max tokens (0 = disabled)
   CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT: string;  // First token timeout in seconds (0 = disabled)
   CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT: string;        // Total request timeout in seconds (0 = shared provider defaults)
+  CLAUDE_MEM_CUSTOM_OBSERVATION_BATCH_SIZE: string; // Queued same-context events per observer request (1-32)
+  CLAUDE_MEM_CUSTOM_IMAGE_INPUT: string;  // 'true' | 'false': the Custom model reads images (needs CLAUDE_MEM_MEDIA_INFERENCE_ENABLED)
   // Quota guard: per-window utilization (0–1) at which a subscription observer stops (#4230).
   CLAUDE_MEM_QUOTA_THRESHOLD_FIVE_HOUR: string;
   CLAUDE_MEM_QUOTA_THRESHOLD_SEVEN_DAY: string;
@@ -576,6 +578,8 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_CUSTOM_MAX_TOKENS: '0',  // Disabled by default
     CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT: '0',  // Disabled by default (seconds)
     CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT: '0',  // Use shared provider deadlines by default
+    CLAUDE_MEM_CUSTOM_OBSERVATION_BATCH_SIZE: '1',  // One event per request unless raised
+    CLAUDE_MEM_CUSTOM_IMAGE_INPUT: 'false',  // Arbitrary endpoints publish no image capability; opt in
     CLAUDE_MEM_QUOTA_THRESHOLD_FIVE_HOUR: '0.95',          // Quota guard (#4230): subscription observer stops at this utilization of the window. A provider rejection always stops it
     CLAUDE_MEM_QUOTA_THRESHOLD_SEVEN_DAY: '0.93',
     CLAUDE_MEM_QUOTA_THRESHOLD_SEVEN_DAY_OPUS: '0.93',

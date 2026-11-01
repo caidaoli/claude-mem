@@ -279,6 +279,8 @@ export class SettingsRoutes extends BaseRouteHandler {
       'CLAUDE_MEM_CUSTOM_MAX_TOKENS',
       'CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT',
       'CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT',
+      'CLAUDE_MEM_CUSTOM_OBSERVATION_BATCH_SIZE',
+      'CLAUDE_MEM_CUSTOM_IMAGE_INPUT',
       // The openai-compatible endpoint, as the viewer edits it. Its key stays
       // file/env only (CLAUDE_MEM_OPENAI_COMPAT_API_KEY / OPENAI_COMPAT_API_KEY).
       'CLAUDE_MEM_OPENAI_COMPAT_PRESET',
@@ -438,6 +440,7 @@ export class SettingsRoutes extends BaseRouteHandler {
       { key: 'CLAUDE_MEM_CUSTOM_MAX_TOKENS', min: 0, max: 2_000_000 },
       { key: 'CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT', min: 0, max: 600 },
       { key: 'CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT', min: 0, max: 3600 },
+      { key: 'CLAUDE_MEM_CUSTOM_OBSERVATION_BATCH_SIZE', min: 1, max: 32 },
     ];
     for (const { key, min, max } of customNumericRanges) {
       if (settings[key] !== undefined && settings[key] !== '') {
@@ -576,6 +579,7 @@ export class SettingsRoutes extends BaseRouteHandler {
       'CLAUDE_MEM_FILE_READ_GATE_ENABLED',
       'CLAUDE_MEM_CONTEXT_MAIN_AGENT_ONLY',
       'CLAUDE_MEM_CUSTOM_STREAMING',
+      'CLAUDE_MEM_CUSTOM_IMAGE_INPUT',
       'CLAUDE_MEM_BACKUP_ENABLED',
     ];
 

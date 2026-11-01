@@ -551,6 +551,27 @@ OUTPUT FORMAT: Return compact single-line JSON without any line breaks, indentat
 ${languageSection}`;
 }
 
+/**
+ * Several queued tool uses in one JSON observer turn. A single part renders
+ * exactly as renderObservationPromptJson so an unbatched turn is unchanged.
+ */
+export function renderObservationBatchPromptJson(parts: readonly ObservationPromptParts[], mode: ModeConfig): string {
+  if (parts.length === 1) return renderObservationPromptJson(parts[0], mode);
+  const languageInstruction = mode.prompts.language_instruction?.trim();
+  const languageSection = languageInstruction ? `\n\n${languageInstruction}` : '';
+
+  return `${parts.map(renderObservationEvidence).join('\n')}
+The ${parts.length} tool uses above happened in this order. Record each durable finding once; one observation may cover several related tool uses.
+Concrete debugging findings from logs, queue state, database rows, session routing, or code-path inspection count as durable discoveries and should be recorded.
+
+${buildObservationFormatSection(mode, 'json')}
+
+Return {"observations":[...]} where each array element uses the object format above. If none of these tool uses should be recorded, return exactly {"skip":true}. Never reply with XML, prose, or an empty response.
+OUTPUT FORMAT: Return compact single-line JSON without any line breaks, indentation, or extra whitespace.
+
+${languageSection}`;
+}
+
 /** Restated once after a reply that used tags outside the observation schema (#3461). */
 export const OBSERVATION_SCHEMA_REMINDER =
   'Your previous reply used tags outside the observation format. Use only <type>, <title>, <subtitle>, <facts>, <narrative>, <concepts>, <files_read> and <files_modified> inside each <observation>.';

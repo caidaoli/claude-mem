@@ -7,7 +7,7 @@ import { getCredential } from '../../shared/EnvManager.js';
 import { buildKeyPool, resolvePoolKeys, retryPolicyForPool, withKeyPool } from '../../shared/api-key-pool.js';
 import { keysForEndpoint } from '../../shared/cmem-gateway.js';
 import { iterateByteStream, readSseEvents } from '../../shared/sse-reader.js';
-import type { ActiveSession, ConversationMessage } from '../worker-types.js';
+import type { ActiveSession, ConversationMessage, PendingMessageWithId } from '../worker-types.js';
 import { ModeManager } from '../domain/ModeManager.js';
 import type { ModeConfig } from '../domain/types.js';
 import type { WorkerRef } from './agents/index.js';
@@ -19,7 +19,7 @@ import { classifyOpenAICompatError, isLocalEndpointUrl, stripLeadingThinkBlock }
 import { ClassifiedProviderError, isClassified, rateLimitUntilNextKey } from './provider-errors.js';
 import { withRetry, resolveLlmTimeoutMs } from './retry.js';
 import type { PaidSendBudget } from './paid-send-budget.js';
-import { resolveObserverMaxOutputTokens, resolveContextWindowTokens } from './context-window.js';
+import { resolveObserverMaxOutputTokens, resolveContextWindowTokens, observationFieldMaxChars } from './context-window.js';
 import { sendChatCompletion, streamsChatCompletion, resolveStreamLiveness, resolveStreamIdleTimeoutMs } from './streamed-chat-completion.js';
 import {
   endpointRejectsReasoningField, isUnknownReasoningParameter, rememberEndpointRejectsReasoningField,
@@ -30,6 +30,11 @@ import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import type { Tiktoken } from 'tiktoken';
 import { encodeJsonRequestBody, parseRequestCompression, type RequestCompression } from './request-compression.js';
+import { buildObservationPromptParts, renderObservationBatchPromptJson, type ObservationPromptParts } from '../../sdk/prompts.js';
+import { boundedInteger } from './CodexAppServerPool.js';
+import { sameObservationContext } from './codex-observation-batch.js';
+import { prepareTurnImages, type ChatContentPart, type PreparedTurnMedia, type TurnImage, type TurnImageRequest } from '../media/inference.js';
+import { isMediaInferenceEnabled, LOCAL_IMAGE_REQUEST_BOUNDS } from './media-capability.js';
 
 // tiktoken is external (wasm sidecar) and the worker bundle is shared by every
 // hook, which may run from a plugin cache without node_modules. Load it on first
@@ -481,7 +486,96 @@ function parseOpenAISseStream(responseText: string): { content: string; tokensUs
  */
 interface OpenAIMessage {
   role: 'user' | 'assistant' | 'system';
-  content: string;
+  /** Parts only on an image turn's final user message; history stays text. */
+  content: string | ChatContentPart[];
+}
+
+function messageText(content: OpenAIMessage['content']): string {
+  return typeof content === 'string'
+    ? content
+    : content.map(part => part.type === 'text' ? part.text : '').filter(Boolean).join('\n');
+}
+
+const DATA_URL = /^data:([^;,]+);base64,(.*)$/s;
+
+/** Chat content parts as native Gemini parts: text, and images as inline base64 data. */
+function geminiParts(content: OpenAIMessage['content']): Array<Record<string, unknown>> {
+  if (typeof content === 'string') return [{ text: content }];
+  return content.map(part => {
+    if (part.type === 'text') return { text: part.text };
+    const match = DATA_URL.exec(part.image_url.url);
+    return match ? { inlineData: { mimeType: match[1], data: match[2] } } : { text: '' };
+  });
+}
+
+/** Chat content parts as Responses API input parts. */
+function codexParts(message: OpenAIMessage): Array<Record<string, unknown>> {
+  const textType = message.role === 'assistant' ? 'output_text' : 'input_text';
+  if (typeof message.content === 'string') return [{ type: textType, text: message.content }];
+  return message.content.map(part => part.type === 'text'
+    ? { type: textType, text: part.text }
+    : { type: 'input_image', image_url: part.image_url.url });
+}
+
+/**
+ * The JSON observer's image turn: the turn text unchanged, the label
+ * instruction, then `[image LABEL]` and the image per image in request
+ * order. The JSON observer lists labels in an `attachments` array, which the
+ * JSON parser reads for the same linkage rules as the XML block.
+ */
+function customImageTurnContent(turnText: string, images: readonly TurnImage[]): ChatContentPart[] {
+  const labels = images.map(image => image.requestLabel);
+  const parts: ChatContentPart[] = [
+    { type: 'text', text: turnText },
+    {
+      type: 'text',
+      text: `Images attached to this turn: ${labels.join(', ')}. Each image follows a line [image LABEL]. In each observation informed by an image, list its label in that observation's "attachments" array, for example "attachments":["${labels[0]}"]. Use only these labels.`,
+    },
+  ];
+  for (const image of images) {
+    parts.push({ type: 'text', text: `[image ${image.requestLabel}]` });
+    parts.push({ type: 'image_url', image_url: { url: image.dataUrl } });
+  }
+  return parts;
+}
+
+/** The turn's images, in order, that keep the request body within its bound; null when none fit. */
+function fitCustomTurnImages(
+  messages: OpenAIMessage[],
+  request: TurnImageRequest,
+  buildBody: (messages: OpenAIMessage[]) => Record<string, unknown>,
+): { messages: OpenAIMessage[]; images: TurnImage[] } | null {
+  const last = messages[messages.length - 1];
+  if (!last || last.role !== 'user' || typeof last.content !== 'string') return null;
+  let fitted: { messages: OpenAIMessage[]; images: TurnImage[] } | null = null;
+  for (const image of request.images) {
+    const images: TurnImage[] = [...(fitted?.images ?? []), image];
+    const candidate: OpenAIMessage[] = [...messages.slice(0, -1), { role: 'user', content: customImageTurnContent(last.content, images) }];
+    if (Buffer.byteLength(JSON.stringify(buildBody(candidate))) <= request.maxBodyBytes) fitted = { messages: candidate, images };
+    else logger.debug('SDK', 'Image left out of the Custom request: the body would exceed its bound', { code: 'image_too_large' });
+  }
+  return fitted;
+}
+
+/**
+ * The endpoint refused this request's shape while it carried images (wrong
+ * media type, too large, or a model without image input). Not retried as is
+ * and not charged; the caller resends the turn once text-only.
+ */
+class CustomImageRejectedError extends ClassifiedProviderError {
+  constructor(cause: ClassifiedProviderError) {
+    super(`Custom endpoint rejected the image request: ${cause.message}`, { kind: 'unrecoverable', cause, code: 'media_request_invalid' });
+    this.name = 'CustomImageRejectedError';
+  }
+}
+
+/** A refusal of the image request itself, as opposed to auth, quota, reasoning-field or transient failures. */
+function asImageRejection(error: ClassifiedProviderError, status: number | undefined, bodyText: string | undefined): ClassifiedProviderError {
+  if (status === 413 || status === 415) return new CustomImageRejectedError(error);
+  if ((status === 400 || status === 422) && error.kind === 'unrecoverable' && !isUnknownReasoningParameter(bodyText ?? '')) {
+    return new CustomImageRejectedError(error);
+  }
+  return error;
 }
 
 function buildOpenAIJsonRequestBody(
@@ -560,10 +654,7 @@ function buildCodexJsonRequestBody(
   const input = messages.map(message => ({
     type: 'message' as const,
     role: message.role,
-    content: [{
-      type: message.role === 'assistant' ? 'output_text' as const : 'input_text' as const,
-      text: message.content
-    }]
+    content: codexParts(message),
   }));
 
   const body: Record<string, unknown> = {
@@ -677,6 +768,60 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
     return typeof result.inputTokens === 'number' && typeof result.outputTokens === 'number'
       ? { input: result.inputTokens, output: result.outputTokens }
       : null;
+  }
+
+  /**
+   * Extend this turn with already-queued same-context events, up to
+   * CLAUDE_MEM_CUSTOM_OBSERVATION_BATCH_SIZE; the normal confirm/reset covers
+   * every claim. An image turn stays one event: its images and labels belong
+   * to that event alone.
+   */
+  protected override observationTurnPrompt(session: ActiveSession, first: PendingMessageWithId, prompt: ObservationPromptParts, mode: ModeConfig): string {
+    const count = boundedInteger(SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH).CLAUDE_MEM_CUSTOM_OBSERVATION_BATCH_SIZE, 1, 32);
+    const parts = [prompt];
+    if (count > 1 && !first.mediaRefs?.length) {
+      const fieldMaxChars = observationFieldMaxChars(session.observerContextWindowTokens);
+      // Like the other observers, add events only within two window-aware field caps.
+      const maxChars = 2 * fieldMaxChars;
+      const evidenceChars = (part: ObservationPromptParts) => part.header.length + part.parameters.length + part.outcome.length;
+      let total = evidenceChars(prompt);
+      while (parts.length < count) {
+        let addition = null as ObservationPromptParts | null;
+        const next = this.sessionManager.claimNextObservation(session.sessionDbId, candidate => {
+          if (!sameObservationContext(first, candidate) || candidate.mediaRefs?.length) return false;
+          // Oversized fields need their own asynchronous condensation pass.
+          if ([candidate.tool_input, candidate.tool_response].some(field =>
+            (JSON.stringify(field, null, 2) ?? '').length > fieldMaxChars)) return false;
+          addition = buildObservationPromptParts({
+            id: candidate._persistentId,
+            tool_name: candidate.tool_name!,
+            tool_input: JSON.stringify(candidate.tool_input),
+            tool_output: JSON.stringify(candidate.tool_response),
+            created_at_epoch: candidate._originalTimestamp,
+            cwd: candidate.cwd,
+          }, fieldMaxChars);
+          return total + evidenceChars(addition) <= maxChars;
+        });
+        if (!next || !addition) break;
+        parts.push(addition);
+        total += evidenceChars(addition);
+      }
+    }
+    return renderObservationBatchPromptJson(parts, mode);
+  }
+
+  /**
+   * Image side refs for this observation turn. Arbitrary endpoints publish no
+   * capability, so the user opts in with CLAUDE_MEM_CUSTOM_IMAGE_INPUT on top
+   * of CLAUDE_MEM_MEDIA_INFERENCE_ENABLED; a refusal resends text-only.
+   */
+  protected override async prepareObservationMedia(_session: ActiveSession, messages: PendingMessageWithId[]): Promise<PreparedTurnMedia | null> {
+    if (!isMediaInferenceEnabled() || SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH).CLAUDE_MEM_CUSTOM_IMAGE_INPUT !== 'true') {
+      logger.debug('SDK', 'Observation images deferred; the Custom turn is sent text-only', { reason: 'inference_disabled' });
+      return null;
+    }
+    const store = this.dbManager.getMediaStore();
+    return prepareTurnImages(messages, attachmentId => store.readVariant(attachmentId, 'llm'), LOCAL_IMAGE_REQUEST_BOUNDS);
   }
 
   /** One read-only question from My Work's automatic refresh (refresh-task.ts), answered as text the
@@ -981,21 +1126,22 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
     perAttemptTimeoutMs?: number,
     paidSendBudget?: PaidSendBudget,
     label?: ObserverRequestLabel,
+    turnImages?: TurnImageRequest,
   ): Promise<ProviderQueryResult> {
     if (!config.apiUrl || !config.model) throw this.missingApiKeyError();
     const customModel = this.getConfig().model;
     const onSummaryTier = config.model !== customModel
       && config.model === resolveSummaryTierModel(customModel, SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH));
-    if (!onSummaryTier) return this.queryModel(history, config, false, signal, perAttemptTimeoutMs, paidSendBudget, label);
+    if (!onSummaryTier) return this.queryModel(history, config, false, signal, perAttemptTimeoutMs, paidSendBudget, label, turnImages);
     try {
-      return await this.queryModel(history, config, true, signal, perAttemptTimeoutMs, paidSendBudget, label);
+      return await this.queryModel(history, config, true, signal, perAttemptTimeoutMs, paidSendBudget, label, turnImages);
     } catch (error) {
       // A failed summary-tier model hands the same request to the Custom model, within the batch's paid-send budget.
       if (signal?.aborted || (paidSendBudget && !paidSendBudget.hasRemainingPaidSend())) throw error;
       logger.warn('SDK', 'Custom summary-tier model failed; retrying on the Custom model', {
         summaryModel: config.model, customModel, kind: isClassified(error) ? error.kind : 'unclassified',
       }, error as Error);
-      const result = await this.queryModel(history, { ...config, model: customModel }, false, signal, perAttemptTimeoutMs, paidSendBudget, label);
+      const result = await this.queryModel(history, { ...config, model: customModel }, false, signal, perAttemptTimeoutMs, paidSendBudget, label, turnImages);
       return { ...result, servedModel: result.servedModel ?? customModel };
     }
   }
@@ -1008,6 +1154,7 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
     perAttemptTimeoutMs?: number,
     paidSendBudget?: PaidSendBudget,
     label?: ObserverRequestLabel,
+    turnImages?: TurnImageRequest,
   ): Promise<ProviderQueryResult> {
     const sessionId = label?.contentSessionId !== undefined
       ? (label.contentSessionId.trim() || (label.generationId ? `custom-${label.generationId}` : resolveRequestSessionId('').sessionId))
@@ -1030,36 +1177,43 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
       ...(config.firstTokenTimeoutSeconds > 0 ? { firstChunkTimeoutMs: config.firstTokenTimeoutSeconds * 1000 } : {}),
     };
 
-    return withKeyPool({ poolId: 'custom', keys: resolvePoolKeys(config), label: `Custom/${config.protocol}`, rateLimitUntilNextKey }, ({ key, poolSize }) =>
+    const buildBody = (requestMessages: OpenAIMessage[]): Record<string, unknown> => {
+      if (config.protocol === 'gemini') {
+        const system = requestMessages.filter(message => message.role === 'system');
+        return {
+          generationConfig: buildGeminiGenerationConfig(config.model, !plainText, reasoningOff, maxOutputTokens),
+          ...(system.length ? { systemInstruction: { parts: system.map(message => ({ text: messageText(message.content) })) } } : {}),
+          contents: requestMessages.filter(message => message.role !== 'system').map(message => ({
+            role: message.role === 'assistant' ? 'model' : 'user', parts: geminiParts(message.content),
+          })),
+        };
+      }
+      if (config.protocol === 'codex') {
+        const body = buildCodexJsonRequestBody(config.model, requestMessages, streaming, sessionId);
+        if (plainText) delete body.text;
+        if (!reasoningOff) delete body.reasoning;
+        if (maxOutputTokens === undefined) delete body.max_output_tokens;
+        return body;
+      }
+      const body = buildOpenAIJsonRequestBody(config.model, requestMessages, streamed, sessionId);
+      delete body.max_tokens;
+      if (plainText) delete body.response_format;
+      if (!reasoningOff) {
+        delete body.reasoning_effort;
+        delete body.thinkingConfig;
+        delete body.thinking;
+      }
+      return body;
+    };
+
+    // One observer request over the key pool and retry policy; with images, a shape refusal becomes CustomImageRejectedError.
+    const request = (body: Record<string, unknown>, carriesImages: boolean): Promise<ProviderQueryResult> =>
+      withKeyPool({ poolId: 'custom', keys: resolvePoolKeys(config), label: `Custom/${config.protocol}`, rateLimitUntilNextKey }, ({ key, poolSize }) =>
       withRetry(async attemptSignal => {
         if (config.protocol !== 'openai') {
-          const body = config.protocol === 'gemini'
-            ? {
-              generationConfig: buildGeminiGenerationConfig(config.model, !plainText, reasoningOff, maxOutputTokens),
-              ...(messages.some(message => message.role === 'system') ? {
-                systemInstruction: { parts: messages.filter(message => message.role === 'system').map(message => ({ text: message.content })) },
-              } : {}),
-              contents: messages.filter(message => message.role !== 'system').map(message => ({
-                role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: message.content }],
-              })),
-            }
-            : buildCodexJsonRequestBody(config.model, messages, streaming, sessionId);
-          if (config.protocol === 'codex') {
-            if (plainText) delete body.text;
-            if (!reasoningOff) delete body.reasoning;
-            if (maxOutputTokens === undefined) delete body.max_output_tokens;
-          }
-          return this.queryNative(url, body, config, key, attemptSignal, sessionId, clientAttemptId);
+          return this.queryNative(url, body, config, key, attemptSignal, sessionId, clientAttemptId, carriesImages);
         }
 
-        const body = buildOpenAIJsonRequestBody(config.model, messages, streamed, sessionId);
-        delete body.max_tokens;
-        if (plainText) delete body.response_format;
-        if (!reasoningOff) {
-          delete body.reasoning_effort;
-          delete body.thinkingConfig;
-          delete body.thinking;
-        }
         const send = async (reasoning: boolean) => {
           const exchange = await sendChatCompletion({
             url,
@@ -1072,7 +1226,10 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
             stream: streamed,
             nonStreamTimeoutMs: timeoutMs ?? resolveLlmTimeoutMs(),
             label: 'Custom/OpenAI',
-            classify: input => classifyOpenAICompatError({ ...input, endpointLabel: 'Custom/OpenAI', requestUrl: url }),
+            classify: input => {
+              const classified = classifyOpenAICompatError({ ...input, endpointLabel: 'Custom/OpenAI', requestUrl: url });
+              return carriesImages ? asImageRejection(classified, input.status, input.bodyText) : classified;
+            },
           });
           const data = exchange.body as OpenAIResponse;
           if (data.error) throw classifyOpenAICompatError({
@@ -1131,6 +1288,24 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
         ...retryPolicyForPool(poolSize),
       }),
     );
+
+    if (turnImages?.images.length) {
+      const fitted = fitCustomTurnImages(messages, turnImages, buildBody);
+      if (fitted) {
+        try {
+          const result = await request(buildBody(fitted.messages), true);
+          return { ...result, deliveredImageLabels: fitted.images.map(image => image.requestLabel) };
+        } catch (error) {
+          if (!(error instanceof CustomImageRejectedError)) throw error;
+          // Refused before any inference: resend this turn once, text-only.
+          // Its images stay uninspected and the resend is not a vision call.
+          logger.warn('SDK', 'Custom image request rejected; resending the turn text-only', { protocol: config.protocol }, error);
+        }
+      }
+      const result = await request(buildBody(messages), false);
+      return { ...result, deliveredImageLabels: [] };
+    }
+    return request(buildBody(messages), false);
   }
 
   /** Native Gemini and Responses share framing, cancellation and failure accounting. */
@@ -1142,6 +1317,7 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
     signal: AbortSignal,
     sessionId: string | undefined,
     clientAttemptId: string,
+    carriesImages: boolean,
   ): Promise<ProviderQueryResult> {
     const controller = new AbortController();
     let firstTokenTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1241,7 +1417,8 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
       });
       if (!response.ok) {
         const text = await response.text();
-        throw classify(new Error(`${label} HTTP ${response.status}`), response.status, text, response.headers);
+        const classified = classify(new Error(`${label} HTTP ${response.status}`), response.status, text, response.headers);
+        throw carriesImages ? asImageRejection(classified, response.status, text) : classified;
       }
       const read = async () => {
         const chunks = (async function* () {

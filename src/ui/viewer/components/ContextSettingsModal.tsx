@@ -808,6 +808,18 @@ export function ContextSettingsModal({
                       onChange={(e) => updateSetting('CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT', e.target.value)}
                     />
                   </FormField>
+                  <FormField
+                    label={t.settings.customObservationBatchSize}
+                    tooltip={t.settings.customObservationBatchSizeTooltip}
+                  >
+                    <input
+                      type="number"
+                      min="1"
+                      max="32"
+                      value={formState.CLAUDE_MEM_CUSTOM_OBSERVATION_BATCH_SIZE || '1'}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_CUSTOM_OBSERVATION_BATCH_SIZE', e.target.value)}
+                    />
+                  </FormField>
                   <div className="toggle-group" style={{ marginTop: '8px' }}>
                     <ToggleSwitch
                       id="custom-streaming"
@@ -815,6 +827,13 @@ export function ContextSettingsModal({
                       description={t.settings.streamingDesc}
                       checked={formState.CLAUDE_MEM_CUSTOM_STREAMING !== 'false'}
                       onChange={(checked) => updateSetting('CLAUDE_MEM_CUSTOM_STREAMING', checked ? 'true' : 'false')}
+                    />
+                    <ToggleSwitch
+                      id="custom-image-input"
+                      label={t.settings.customImageInput}
+                      description={t.settings.customImageInputDesc}
+                      checked={formState.CLAUDE_MEM_CUSTOM_IMAGE_INPUT === 'true'}
+                      onChange={(checked) => updateSetting('CLAUDE_MEM_CUSTOM_IMAGE_INPUT', checked ? 'true' : 'false')}
                     />
                   </div>
                 </>

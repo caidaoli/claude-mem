@@ -103,6 +103,16 @@ function extractAttachmentLabels(content: string): string[] | undefined {
   return labels.length > 0 ? labels : undefined;
 }
 
+/** The JSON observer's `attachments` array, under the same bounds as the XML block. */
+function jsonAttachmentLabels(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const labels = value
+    .filter((label): label is string => typeof label === 'string')
+    .slice(0, MAX_PARSED_ATTACHMENTS)
+    .map(label => label.trim().slice(0, MAX_PARSED_ATTACHMENT_CHARS));
+  return labels.length > 0 ? labels : undefined;
+}
+
 export function parseAgentXml(raw: string, correlationId?: string | number): ParseResult {
   if (typeof raw !== 'string' || !raw.trim()) {
     return { valid: false };
@@ -813,6 +823,7 @@ export function parseObservationsJsonResult(text: string, correlationId?: string
 
       // Filter out type from concepts
       const cleanedConcepts = concepts.filter(c => c !== finalType);
+      const attachments = jsonAttachmentLabels(obs.attachments);
 
       observations.push({
         type: finalType,
@@ -824,7 +835,8 @@ export function parseObservationsJsonResult(text: string, correlationId?: string
         narrative: typeof obs.narrative === 'string' ? stripFieldWrapper(obs.narrative) : null,
         concepts: cleanedConcepts,
         files_read,
-        files_modified
+        files_modified,
+        ...(attachments ? { attachments } : {}),
       });
     }
 

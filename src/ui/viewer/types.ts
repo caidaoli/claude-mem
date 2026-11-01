@@ -177,6 +177,8 @@ export interface Settings {
   CLAUDE_MEM_CUSTOM_MAX_TOKENS?: string;  // '0' = disabled
   CLAUDE_MEM_CUSTOM_FIRST_TOKEN_TIMEOUT?: string;  // seconds, '0' = disabled
   CLAUDE_MEM_CUSTOM_TOTAL_TIMEOUT?: string;  // seconds, '0' = disabled
+  CLAUDE_MEM_CUSTOM_OBSERVATION_BATCH_SIZE?: string;  // '1'-'32'
+  CLAUDE_MEM_CUSTOM_IMAGE_INPUT?: string;  // 'true' | 'false'
 
   // Token Economics Display
   CLAUDE_MEM_CONTEXT_SHOW_READ_TOKENS?: string;
