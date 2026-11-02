@@ -151,6 +151,8 @@ export const WORK_ZH_CN: Readonly<Record<string, string>> = {
   'Running {skill} on {machine}…': '正在 {machine} 上运行 {skill}…',
   'Last run': '上次运行',
   'Last reviewed': '上次评估',
+  'Refresh now': '立即刷新',
+  'Nothing new to refresh': '没有需要刷新的新内容',
   'on {machine}': '设备：{machine}',
   'Refresh {skill}': '刷新 {skill}',
   'Refresh': '刷新',

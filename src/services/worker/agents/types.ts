@@ -61,4 +61,5 @@ export interface StorageResult {
   insertedObservationIds?: number[];
   summaryId: number | null;
   createdAtEpoch: number;
+  summaryUpdated?: boolean;
 }

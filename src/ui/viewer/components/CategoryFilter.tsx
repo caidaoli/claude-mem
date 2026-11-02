@@ -20,7 +20,7 @@ export function CategoryFilter({
   totalIsPartial,
 }: CategoryFilterProps) {
   const { t } = useI18n();
-  const presentCategories = CATEGORY_ORDER.filter(category => (categoryCounts[category] ?? 0) > 0);
+  const presentCategories = CATEGORY_ORDER.filter(category => (categoryCounts[category] ?? 0) > 0 || activeCategories.has(category));
 
   if (presentCategories.length === 0) {
     return null;
@@ -37,7 +37,7 @@ export function CategoryFilter({
             title={t.categoryFilter.filterTo.replace('{category}', t.categoryFilter.categories[category])}
             aria-pressed={activeCategories.has(category)}
           >
-            {t.categoryFilter.categories[category]} ({categoryCounts[category]})
+            {t.categoryFilter.categories[category]} ({categoryCounts[category] ?? 0})
           </button>
         ))}
       </div>
