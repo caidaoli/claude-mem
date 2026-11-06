@@ -177,7 +177,7 @@ export default function SetupPage({ onComplete }: { onComplete: () => void }) {
 
   const screens: Record<SetupStep, () => ReactNode> = {
     scan: () => <ScanScreen scan={{ ...data.scan, improveProduct: improveProduct ?? data.scan.improveProduct }} onImproveProductChange={(checked) => void changeImproveProduct(checked)} onConfirmUpload={(upload, agents) => void confirmUpload(upload, agents)} consentError={consentError && t('Could not confirm your choice: {error}. If you chose to upload, your prompts may already have been uploaded; reload this page to check.', { error: consentError })} consentSending={consentSending} preferenceError={preferenceError && t('Could not save this choice: {error}', { error: preferenceError })} onRetry={() => void retryScan()} retrying={retrying} retryError={retryError} />,
-    reveal: () => <RevealScreen agents={data.scan.agents} reveal={data.reveal} extraction={data.extraction} uploadedAgents={data.scan.uploadedAgents} recentPrompts={data.recentPrompts} onContinue={() => update({ revealContinued: true }, 'choice')} />,
+    reveal: () => <RevealScreen agents={data.scan.agents} reveal={data.reveal} extraction={data.extraction} uploadedAgents={data.scan.uploadedAgents} recentPrompts={data.recentPrompts} hostedNotice={data.scan.hostedNotice} onContinue={() => update({ revealContinued: true }, 'choice')} />,
     choice: () => <ChoiceScreen branch={flow.branch} onChoose={(branch) => update({ branch, memoryBilling: branch === 'go' ? 'hosted' : 'existing', choiceContinued: true, savingsComplete: false, checkoutReviewed: false, setupComplete: false, finishTools: [] }, 'savings')} />,
     savings: () => (
       <SavingsScreen usage={data.usage} branch={flow.branch}

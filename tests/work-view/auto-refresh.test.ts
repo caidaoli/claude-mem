@@ -281,7 +281,7 @@ describe('refresh task', () => {
     expect(JSON.stringify(task)).not.toMatch(/bypass|dangerous/i);
   });
 
-  for (const backend of ['gemini', 'custom'] as const) it(`every backend (read-only, ${backend}): the worker groups, reviews and retells from the agent's JSON through the validators`, async () => {
+  for (const backend of ['gemini', 'custom'] as const) it(`every backend (${backend}): review retry bounds oversized output and retries invalid story JSON`, async () => {
     const dir = mkdtempSync(join(tmpdir(), 'auto-refresh-inline-'));
     try {
       const database = fixtureDatabase();
@@ -289,6 +289,16 @@ describe('refresh task', () => {
       const prompts: string[] = [];
       const models: unknown[] = [];
       let reviewAnswers = 0, storyAnswers = 0;
+      const oversizedReview = (show: any) => ({
+        groupId: show.groupId,
+        state: 'in-progress',
+        percent: 40,
+        summary: 'x'.repeat(292),
+        reviewBasis: show.reviewBasis,
+        milestones: Array.from({ length: 13 }, (_, index) => ({ at: null, text: `Step ${index}` })),
+        preferences: Array.from({ length: 11 }, (_, index) => ({ kind: 'directive', preference: `Preference ${index}`, quote: index === 10 ? 'q'.repeat(301) : `Quote ${index}`, at: null })),
+        outcome: { regressions: Array.from({ length: 11 }, (_, index) => ({ text: `Regression ${index}`, at: null, fixedBy: index === 10 ? 'x'.repeat(245) : '', evidence: [] })) },
+      });
       const ask = async (prompt: string, stepModels: unknown) => {
         prompts.push(prompt);
         models.push(stepModels);
@@ -303,17 +313,18 @@ describe('refresh task', () => {
           const supplied = prompt.split(`--- ${file} ---\n`)[1];
           expect(supplied).toBeDefined();
           const [show] = JSON.parse(supplied);
-          // The first answer forgets reviewBasis; the refusal is sent back and fixed.
-          if (reviewAnswers++ === 0) return JSON.stringify({ reviews: [{ groupId: show.groupId, state: 'in-progress', percent: 40, summary: 'Cards are being built.' }] });
+          // The model repeats the same over-limit summary after the strict first pass rejects it.
+          if (reviewAnswers++ === 0) return JSON.stringify({ reviews: [oversizedReview(show)] });
           expect(prompt).toMatch(/refused for these groups/);
-          return JSON.stringify({ reviews: [{ groupId: show.groupId, state: 'in-progress', percent: 40, summary: 'Cards are being built.', reviewBasis: show.reviewBasis }] });
+          expect(prompt).toMatch(/milestones has 13 items/);
+          return JSON.stringify({ reviews: [oversizedReview(show)] });
         }
         if (prompt.includes('Do only section 3')) return everyRequestInOther(prompt);
         // The first story answer holds no JSON; the refusal is sent back and fixed.
         if (prompt.includes('Do only section 4')) return storyAnswers++ ? JSON.stringify({ narrative: 'One request is under way.', preferences: [] }) : 'Not ready.';
         throw new Error(`Unexpected prompt: ${prompt.slice(-200)}`);
       };
-      expect(await task.run(ask, backend)).toBe('1 new conversations grouped, 1 requests reviewed, 1 requests placed, story written.');
+      expect(await task.run(ask, backend)).toBe('1 new conversations grouped, 1 requests reviewed (6 oversized fields trimmed after retry), 1 requests placed, story written.');
       // Grouping's input is inline already, so it is not supplied a second time.
       const groupingInput = /```json\n([\s\S]*?)\n```/.exec(prompts[0])![1];
       expect(prompts[0].split(groupingInput)).toHaveLength(2);
@@ -324,7 +335,25 @@ describe('refresh task', () => {
       expect(storyRetry.slice(story.length)).toBe('\n\nYour previous answer was refused: The answer held no JSON object.\nRejected answer:\nNot ready.\n\nFix it and answer again.');
       const ledger = readLedger(dir);
       expect(Object.values(ledger.groups.groups).map((group: any) => group.title)).toEqual(['Release cards']);
-      expect(Object.values(ledger.progress).map((review: any) => review.percent)).toEqual([40]);
+      const [review] = Object.values(ledger.progress) as any[];
+      expect(review.percent).toBe(40);
+      expect(review.summary).toHaveLength(280);
+      expect(review.summary.endsWith('…')).toBe(true);
+      expect(review.milestones).toHaveLength(12);
+      expect(review.preferences).toHaveLength(10);
+      expect(review.milestones.at(-1).text).toBe('Step 12');
+      expect(review.preferences[9].quote).toBe('q'.repeat(300));
+      expect(review.outcome.regressions).toHaveLength(10);
+      expect(review.outcome.regressions[9].fixedBy).toHaveLength(200);
+      expect(review.outcome.regressions[9].fixedBy.endsWith('…')).toBe(true);
+      expect(review.coercedFields).toEqual([
+        'milestones',
+        'outcome.regressions',
+        'outcome.regressions[9].fixedBy',
+        'preferences',
+        'preferences[9].quote',
+        'summary',
+      ]);
       expect(ledger.story.narrative).toBe('One request is under way.');
       // Grouping and the focus step run on the light models; reviews and the story on the careful ones.
       // The focus step asks twice: place the request, then propose from Other (where it landed).
@@ -333,6 +362,50 @@ describe('refresh task', () => {
       expect(STEP_MODELS.grouping).toEqual({ 'claude-code': { model: 'haiku' }, codex: { model: 'gpt-6-luna', reasoningEffort: 'low' }, gemini: { model: 'flash-lite' } });
       // Custom has no light model of its own; its careful steps take the summary tier.
       expect(STEP_MODELS.review).toEqual({ 'claude-code': { model: 'sonnet' }, codex: {}, gemini: { model: 'flash' }, custom: { model: '$TIER:summary' } });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  /** A refresh over one new conversation whose review step answers with `answerReview(show, attempt)`. */
+  const runRefreshWithReviewAnswers = (dir: string, answerReview: (show: any, attempt: number) => unknown) => {
+    const database = fixtureDatabase();
+    const task = buildRefreshTask({ localDeviceId: () => '', needs: { due: 0, ungrouped: 1, goalsStale: false, unplaced: 0, needed: true }, reason: 'scheduled', dataDir: dir, ledgerDir: dir, pluginRoot: PLUGIN_ROOT, openDatabase: handle(database), now: () => NOW, saveFocus: focusWriter(database).save });
+    let reviewAttempts = 0;
+    return task.run(async (prompt: string) => {
+      if (prompt.includes('Do only section 1')) return JSON.stringify({ groups: [{ title: 'Release cards', conversations: [key('a')] }] });
+      if (prompt.includes('Do only section 2')) {
+        const file = /is in (.+?\.json)/.exec(prompt)?.[1];
+        const [show] = JSON.parse(prompt.split(`--- ${file} ---\n`)[1]);
+        return JSON.stringify({ reviews: [answerReview(show, reviewAttempts++)] });
+      }
+      if (prompt.includes('Do only section 3')) return everyRequestInOther(prompt);
+      if (prompt.includes('Do only section 4')) return JSON.stringify({ narrative: 'One request is under way.', preferences: [] });
+      throw new Error(`Unexpected prompt: ${prompt.slice(-200)}`);
+    }, 'gemini');
+  };
+
+  it('a review missing reviewBasis is refused once and saved when the retry supplies it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'auto-refresh-basis-'));
+    try {
+      const review = (show: any) => ({ groupId: show.groupId, state: 'in-progress', percent: 40, summary: 'Cards are being built.' });
+      const summary = await runRefreshWithReviewAnswers(dir, (show, attempt) => attempt === 0 ? review(show) : { ...review(show), reviewBasis: show.reviewBasis });
+      expect(summary).toBe('1 new conversations grouped, 1 requests reviewed, 1 requests placed, story written.');
+      const [saved] = Object.values(readLedger(dir).progress) as any[];
+      expect(saved.percent).toBe(40);
+      expect(saved.coercedFields).toBeUndefined();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('a retry still missing reviewBasis fails the run naming the group and saves no review', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'auto-refresh-basis-'));
+    try {
+      let groupId = '';
+      const run = runRefreshWithReviewAnswers(dir, show => {
+        groupId = show.groupId;
+        return { groupId: show.groupId, state: 'in-progress', percent: 40, summary: 'x'.repeat(292) };
+      });
+      const failure: Error = await run.then(() => { throw new Error('the run should have failed'); }, error => error);
+      expect(failure.message).toContain(`${groupId}: reviewBasis must be copied verbatim`);
+      expect(readLedger(dir).progress).toEqual({});
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

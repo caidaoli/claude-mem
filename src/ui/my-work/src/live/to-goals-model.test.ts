@@ -22,7 +22,7 @@ test('mined areas with no my-focus area add no area; an ask with no area keeps i
 
 test('the current period and last run come from the run itself, with no cost', () => {
   const model = mapWithGoals(scrubbedGoals)
-  assert.deepEqual(model.currentPeriod, { label: '31 days to Oct 18', windowDays: 31, promptCount: 120 })
+  assert.deepEqual(model.currentPeriod, { label: '31 days to Oct 18', windowDays: 31, promptCount: 120, displayPeriod: { start: null, end: null, generatedAt: scrubbedGoals.goals.generatedAt! } })
   assert.equal(model.lastRuns.goals?.label, 'owner-goals')
   assert.equal(model.lastRuns.goals?.deviceName, 'this computer')
   assert.match(model.lastRuns.goals!.lastRunAt, /^Oct 1[89]\b/)
@@ -31,9 +31,9 @@ test('the current period and last run come from the run itself, with no cost', (
 test('past months: label from the period, prompt count, summary headline and first quote', () => {
   const model = mapWithGoals(scrubbedGoals)
   assert.deepEqual(model.pastPeriods, [
-    { id: 'owner-goals/2026-08-18', label: 'Aug 18 – Sep 17', promptCount: 54, headline: 'The sample owner set up the seed catalog.',
+    { id: 'owner-goals/2026-08-18', label: 'Aug 18 – Sep 17', displayPeriod: { start: '2026-08-18', end: '2026-09-18', year: 2026 }, promptCount: 54, headline: 'The sample owner set up the seed catalog.',
       areas: [{ title: 'Seed catalog', label: 'Catalog', timesAsked: 3, quote: { at: '09-15 10:04', quote: 'add every tomato variety to the catalog' } }] },
-    { id: 'owner-goals/2025-12-18', label: 'Dec 18, 2025 – Jan 17, 2026', promptCount: 7, headline: 'No summary recorded for this month.',
+    { id: 'owner-goals/2025-12-18', label: 'Dec 18, 2025 – Jan 17, 2026', displayPeriod: { start: '2025-12-18', end: '2026-01-18', year: 2026 }, promptCount: 7, headline: 'No summary recorded for this month.',
       areas: [{ title: 'Winter plan', label: 'Planner', timesAsked: 1, quote: null }] },
   ])
 })

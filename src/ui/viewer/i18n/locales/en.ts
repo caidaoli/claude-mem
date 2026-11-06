@@ -1,6 +1,8 @@
 export const en = {
   // Header
   header: {
+    feedConnected: "Feed connected",
+    feedDisconnected: "Feed disconnected",
     allProjects: 'All Projects',
     filterByProject: 'Filter memories by project',
     myWork: 'My Work',
@@ -12,8 +14,50 @@ export const en = {
     settings: 'Settings',
   },
 
+  sync: {
+    unconfigured: "Cloud sync off",
+    unknown: "Cloud freshness unknown",
+    current: "Cloud data current",
+    catchingUp: "Cloud catching up",
+    paused: "Cloud sync paused",
+    offline: "Cloud sync unavailable",
+    partial: "Cloud sync incomplete",
+    stale: "Cloud freshness stale",
+    limitedScope: "Limited sync scope",
+    notReported: "This worker has not reported synchronization freshness.",
+    staleEvidence: "The last confirmed cloud check is old; the live connection does not prove the replica is current.",
+    notConfirmed: "Cloud freshness has not been confirmed.",
+    modeRealtime: "Mode: realtime with HTTP recovery.",
+    modePolling: "Mode: HTTP polling.",
+    remaining: "Changes remaining: {count}.",
+    notConfigured: "Cloud sync is not configured.",
+    authPaused: "Cloud sync is paused after authentication or subscription was refused.",
+    incomingPaused: "Incoming cloud updates are paused on this device.",
+    requestFailed: "Cloud sync could not finish its latest request. Saved work remains on this device.",
+    checkOld: "The last cloud freshness check is old.",
+    waitingUploads: "Some updates are waiting for earlier changes to upload.",
+    synchronizing: "Cloud updates are being synchronized.",
+    needsAttention: "Some records need attention before this device is fully synchronized.",
+    unknownScope: "Recent updates are current; historical synchronization scope is not yet known.",
+    excludedHistory: "Recent updates are current. Older local history is outside the selected sync scope.",
+    sharedCurrent: "Shared records are current with the last confirmed cloud check.",
+  },
+
   // Feed
   feed: {
+    loadedMemories: 'Loaded memories',
+    refreshLatest: "Refresh latest memories",
+    refreshOverloaded: "Memories are changing faster than this view can refresh. Retry, or refresh the latest memories.",
+    refreshFailed: "Could not refresh saved memories.",
+    latestNotice: "Showing the newest memories. Load more to browse older history.",
+    loadFailed: "Failed to load more data",
+    historyChanged: "Memory changed too much while refreshing. Retry to refresh this view.",
+    pageFailed: "Failed to load {kind}: {error}",
+    invalidPage: "invalid page",
+    loadTimedOut: "Loading {kind} timed out. Try again.",
+    observations: "observations",
+    summaries: "summaries",
+    prompts: "prompts",
     emptyTitle: 'No memories to show',
     emptyHint: 'Memories appear here as you work. If a filter is selected, try another project or category.',
     loadingMore: 'Loading more...',
@@ -121,6 +165,8 @@ export const en = {
 
   // Context Settings Modal
   settings: {
+    observerEnabled: "Memory capture",
+    observerEnabledDesc: "Generate new observations and session summaries with the selected AI provider. Turn this off to stop those capture calls; existing memories, search, and SessionStart context remain available.",
     title: 'Settings',
     subtitle: 'Choose the context your next session receives.',
     source: 'Source:',
@@ -445,6 +491,9 @@ export const en = {
 
   // Session list, card and detail page
   sessions: {
+    refreshLatest: "Refresh latest sessions",
+    historyChanged: "Session history changed too much to refresh. Retry or refresh the latest sessions.",
+    invalidPage: "Invalid session page",
     retry: 'Retry',
     loadFailed: 'Could not load sessions: {error}',
     loading: 'Loading sessions…',

@@ -493,6 +493,16 @@ export function ContextSettingsModal({
               description={t.settings.advancedDesc}
               defaultOpen={false}
             >
+              <div className="toggle-group" style={{ marginBottom: '16px' }}>
+                <ToggleSwitch
+                  id="observer-enabled"
+                  label={t.settings.observerEnabled}
+                  description={t.settings.observerEnabledDesc}
+                  checked={formState.CLAUDE_MEM_OBSERVER_ENABLED !== 'false'}
+                  onChange={(checked) => updateSetting('CLAUDE_MEM_OBSERVER_ENABLED', checked ? 'true' : 'false')}
+                />
+              </div>
+
               <FormField
                 label={t.settings.aiProvider}
                 tooltip={t.settings.aiProviderTooltip}

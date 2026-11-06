@@ -25,4 +25,6 @@ export const APP_ZH_CN: Readonly<Record<string, string>> = {
   'On the go': '在外',
   'Dark': '深色',
   'Spec IDs': '规格编号',
+
+  "Account & billing": "账户与账单",
 }

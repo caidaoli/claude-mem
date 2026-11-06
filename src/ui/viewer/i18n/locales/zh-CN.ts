@@ -3,6 +3,8 @@ import type { TranslationKeys } from './en';
 export const zhCN: TranslationKeys = {
   // Header
   header: {
+    feedConnected: "动态已连接",
+    feedDisconnected: "动态已断开",
     allProjects: '所有项目',
     filterByProject: '按项目筛选记忆',
     myWork: '我的工作',
@@ -14,8 +16,50 @@ export const zhCN: TranslationKeys = {
     settings: '设置',
   },
 
+  sync: {
+    unconfigured: "云同步未开启",
+    unknown: "云端数据新旧状态未知",
+    current: "云端数据已是最新",
+    catchingUp: "正在同步云端数据",
+    paused: "云同步已暂停",
+    offline: "云同步不可用",
+    partial: "云同步未完成",
+    stale: "云端数据新旧状态已过期",
+    limitedScope: "同步范围受限",
+    notReported: "此 worker 尚未报告同步数据的新旧状态。",
+    staleEvidence: "上次确认云端状态已是较早之前；实时连接不能证明本地副本已是最新。",
+    notConfirmed: "尚未确认云端数据是否为最新。",
+    modeRealtime: "模式：实时同步，支持 HTTP 恢复。",
+    modePolling: "模式：HTTP 轮询。",
+    remaining: "剩余变更：{count}。",
+    notConfigured: "尚未配置云同步。",
+    authPaused: "认证或订阅被拒绝，云同步已暂停。",
+    incomingPaused: "此设备已暂停接收云端更新。",
+    requestFailed: "云同步未能完成最近一次请求。已保存的工作仍保留在此设备上。",
+    checkOld: "上次云端数据新旧状态检查已过期。",
+    waitingUploads: "部分更新正在等待更早的变更上传。",
+    synchronizing: "正在同步云端更新。",
+    needsAttention: "部分记录需要处理，此设备才能完成同步。",
+    unknownScope: "近期更新已是最新；历史记录的同步范围尚不明确。",
+    excludedHistory: "近期更新已是最新。较早的本地历史记录不在所选同步范围内。",
+    sharedCurrent: "共享记录与上次确认的云端状态一致。",
+  },
+
   // Feed
   feed: {
+    loadedMemories: '已加载的记忆',
+    refreshLatest: "刷新最新记忆",
+    refreshOverloaded: "记忆变化过快，当前视图无法及时刷新。请重试或刷新最新记忆。",
+    refreshFailed: "无法刷新已保存的记忆。",
+    latestNotice: "当前显示最新记忆。加载更多可浏览更早的历史记录。",
+    loadFailed: "无法加载更多数据",
+    historyChanged: "刷新期间记忆变化过多。请重试以刷新当前视图。",
+    pageFailed: "无法加载{kind}：{error}",
+    invalidPage: "分页数据无效",
+    loadTimedOut: "加载{kind}超时。请重试。",
+    observations: "观察记录",
+    summaries: "摘要",
+    prompts: "提示",
     emptyTitle: '暂无记忆',
     emptyHint: '工作时记忆会显示在这里。如果选了筛选条件，可以换个项目或类别试试。',
     loadingMore: '加载更多...',
@@ -123,6 +167,8 @@ export const zhCN: TranslationKeys = {
 
   // Context Settings Modal
   settings: {
+    observerEnabled: "记忆采集",
+    observerEnabledDesc: "使用所选 AI 提供商生成新的观察记录和会话摘要。关闭后将停止这些采集调用；已有记忆、搜索和 SessionStart 上下文仍然可用。",
     title: '设置',
     subtitle: '选择下次会话要注入的上下文。',
     source: '来源：',
@@ -445,6 +491,9 @@ export const zhCN: TranslationKeys = {
 
   // Session list, card and detail page
   sessions: {
+    refreshLatest: "刷新最新会话",
+    historyChanged: "会话历史变化过多，无法完成刷新。请重试或刷新最新会话。",
+    invalidPage: "会话分页数据无效",
     retry: '重试',
     loadFailed: '无法加载会话：{error}',
     loading: '正在加载会话…',

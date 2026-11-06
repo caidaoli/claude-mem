@@ -13,6 +13,7 @@ export interface Agent {
   id: string; tool: AgentTool; name: string; role: string; deviceId: string
   status?: 'working' | 'quiet' | 'finished'
   finishedAt?: string
+  finishedAtEpoch?: number
   /** A subagent with no recorded stop: the owner may record one. */
   canMarkFinished?: boolean
 }
@@ -25,6 +26,12 @@ export type WorkProductKind = 'PR' | 'Commit' | 'Branch' | 'Page' | 'Deck' | 'Do
 
 export interface Request {
   id: string
+  /** False only for a compact overview; the drawer loads authoritative detail before showing its evidence. */
+  detailLoaded?: boolean
+  /** The content version used to request/cache detail, independent of unrelated snapshot changes. */
+  detailRevision?: string
+  /** Exact card counts when the overview carries only a bounded preview. */
+  detailCounts?: { workProduct: number }
   title: string | null
   /** The title writer could not produce human copy; missing copy otherwise remains pending. */
   titleUnavailable?: boolean
@@ -41,6 +48,8 @@ export interface Request {
   /** Sortable start time. The List sorts on this, never on the display string. */
   startedAtIso?: string
   runningFor: string
+  /** Raw display facts survive compact transport so the browser can change locale. */
+  displayTime?: { endedAt?: number; reviewedAt?: number; completedAt?: number; checkedAt?: number; estimateAt?: number }
   stage: Stage
   state: LiveState
   progress: {
@@ -60,15 +69,15 @@ export interface Request {
   terminal: string[]
   activityWord: string
   workstreams: { title: string; tasks: { name: string; done: boolean }[] }[]
-  granular: { kind: 'work' | 'memory'; text: string; at: string }[]
-  conversations: { tool: string; at: string; title: string }[]
+  granular: { kind: 'work' | 'memory'; text: string; at: string; atEpoch?: number }[]
+  conversations: { tool: string; at: string; atEpoch?: number; title: string }[]
   prompts: Quote[]
   /** `href` is a real published page, PR or commit; '#' means a sample link with nothing behind it; absent means a
    * recorded item with nothing to open, such as a commit whose remote is not GitHub (render with ProductLink). */
   /** `deliverable` marks a copy claude-mem keeps in the project's deliverables bucket: a file the agent made, kept after its source is gone. */
-  workProduct: { kind: WorkProductKind; label: string; href?: string; deliverable?: boolean }[]
+  workProduct: { kind: WorkProductKind; label: string; href?: string; deliverable?: boolean; availability?: 'origin-only' }[]
   followUps: { tag: 'Docs' | 'Promo' | 'Other'; text: string; done: boolean }[]
-  story: { label: string; description: string; status: 'complete' | 'active' | 'pending' }[]
+  story: { label: string; description: string; atEpoch?: number; status: 'complete' | 'active' | 'pending' }[]
   /** The last memory review's account of how the request went (request-progress). */
   storyNarrative?: string
   evidence: { title: string; href: string }[]
@@ -76,6 +85,9 @@ export interface Request {
   resolvesTo?: { title: string; summary: string }
   /** Set when a person marks this version checked (§6). Checking never marks a request shipped. */
   checkedAt?: string
+  /** Whether this acknowledgement is local-only or a shared, versioned decision. */
+  review?: { mode: 'local' | 'shared'; hash: string | null; version?: number; available: boolean; conflict?: boolean; legacy?: boolean; pending?: boolean; message?: string }
+  suggestion?: { conversationKey: string; requestId: string; requestTitle: string; evidence: string; expectedSuggestionHash?: string | null; sharedConflict?: boolean }
   /** Live records only: the version a check certifies. */
   contentFingerprint?: string
   /** Free-text stage from the title writer. Hover text only; the stage chip comes from the recorded status. */
@@ -128,10 +140,11 @@ export interface FocusChange {
 }
 
 /** The current owner-goals run. */
-export interface CurrentPeriod { label: string; windowDays: number; promptCount: number }
+export interface CurrentPeriod { label: string; windowDays: number; promptCount: number; displayPeriod?: { start: string | null; end: string | null; generatedAt: string } }
 
 /** One saved past month (owner-goals/<start>), shown in Past focus. Its asks are archived with the month. */
 export interface PastPeriod {
+  displayPeriod?: { start: string; end: string | null; year: number }
   id: string
   label: string
   promptCount: number
@@ -141,7 +154,7 @@ export interface PastPeriod {
 }
 
 /** When and where a skill last ran. Real timestamps only; no cost (owner, Oct 20, 2026). */
-export interface SkillRun { label: string; lastRunAt: string; deviceName: string }
+export interface SkillRun { label: string; lastRunAt: string; lastRunAtEpoch?: number; deviceName: string }
 
 export interface Run { label: string; lastRunAt: string; deviceId: string; state: 'idle' | 'running' | 'queued'; progress?: number }
 

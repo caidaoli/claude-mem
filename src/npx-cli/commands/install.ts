@@ -60,7 +60,7 @@ import { parseTeamBrainTeamRef, type TeamBrainTeamRef } from '../../shared/teamb
 import { relayedLine } from '../../shared/relayed-text.js';
 import { endSetupSession, INITIAL_SETUP_STATE, readSetupState, startSetupSession, writeSetupState } from '../../shared/setup-state.js';
 import { intentCredentialHeaders, readIntentCredentials } from '../../shared/intent-credentials.js';
-import { runBrowserSetup, settingsChangesNeedingRestart, shouldUseBrowserSetup, waitForBackgroundWorkToFinish, type BrowserSetupOutcome } from '../install/browser-setup.js';
+import { AGENT_BROWSER_SETUP_HINT, runBrowserSetup, settingsChangesNeedingRestart, shouldPrintAgentBrowserSetupHint, shouldUseBrowserSetup, waitForBackgroundWorkToFinish, type BrowserSetupOutcome } from '../install/browser-setup.js';
 
 function getSetting<K extends keyof SettingsDefaults>(key: K): SettingsDefaults[K] {
   return SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH)[key];
@@ -376,17 +376,30 @@ export function makeIDETask(ideId: string, summary: InstallSummary, dshProfile?:
 
     case 'devin': {
       return {
-        title: 'Devin: installing hooks',
+        title: 'Devin: installing hooks + MCP',
         task: async (message) => {
           message('Loading Devin installer…');
-          const { installDevinHooks } = await import('../../services/integrations/DevinHooksInstaller.js');
+          const { installDevinHooks, configureDevinMcp } = await import('../../services/integrations/DevinHooksInstaller.js');
           message('Installing Devin hooks…');
           const { result, output } = await bufferConsole(async () => installDevinHooks());
           if (result !== 0) {
             recordFailure('Devin: hook installation failed', output);
             return `Devin: hook installation failed ${styleText('red', 'FAIL')}`;
           }
-          return `Devin: hooks installed ${styleText('green', 'OK')}`;
+          message('Configuring Devin MCP…');
+          const { result: mcpResult, output: mcpOutput } = await bufferConsole(async () => configureDevinMcp());
+          if (mcpResult === 0) {
+            return `Devin: hooks + MCP installed ${styleText('green', 'OK')}`;
+          }
+          installerError(ErrorSeverity.WARN_CONTINUE, {
+            component: 'devin',
+            ide: 'devin',
+            phase: 'ide-install',
+            cause: new Error('Devin hooks installed, but MCP setup failed.'),
+            remediation: 'Fix the problem named above, then run `npx claude-mem devin install`.',
+            details: mcpOutput,
+          }, summary);
+          return `Devin: hooks installed; MCP setup failed — run \`npx claude-mem devin install\` ${styleText('yellow', '!')}`;
         },
       };
     }
@@ -2148,7 +2161,7 @@ async function requireInstallerOAuthLogin(version: string): Promise<InstallerOAu
  * Best-effort, non-blocking sign-in offer for non-interactive installs that
  * skipped login (provider needs no account). Agents run `npx claude-mem install`
  * in non-TTY shells; the blocking OAuth step cannot run there, so the install
- * completes and the login-only link is printed last for the agent to relay.
+ * completes and the agent can relay the optional login-only link.
  *
  * Never polls, never opens a browser, never prints the device code or the
  * checkout URL, and never touches exit status. Skipped under CI. Not gated on
@@ -2176,11 +2189,11 @@ export async function offerDeferredLogin(options: InstallOptions, version: strin
   }
 
   // Telemetry first so that, in CLAUDE_MEM_TELEMETRY_DEBUG=1 mode, its stderr
-  // line cannot land after the relay instruction an agent reads last.
+  // line cannot interrupt the link and its accompanying instruction.
   await captureCliEvent('installer_oauth_deferred', { version, interactive: false });
   log.info('Optional: sign in to claude-mem to unlock cloud sync and the CMEM Pro trial.');
   log.info(`Sign-in link: ${pairing.authorizationUrl}`);
-  log.info('AGENT: show this link to the user so they can finish signing in. Do not open it yourself; the install is already complete.');
+  log.info('AGENT: show this link to the user so they can finish signing in. This optional link is for account sign-in only.');
 }
 
 export function noteDeviceCode(
@@ -2446,12 +2459,15 @@ export async function requireWorkerStopped(
   // (#2828). claude-mem never stops, kills or recycles it, and its manager
   // would restart it the moment it exited, so leave it running and say once
   // how to load the new version.
-  if (isWorkerAutostartDisabled({ CLAUDE_MEM_WORKER_AUTOSTART: getSetting('CLAUDE_MEM_WORKER_AUTOSTART') })) {
+  if (isWorkerAutostartDisabled({
+    CLAUDE_MEM_WORKER_AUTOSTART: getSetting('CLAUDE_MEM_WORKER_AUTOSTART'),
+    CLAUDE_MEM_WORKER_URL: getSetting('CLAUDE_MEM_WORKER_URL'),
+  })) {
     if (phase === 'pre-overwrite') {
       installerError(ErrorSeverity.WARN_CONTINUE, {
         component: 'worker-shutdown',
         phase,
-        cause: new Error('CLAUDE_MEM_WORKER_AUTOSTART=false: the worker is managed externally, so the installer did not stop it.'),
+        cause: new Error('CLAUDE_MEM_WORKER_AUTOSTART=false or CLAUDE_MEM_WORKER_URL is set: the worker is managed externally, so the installer did not stop it.'),
         remediation: 'When the install finishes, restart the worker with whatever manages it so it runs the new version.',
       }, summary);
     }
@@ -3043,12 +3059,13 @@ async function runInstallCommandInner(options: InstallOptions, summary: InstallS
   let browserProvider: ProviderId = (getSetting('CLAUDE_MEM_PROVIDER') as ProviderId) || 'claude';
   let browserOutcome: BrowserSetupOutcome | null = null;
   let settingsBeforeBrowserSetup: string | null = null;
+  const setupComplete = readSetupState().status === 'complete';
   if (shouldUseBrowserSetup({
     interactive: isInteractive,
     provider: options.provider,
     noAutoStart: options.noAutoStart,
     runtime: selectedRuntime,
-    setupComplete: readSetupState().status === 'complete',
+    setupComplete,
   })) {
     startSetupSession();
     try {
@@ -3180,6 +3197,7 @@ async function runInstallCommandInner(options: InstallOptions, summary: InstallS
   // worker that is not up yet is that manager's to start, not an install failure.
   const workerManagedExternally = isWorkerAutostartDisabled({
     CLAUDE_MEM_WORKER_AUTOSTART: getSetting('CLAUDE_MEM_WORKER_AUTOSTART'),
+    CLAUDE_MEM_WORKER_URL: getSetting('CLAUDE_MEM_WORKER_URL'),
   });
 
   await runTasks([
@@ -3407,13 +3425,22 @@ async function runInstallCommandInner(options: InstallOptions, summary: InstallS
     } else {
       console.log('\nclaude-mem installed successfully!');
     }
-    // Last line of a non-interactive install so an agent relaying the output
-    // sees the link after the success line. Nothing here may change the exit
-    // status or throw past the summary.
+    // Keep the optional sign-in link separate from the local setup page.
     try {
       await offerDeferredLogin(options, version);
     } catch {
       // best-effort only
+    }
+    if (shouldPrintAgentBrowserSetupHint({
+      ci: Boolean(process.env.CI),
+      alreadyInstalled,
+      setupComplete,
+      failedIdeCount: failedIDEs.length,
+      providerSource: options.providerSource,
+      runtime: selectedRuntime,
+      noAutoStart: options.noAutoStart,
+    })) {
+      log.info(AGENT_BROWSER_SETUP_HINT);
     }
   }
 
