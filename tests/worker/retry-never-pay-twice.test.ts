@@ -5,6 +5,7 @@ import { classifyOpenAICompatError } from '../../src/services/worker/OpenAICompa
 import { OpenAICompatibleProvider, type ProviderQueryResult } from '../../src/services/worker/OpenAICompatibleProvider.js';
 import { ModeManager } from '../../src/services/domain/ModeManager.js';
 import { SettingsDefaultsManager } from '../../src/shared/SettingsDefaultsManager.js';
+import { LIVE_OBSERVER_MAX_AGE_MS } from '../../src/shared/observer-work-policy.js';
 import { SessionManager, type TransportResumeClock } from '../../src/services/worker/SessionManager.js';
 import { computeBackoffMs, MAX_RETRY_AFTER_MS, withRetry } from '../../src/services/worker/retry.js';
 import {
@@ -289,6 +290,35 @@ describe('PaidSendBudget: one allowance per claimed batch, shared by withRetry a
 
     // And withRetry refuses outright if anything tries to send it again.
     const refusal = await provider().runQuery(firstBudget).catch((caught: unknown) => caught);
+    expect(fetch.sends()).toBe(2);
+    expect(isClassified(refusal) && refusal.code).toBe(PAID_SEND_BUDGET_EXHAUSTED_CODE);
+  });
+
+  it('keeps the paid-send allowance when expiry removes a failed batch head', async () => {
+    const now = Date.now();
+    const clock = spyOn(Date, 'now').mockReturnValue(now);
+    const { sessionManager, session, sessionDbId } = makeSessionManager();
+    clock.mockReturnValue(now + LIVE_OBSERVER_MAX_AGE_MS - 60_000);
+    const survivingId = sessionManager.getMessageBuffer().enqueue(sessionDbId, {
+      type: 'observation', tool_name: 'Read', tool_input: '{}', tool_response: 'newer content', prompt_number: 1,
+    });
+    expect(sessionManager.claimNextObservation(sessionDbId, () => true)).not.toBeNull();
+    expect(sessionManager.claimNextObservation(sessionDbId, () => true)?._persistentId).toBe(survivingId);
+    const fetch = scriptFetch([() => new Response('upstream hiccup', { status: 503 })]);
+    await provider().runQuery(paidSendBudgetForClaimedBatch(session)).catch(() => undefined);
+    sessionManager.scheduleTransportResume(sessionDbId);
+
+    clock.mockReturnValue(now + LIVE_OBSERVER_MAX_AGE_MS + 1);
+    await sessionManager.resetProcessingToPending(sessionDbId);
+    expect(sessionManager.claimNextObservation(sessionDbId, () => true)?._persistentId).toBe(survivingId);
+    const resumedBudget = paidSendBudgetForClaimedBatch(session)!;
+    await provider().runQuery(resumedBudget).catch(() => undefined);
+    expect(fetch.sentHeaders[1]['x-client-request-id']).toBe(fetch.sentHeaders[0]['x-client-request-id']);
+
+    await sessionManager.resetProcessingToPending(sessionDbId);
+    sessionManager.scheduleTransportResume(sessionDbId);
+    expect(sessionManager.getMessageBuffer().getPendingCount(sessionDbId)).toBe(0);
+    const refusal = await provider().runQuery(resumedBudget).catch((caught: unknown) => caught);
     expect(fetch.sends()).toBe(2);
     expect(isClassified(refusal) && refusal.code).toBe(PAID_SEND_BUDGET_EXHAUSTED_CODE);
   });

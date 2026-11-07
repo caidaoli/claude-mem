@@ -11,11 +11,9 @@ import type { ActiveSession } from '../worker-types.js';
 export const DEFAULT_MAX_PAID_SENDS_PER_BATCH = 2;
 
 /**
- * The paid-send allowance of one claimed batch, identified by its head (the
- * oldest claimed message id). A reset to pending keeps the head at the front of
- * the queue, so every resend of the same batch, from any generator, finds the
- * same budget on the session (OutputRecovery keys rejected replies the same
- * way). A different head is a different batch with a fresh budget.
+ * The paid-send allowance of one claimed batch, identified by its original
+ * head. If that head expires after a failed send, surviving batch members
+ * retain the same allowance. A head outside the batch starts a fresh budget.
  */
 export class PaidSendBudget {
   /** Sent as `x-client-request-id` on every send of this batch. Tracing only, never idempotency. */
@@ -45,13 +43,14 @@ export class PaidSendBudget {
 
 /**
  * The budget of the batch this session has claimed right now, created when the
- * head changes. Undefined when nothing is claimed (an init turn), which is not
- * a batch and carries no budget.
+ * head is outside the previous batch. Undefined when nothing is claimed (an
+ * init turn), which is not a batch and carries no budget.
  */
 export function paidSendBudgetForClaimedBatch(session: ActiveSession): PaidSendBudget | undefined {
   const batchHeadMessageId = session.claimedMessageIds[0];
   if (batchHeadMessageId === undefined) return undefined;
-  if (session.paidSendBudget?.batchHeadMessageId !== batchHeadMessageId) {
+  if (session.paidSendBudget?.batchHeadMessageId !== batchHeadMessageId
+    && !session.paidSendBudget?.batchMessageIds.has(batchHeadMessageId)) {
     session.paidSendBudget = new PaidSendBudget(batchHeadMessageId);
   }
   for (const messageId of session.claimedMessageIds) {
