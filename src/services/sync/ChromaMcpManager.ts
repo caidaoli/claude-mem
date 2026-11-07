@@ -1533,6 +1533,22 @@ export class ChromaMcpManager {
       return null;
     }
 
+    // FastMCP 1.6 serializes list[str] as one text block per item.
+    if (toolName === 'chroma_list_collections') {
+      if (contentArray.some(item => item.type !== 'text' || typeof item.text !== 'string')) {
+        throw new Error('chroma-mcp returned an invalid collection list');
+      }
+      if (contentArray.length === 1) {
+        try {
+          const parsed = JSON.parse(firstTextContent.text);
+          if (Array.isArray(parsed)) return parsed;
+        } catch {
+          // The pinned FastMCP returns literal collection names.
+        }
+      }
+      return contentArray.map(item => item.text);
+    }
+
     try {
       return JSON.parse(firstTextContent.text);
     } catch (parseError: unknown) {

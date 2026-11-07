@@ -1,7 +1,18 @@
 import * as p from '@clack/prompts';
 import pc from 'picocolors';
-import { OBSERVER_SESSIONS_PROJECT } from '../../shared/paths.js';
-import { SessionStore } from '../sqlite/SessionStore.js';
+import { OBSERVER_SESSIONS_PROJECT, resolveDataDir } from '../../shared/paths.js';
+import { holdSpawnLock } from '../../shared/worker-spawn-gate.js';
+import { readJsonFileWithBom, writeJsonFileAtomic } from '../../shared/atomic-json.js';
+import { join, sep } from 'node:path';
+import { existsSync, lstatSync, unlinkSync } from 'node:fs';
+import { listProjectDatabaseInventory, inspectProjectDatabase, purgeProjectDatabase } from './database.js';
+import { openProjectDatabases, compactProjectDatabase, type ProjectDatabaseFile } from './backups.js';
+import { listFileProjects, inventoryProjectMemoryFiles, cleanProjectMemoryFiles, cleanProjectDiagnosticLogs } from './files.js';
+import { assertProjectDeletionOffline, assertCloudErasureAvailable } from './preflight.js';
+import { prepareVectorPurge } from './vectors.js';
+import type { SessionStore } from '../sqlite/SessionStore.js';
+
+const projectKey = (project: string): string => project.replace(/[A-Z]/g, char => char.toLowerCase());
 
 export interface ProjectDeletionStats {
   project: string;
@@ -113,56 +124,6 @@ function createInteraction(): DeleteProjectInteraction {
   };
 }
 
-export function listProjectDeletionCandidates(store: SessionStore): ProjectDeletionStats[] {
-  const rows = store.db.prepare(`
-    SELECT
-      s.project AS project,
-      COUNT(DISTINCT s.id) AS sessionCount,
-      COUNT(DISTINCT o.id) AS observationCount,
-      COUNT(DISTINCT ss.id) AS summaryCount,
-      COUNT(DISTINCT up.id) AS promptCount
-    FROM sdk_sessions s
-    LEFT JOIN observations o ON o.memory_session_id = s.memory_session_id
-    LEFT JOIN session_summaries ss ON ss.memory_session_id = s.memory_session_id
-    LEFT JOIN user_prompts up ON up.content_session_id = s.content_session_id
-    WHERE s.project IS NOT NULL
-      AND s.project != ''
-      AND s.project != ?
-    GROUP BY s.project
-    ORDER BY s.project ASC
-  `).all(OBSERVER_SESSIONS_PROJECT) as ProjectDeletionStats[];
-
-  return rows.map((row) => ({
-    project: row.project,
-    sessionCount: Number(row.sessionCount),
-    observationCount: Number(row.observationCount),
-    summaryCount: Number(row.summaryCount),
-    promptCount: Number(row.promptCount),
-  }));
-}
-
-export function deleteProjectsMemory(store: SessionStore, projects: string[]): ProjectDeletionSummary | null {
-  const candidates = listProjectDeletionCandidates(store);
-  const selectedProjects = projects
-    .map((project) => candidates.find((candidate) => candidate.project === project) ?? null)
-    .filter((candidate): candidate is ProjectDeletionStats => candidate !== null)
-    .filter((candidate, index, list) => list.findIndex((item) => item.project === candidate.project) === index);
-
-  if (selectedProjects.length === 0) {
-    return null;
-  }
-
-  const summary = summarizeProjectDeletion(selectedProjects);
-  const placeholders = summary.projects.map(() => '?').join(', ');
-
-  const deleteTx = store.db.transaction((projectNames: string[]) => {
-    return store.db.prepare(`DELETE FROM sdk_sessions WHERE project IN (${placeholders})`).run(...projectNames);
-  });
-
-  const result = deleteTx(summary.projects);
-  return result.changes > 0 ? summary : null;
-}
-
 export async function runDeleteProjectCommand(
   _args: string[] = [],
   deps: {
@@ -176,53 +137,135 @@ export async function runDeleteProjectCommand(
   }
 
   const interaction = deps.interaction ?? createInteraction();
-  const store = deps.store ?? new SessionStore();
-  const ownsStore = !deps.store;
+  const dataDir = resolveDataDir();
+  let release: (() => void) | null = null;
+  let databases: ProjectDatabaseFile[] = [];
+  let vectors: Awaited<ReturnType<typeof prepareVectorPurge>> = null;
+  const pendingPath = join(dataDir, 'project-delete-pending.json');
+  let pendingProjects: string[] = [];
 
   try {
     interaction.intro('claude-mem delete-project');
-
-    const projects = listProjectDeletionCandidates(store);
-    if (projects.length === 0) {
-      interaction.outro('No projects found in the claude-mem database.');
-      return 0;
+    if (deps.store) {
+      databases = [{ db: deps.store.db, path: ':memory:', backup: false }];
+    } else {
+      release = await holdSpawnLock(0);
+      if (!release) throw new Error('Another claude-mem launcher or maintenance operation is running.');
+      // The launcher lock intentionally fails open on I/O errors; destructive maintenance cannot.
+      if (readJsonFileWithBom<{ pid: number }>(join(dataDir, 'spawn.lock')).pid !== process.pid) {
+        throw new Error('Could not hold the worker spawn lock for project deletion.');
+      }
+      assertProjectDeletionOffline(dataDir);
+      if (existsSync(pendingPath)) {
+        if (lstatSync(pendingPath).isSymbolicLink()) throw new Error('Refusing a symlinked project deletion receipt.');
+        const pending = readJsonFileWithBom<{ projects: unknown }>(pendingPath);
+        if (!Array.isArray(pending.projects) || !pending.projects.length || !pending.projects.every(project => typeof project === 'string' && project.length > 0)) {
+          throw new Error('Invalid pending project deletion receipt; resolve it before deleting more projects.');
+        }
+        pendingProjects = pending.projects;
+      }
+      databases = openProjectDatabases(dataDir);
+      assertCloudErasureAvailable(dataDir, []);
+      vectors = await prepareVectorPurge({ dataDir });
     }
 
+    const candidates = new Map<string, ProjectDeletionStats>();
+    const addProject = (project: string) => {
+      const key = projectKey(project);
+      if ([OBSERVER_SESSIONS_PROJECT, '__my_work__'].some(internal => projectKey(internal) === key)) return;
+      if (!candidates.has(key)) candidates.set(key, { project, sessionCount: 0, observationCount: 0, summaryCount: 0, promptCount: 0 });
+    };
+    for (const file of databases) for (const row of listProjectDatabaseInventory(file.db)) {
+      addProject(row.project);
+      const candidate = candidates.get(projectKey(row.project));
+      if (candidate && !file.backup) {
+        for (const field of ['sessionCount', 'observationCount', 'summaryCount', 'promptCount'] as const) candidate[field] += row[field];
+      }
+    }
+    if (!deps.store) {
+      for (const project of pendingProjects) addProject(project);
+      for (const project of listFileProjects(dataDir)) addProject(project);
+      if (vectors) for (const project of await vectors.listProjects()) addProject(project);
+    }
+    const projects = [...candidates.values()].sort((a, b) => a.project.localeCompare(b.project));
+    if (projects.length === 0) {
+      interaction.outro('No project records found in the database, backups, files or vector index.');
+      return 0;
+    }
     const selectedProjectNames = await interaction.selectProjects(projects);
     if (!selectedProjectNames || selectedProjectNames.length === 0) {
       interaction.cancel('Deletion cancelled.');
       return 0;
     }
-
-    const selectedProjects = selectedProjectNames
-      .map((projectName) => projects.find((candidate) => candidate.project === projectName) ?? null)
-      .filter((candidate): candidate is ProjectDeletionStats => candidate !== null);
+    const selected = new Set(selectedProjectNames.map(projectKey));
+    const selectedProjects = projects.filter(project => selected.has(projectKey(project.project)));
     if (selectedProjects.length === 0) {
       interaction.warn('Selected projects no longer exist.');
       return 1;
     }
-
     const summary = summarizeProjectDeletion(selectedProjects);
-    interaction.info(`Selected ${summary.projectCount} project${summary.projectCount === 1 ? '' : 's'}: ${summary.projects.join(', ')}.`);
-
-    const confirmed = await interaction.confirmDeletion(summary);
-    if (!confirmed) {
+    if (pendingProjects.length && (pendingProjects.length !== selected.size || pendingProjects.some(project => !selected.has(projectKey(project))))) {
+      throw new Error(`Finish the interrupted deletion first by selecting exactly: ${pendingProjects.join(', ')}.`);
+    }
+    const selections = databases.map(file => inspectProjectDatabase(file.db, summary.projects));
+    if (!deps.store) assertCloudErasureAvailable(dataDir, selections);
+    else if (selections.some(selection => selection.cloudEvidence.length)) throw new Error('Complete cloud erasure is unavailable; refusing an unreplicated local deletion.');
+    const retainedAttachments = new Set(selections.flatMap(selection => selection.retainedAttachmentIds));
+    const fileInventory = deps.store ? null : inventoryProjectMemoryFiles({
+      dataDir,
+      projects: summary.projects,
+      sessions: selections.flatMap(selection => selection.sessions),
+      deliverables: selections.flatMap(selection => selection.deliverables),
+      retainedDeliverablePaths: selections.flatMap(selection => selection.retainedDeliverablePaths),
+      attachmentIds: selections.flatMap(selection => selection.attachmentIds).filter(id => !retainedAttachments.has(id)),
+      mediaDirectories: selections.flatMap(selection => selection.mediaDirectories).filter(id => !retainedAttachments.has(id)),
+      promptIds: selections.filter((_, index) => !databases[index].backup).flatMap(selection => selection.promptIds),
+      observationIds: selections.filter((_, index) => !databases[index].backup).flatMap(selection => selection.observationIds),
+    });
+    if (fileInventory?.unattributedPaths.length) {
+      throw new Error(`Cannot safely attribute these files to a single project; no data was deleted: ${fileInventory.unattributedPaths.join(', ')}`);
+    }
+    const extraRows = selections.reduce((sum, selection) => sum + selection.inventory.reduce((n, row) => n + row.toolUseCount + row.workStateCount + row.deliverableCount, 0), 0);
+    interaction.info(`Selected: ${summary.projects.join(', ')}. Current sessions/observations/summaries/prompts: ${formatSummary(summary)}. Selected database rows across current data and backups: ${selections.reduce((count, selection) => count + selection.recordCount, 0)} (including ${extraRows} tool/work-state/deliverable records), plus associated cleanup, ${fileInventory?.operations.length ?? 0} file changes, and matching vector documents.`);
+    if (!deps.store) interaction.warn(`Historical backups (${databases.filter(file => file.backup).length}) will be scrubbed in place. ALL shared claude-mem diagnostic logs will be cleared, including logs of other projects. Original agent transcripts and source files are outside this command. Keep agent sessions closed until deletion completes.`);
+    if (!await interaction.confirmDeletion(summary)) {
       interaction.cancel('Deletion cancelled.');
       return 0;
     }
-
-    const deleted = deleteProjectsMemory(store, summary.projects);
-    if (!deleted) {
-      interaction.warn('Selected projects no longer exist.');
-      return 1;
+    if (!deps.store) assertProjectDeletionOffline(dataDir);
+    if (!deps.store) writeJsonFileAtomic(pendingPath, { projects: summary.projects }, { mode: 0o600 });
+    // Keep database identities until external cleanup succeeds, so a failed run can be repeated.
+    const vectorCount = vectors ? await vectors.purgeProjects(summary.projects) : 0;
+    await vectors?.close();
+    vectors = null;
+    const logDirectory = fileInventory ? join(fileInventory.dataDir, 'logs') : '';
+    const fileCounts = fileInventory ? cleanProjectMemoryFiles({
+      ...fileInventory,
+      operations: fileInventory.operations.filter(operation => operation.path !== logDirectory && !operation.path.startsWith(logDirectory + sep)),
+    }) : null;
+    const removedLogs = deps.store ? 0 : cleanProjectDiagnosticLogs(dataDir);
+    // Backups first: the live database remains an inventory if an older snapshot fails.
+    for (const file of [...databases].sort((a, b) => Number(b.backup) - Number(a.backup))) {
+      const hasRecords = inspectProjectDatabase(file.db, summary.projects).recordCount > 0;
+      if (!hasRecords && pendingProjects.length === 0) continue;
+      if (hasRecords) purgeProjectDatabase(file.db, summary.projects);
+      if (!deps.store) compactProjectDatabase(file);
+      const remaining = listProjectDatabaseInventory(file.db).filter(row => selected.has(projectKey(row.project)));
+      if (remaining.length) throw new Error(`Project records remain in ${file.path}; deletion is incomplete.`);
     }
-
-    interaction.success(`Deleted ${deleted.projectCount} project${deleted.projectCount === 1 ? '' : 's'} from claude-mem.`);
-    interaction.outro(`Removed ${formatSummary(deleted)} across: ${deleted.projects.join(', ')}.`);
+    if (!deps.store) unlinkSync(pendingPath);
+    interaction.success(`Deleted ${summary.projectCount} project${summary.projectCount === 1 ? '' : 's'} from claude-mem.`);
+    interaction.outro(`Cleared current data and available local backups; ${vectorCount} vector documents, ${(fileCounts?.removedFiles ?? 0) + removedLogs} files removed, ${fileCounts?.rewrittenFiles ?? 0} shared files updated. Payload-free replay checkpoints are retained.`);
     return 0;
+  } catch (error) {
+    interaction.warn(error instanceof Error ? error.message : String(error));
+    interaction.outro('Deletion did not complete. No success is claimed; fix the reported problem and rerun.');
+    return 1;
   } finally {
-    if (ownsStore) {
-      store.close();
+    try { await vectors?.close(); }
+    finally {
+      if (!deps.store) for (const file of databases) file.db.close();
+      release?.();
     }
   }
 }
