@@ -238,6 +238,8 @@ export async function runDeleteProjectCommand(
     }
     const extraRows = selections.reduce((sum, selection) => sum + selection.inventory.reduce((n, row) => n + row.toolUseCount + row.workStateCount + row.deliverableCount, 0), 0);
     interaction.info(`Selected: ${summary.projects.join(', ')}. Current sessions/observations/summaries/prompts: ${formatSummary(summary)}. Selected database rows across current data and backups: ${selections.reduce((count, selection) => count + selection.recordCount, 0)} (including ${extraRows} tool/work-state/deliverable records), plus associated cleanup, ${fileInventory?.operations.length ?? 0} file changes, and matching vector documents.`);
+    const captureRecords = selections.filter((_, index) => !databases[index].backup).flatMap(selection => selection.sessionCaptureRecords);
+    if (captureRecords.length) interaction.info(`Selected sessions also contain tool records labelled with other working-directory projects; they are deleted with their sessions: ${captureRecords.map(record => `"${record.project}" ${record.table} ${record.count}${record.cwds.length ? ` (cwd ${record.cwds.join(', ')})` : ''}`).join('; ')}.`);
     if (!deps.store) interaction.warn(`Historical backups (${databases.filter(file => file.backup).length}) will be scrubbed in place. ALL shared claude-mem diagnostic logs will be cleared, including logs of other projects. Original agent transcripts and source files are outside this command. Keep agent sessions closed until deletion completes.`);
     if (!await interaction.confirmDeletion(summary)) {
       interaction.cancel('Deletion cancelled.');

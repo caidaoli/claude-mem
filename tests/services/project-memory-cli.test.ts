@@ -296,8 +296,23 @@ describe('complete local project database deletion', () => {
     } finally { db.close(); }
   });
 
-  it('rejects sessions with records belonging to an unselected project and changes nothing', () => {
-    for (const child of ['observations', 'session_summaries', 'tool_uses']) {
+  it('deletes cwd-labelled tool records with their session and keeps the same label elsewhere', () => {
+    const db = new Database(':memory:');
+    try {
+      db.exec(`CREATE TABLE sdk_sessions(id INTEGER PRIMARY KEY, project TEXT, content_session_id TEXT, memory_session_id TEXT);
+        CREATE TABLE tool_uses(id INTEGER PRIMARY KEY, project TEXT, session_db_id INTEGER, memory_session_id TEXT, content_session_id TEXT, cwd TEXT);
+        INSERT INTO sdk_sessions VALUES(1,'alpha','a-content','a-memory'),(2,'source','s-content','s-memory');
+        INSERT INTO tool_uses VALUES(1,'alpha',1,'a-memory','a-content','/repo/alpha'),(2,'source',1,'a-memory','a-content','/tmp/x/source'),
+          (3,'source',1,'a-memory','a-content','/tmp/x/source'),(4,'source',2,'s-memory','s-content','/work/source')`);
+      expect(inspectProjectDatabase(db, ['alpha']).sessionCaptureRecords).toEqual([{ table: 'tool_uses', project: 'source', count: 2, cwds: ['/tmp/x/source'] }]);
+      purgeProjectDatabase(db, ['alpha']);
+      expect(db.query('SELECT id FROM tool_uses').all()).toEqual([{ id: 4 }]);
+      expect(listProjectDatabaseInventory(db).map(row => row.project)).toEqual(['source']);
+    } finally { db.close(); }
+  });
+
+  it('rejects sessions with memory records belonging to an unselected project and changes nothing', () => {
+    for (const child of ['observations', 'session_summaries']) {
       const db = new Database(':memory:');
       try {
         db.exec(`CREATE TABLE sdk_sessions(id INTEGER PRIMARY KEY, project TEXT, content_session_id TEXT, memory_session_id TEXT);

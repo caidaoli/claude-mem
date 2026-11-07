@@ -32,13 +32,18 @@ export interface ProjectDatabaseSelection {
   retainedDeliverablePaths: string[];
   entityIds: string[];
   cloudEvidence: string[];
+  /** Raw per-call capture rows inside selected sessions whose cwd-derived label names another project. */
+  sessionCaptureRecords: Array<{ table: string; project: string; count: number; cwds: string[] }>;
   recordCount: number;
 }
 
 const quote = (name: string): string => `"${name.replaceAll('"', '""')}"`;
 const fold = (value: string): string => value.replace(/[A-Z]/g, char => char.toLowerCase());
+// tool_uses/advisor_calls take their project label from each call's cwd, so a
+// session that visits another directory owns rows labelled with that directory.
+const SESSION_CAPTURE_TABLES = new Set(['tool_uses', 'advisor_calls']);
 const CONTENT_TABLES = { observation: 'observations', summary: 'session_summaries', prompt: 'user_prompts', work_state: 'work_state_entries' } as const;
-const METADATA_COLUMNS = new Set(['id', 'project', 'content_session_id', 'memory_session_id', 'session_db_id', 'platform_source', 'cwd', 'origin_device_id', 'origin_local_id', 'sync_rev', 'synced_at', 'agent_id', 'tool_use_id', 'bucket_path', 'source_path', 'event_key', 'attachment_id', 'directory', 'observation_id', 'duplicate_of_id', 'row_id', 'origin', 'upload_state', 'upload_attempts', 'kind', 'entity_id', 'queue_key', 'lane', 'job_id', 'k', 'key', 'session_id', 'list_name']);
+const METADATA_COLUMNS = new Set(['id', 'project', 'content_session_id', 'memory_session_id', 'session_db_id', 'platform_source', 'cwd', 'origin_device_id', 'origin_local_id', 'sync_rev', 'synced_at', 'agent_id', 'tool_use_id', 'bucket_path', 'source_path', 'event_key', 'attachment_id', 'directory', 'observation_id', 'duplicate_of_id', 'row_id', 'origin', 'upload_state', 'upload_attempts', 'kind', 'entity_id', 'queue_key', 'lane', 'job_id', 'k', 'key', 'session_id', 'list_name', 'through_rev']);
 const BODY_COLUMNS: Record<string, string[]> = { sync_content_outbox: ['body'], sync_outbox: ['body', 'canonical_body'], sync_dead_letter: ['raw_body'], sync_pull_quarantine: ['raw_body'], sync_recovery_jobs: ['scope_json'], sync_conflict_repairs: ['evidence'] };
 
 function schema(db: Database): Schema {
@@ -148,13 +153,21 @@ function planDeletion(db: Database, projects: string[]) {
   const memoryIds = new Set(sessions.map(row => row.memory_session_id).filter(Boolean));
   const related = (row: Row) => sessionIds.has(row.session_db_id) || memoryIds.has(row.memory_session_id)
     || (row.session_db_id == null && contentIds.has(row.content_session_id));
+  const sessionCapture = new Map<string, { table: string; project: string; count: number; cwds: Set<string> }>();
   for (const table of ['observations', 'session_summaries', 'tool_uses', 'advisor_calls', 'user_prompts']) {
     const found = projectRows.get(table) ?? [];
     const seen = new Set(found.map(row => row.__rowid));
     for (const row of iterateRows(table)) {
       if (!related(row)) continue;
       if (tables.get(table)?.has('project') && row.project && !matchesProject(row.project)) {
-        throw new Error(`Session records are shared with project "${row.project}"; select all related projects together.`);
+        if (!SESSION_CAPTURE_TABLES.has(table)) {
+          throw new Error(`Session records are shared with project "${row.project}"; select all related projects together.`);
+        }
+        const key = JSON.stringify([table, row.project]);
+        const entry = sessionCapture.get(key) ?? { table, project: row.project, count: 0, cwds: new Set<string>() };
+        entry.count += 1;
+        if (row.cwd) entry.cwds.add(row.cwd);
+        sessionCapture.set(key, entry);
       }
       add(table, row);
       if (!seen.has(row.__rowid)) found.push(row);
@@ -281,6 +294,17 @@ function planDeletion(db: Database, projects: string[]) {
   if (deletions.get('media_cloud_deletions')?.size) cloudEvidence.add('media_cloud_deletions: pending cloud media deletion');
   const nativeIds = new Map<string, Set<string>>();
   const retainedOrigins = new Set<string>();
+  // The v47 launch baseline stamped synced_at on existing native rows without
+  // uploading them. Like SyncApply.handleEpoch, an unedited baseline revision is
+  // not cloud history unless an explicit recovery job selected it for upload.
+  const launchBaseline = new Map(rows('sync_launch_exclusions').map(row => [`${row.kind}:${row.origin_local_id}`, String(row.through_rev)]));
+  for (const row of rows('sync_recovery_items')) launchBaseline.delete(`${row.kind}:${row.origin_local_id}`);
+  const launchBaselineOnly = (kind: string, row: Row) => {
+    const through = launchBaseline.get(`${kind}:${row.id}`);
+    const rev = row.sync_rev == null ? null : String(row.sync_rev);
+    return !row.origin_device_id && through !== undefined && rev !== null
+      && (rev.length < through.length || (rev.length === through.length && rev <= through));
+  };
   for (const [kind, table] of Object.entries(CONTENT_TABLES)) {
     const targetRows = projectRows.get(table) ?? [];
     nativeIds.set(kind, new Set(targetRows.filter(row => !row.origin_device_id).map(row => String(row.id))));
@@ -293,7 +317,7 @@ function planDeletion(db: Database, projects: string[]) {
         entityIds.add(stableDocumentId(kind as keyof typeof CONTENT_TABLES, row.origin_device_id, String(row.origin_local_id)));
         cloudEvidence.add(`${table}: replicated records`);
       }
-      if (row.synced_at != null && row.synced_at >= 0) cloudEvidence.add(`${table}: synchronized records`);
+      if (row.synced_at != null && row.synced_at >= 0 && !launchBaselineOnly(kind, row)) cloudEvidence.add(`${table}: synchronized records`);
     }
   }
   const matchesBody = (body: Row | null): boolean => {
@@ -343,7 +367,9 @@ function planDeletion(db: Database, projects: string[]) {
     attachmentIds, retainedAttachmentIds: [...retainedAttachments], mediaDirectories: [...mediaDirectories],
     deliverables: deliverables.map(row => ({ project: row.project, bucket_path: row.bucket_path ?? '', source_path: row.source_path ?? '', content_session_id: row.content_session_id ?? '', platform_source: row.platform_source ?? 'claude' })),
     retainedDeliverablePaths: rows('deliverables').filter(row => !matchesProject(row.project)).map(row => row.bucket_path).filter((path): path is string => typeof path === 'string'),
-    entityIds: [...entityIds], cloudEvidence: [...cloudEvidence], recordCount: [...deletions.values()].reduce((count, ids) => count + ids.size, 0) + sharedUpdates.size,
+    entityIds: [...entityIds], cloudEvidence: [...cloudEvidence],
+    sessionCaptureRecords: [...sessionCapture.values()].map(({ cwds, ...entry }) => ({ ...entry, cwds: [...cwds] })),
+    recordCount: [...deletions.values()].reduce((count, ids) => count + ids.size, 0) + sharedUpdates.size,
   };
   return { selection, deletions, sharedUpdates };
 }

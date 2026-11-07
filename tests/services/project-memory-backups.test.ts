@@ -91,6 +91,22 @@ describe('project deletion backups and preflight', () => {
     db.close();
   });
 
+  it('does not treat unedited v47 launch-baseline rows as uploaded cloud history', () => {
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE observations(id INTEGER PRIMARY KEY, project TEXT, synced_at INTEGER, sync_rev INTEGER, origin_device_id TEXT, origin_local_id TEXT);
+      CREATE TABLE sync_launch_exclusions(kind TEXT, origin_local_id TEXT, through_rev TEXT, PRIMARY KEY(kind, origin_local_id));
+      CREATE TABLE sync_recovery_items(job_id TEXT, kind TEXT, origin_local_id TEXT, entity_id TEXT);
+      INSERT INTO observations VALUES(1,'alpha',123,9,NULL,NULL),(2,'beta',123,10,NULL,NULL),(3,'gamma',123,9,NULL,NULL);
+      INSERT INTO sync_launch_exclusions VALUES('observation','1','9'),('observation','2','9'),('observation','3','9');
+      INSERT INTO sync_recovery_items VALUES('job','observation','3','entity-3')`);
+    try {
+      expect(inspectProjectDatabase(db, ['alpha']).cloudEvidence).toEqual([]);
+      assertCloudErasureAvailable(directory, [inspectProjectDatabase(db, ['alpha'])]);
+      expect(inspectProjectDatabase(db, ['beta']).cloudEvidence).toEqual(['observations: synchronized records']);
+      expect(inspectProjectDatabase(db, ['gamma']).cloudEvidence).toEqual(['observations: synchronized records']);
+    } finally { db.close(); }
+  });
+
   it('recognizes nested cloud configuration and a live worker before any deletion', () => {
     writeFileSync(join(directory, 'settings.json'), JSON.stringify({ env: { CLAUDE_MEM_CLOUD_SYNC_HUB_URL: 'https://example.invalid' } }));
     expect(() => assertCloudErasureAvailable(directory, [])).toThrow('Complete cloud erasure');

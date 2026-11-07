@@ -57,9 +57,13 @@ Cleanup covers:
   Some log entries contain unlabelled source text, so reliable per-project log
   removal is impossible. Confirmation explicitly includes logs of other projects.
 
-Foreign-key relationships are checked before deletion. If a selected session has
-records belonging to another project, the command refuses and names that project;
-select the related projects together. Files outside the managed directories,
+Foreign-key relationships are checked before deletion. Tool and advisor records
+take their project label from each call's working directory, so a session that
+visits `/tmp/x/source` owns records labelled `source`; those records are listed in
+the preview and deleted with their session, while `source` records outside the
+selected sessions remain. If a selected session has observations or summaries
+belonging to another project, the command refuses and names that project; select
+the related projects together. Files outside the managed directories,
 symlinks, corrupt/unattributable records, and incomplete restore sidecars cause an
 explicit failure rather than guessing ownership.
 
@@ -83,7 +87,9 @@ backup retention also cannot be verified locally.
 
 Accordingly, this tool refuses **before project deletion** when cloud sync is
 configured, selected records contain synchronization evidence, or Chroma is
-configured as remote. It does not silently downgrade the operation to local-only
+configured as remote. The v47 launch baseline stamped `synced_at` on existing
+local rows without uploading them; an unedited baseline row that no recovery job
+selected is not treated as cloud history. It does not silently downgrade the operation to local-only
 cleanup, upload unrelated pending records, clear replication cursors, or claim
 that a tombstone erased historical copies. Server-side project erasure support
 is still required to satisfy an erasure request spanning cloud history/backups.
