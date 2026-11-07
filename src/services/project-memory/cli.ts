@@ -2,6 +2,8 @@ import * as p from '@clack/prompts';
 import pc from 'picocolors';
 import { OBSERVER_SESSIONS_PROJECT, resolveDataDir } from '../../shared/paths.js';
 import { holdSpawnLock } from '../../shared/worker-spawn-gate.js';
+import { getWorkerPort } from '../../shared/worker-utils.js';
+import { shutdownWorkerAndWait } from '../install/shutdown-helper.js';
 import { readJsonFileWithBom, writeJsonFileAtomic } from '../../shared/atomic-json.js';
 import { join, sep } from 'node:path';
 import { existsSync, lstatSync, unlinkSync } from 'node:fs';
@@ -129,6 +131,7 @@ export async function runDeleteProjectCommand(
   deps: {
     interaction?: DeleteProjectInteraction;
     store?: SessionStore;
+    stopWorker?: typeof shutdownWorkerAndWait;
   } = {},
 ): Promise<number> {
   if (!deps.interaction && process.stdin.isTTY !== true) {
@@ -155,7 +158,14 @@ export async function runDeleteProjectCommand(
       if (readJsonFileWithBom<{ pid: number }>(join(dataDir, 'spawn.lock')).pid !== process.pid) {
         throw new Error('Could not hold the worker spawn lock for project deletion.');
       }
+      const port = getWorkerPort({ readOnly: true });
+      interaction.info('Stopping claude-mem before project deletion…');
+      const stopped = await (deps.stopWorker ?? shutdownWorkerAndWait)(port);
+      if (!stopped.stopped) {
+        throw new Error(`Could not stop claude-mem on port ${port} (${stopped.blocker.kind}). Close active agent sessions or stop its service manager, then rerun.`);
+      }
       assertProjectDeletionOffline(dataDir);
+      interaction.info('Worker stopped. Checking local databases and backups…');
       if (existsSync(pendingPath)) {
         if (lstatSync(pendingPath).isSymbolicLink()) throw new Error('Refusing a symlinked project deletion receipt.');
         const pending = readJsonFileWithBom<{ projects: unknown }>(pendingPath);
@@ -166,6 +176,7 @@ export async function runDeleteProjectCommand(
       }
       databases = openProjectDatabases(dataDir);
       assertCloudErasureAvailable(dataDir, []);
+      interaction.info('Checking local vector index; preparing Chroma dependencies may take a few minutes if historical data needs inspection…');
       vectors = await prepareVectorPurge({ dataDir });
     }
 

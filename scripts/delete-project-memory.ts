@@ -11,7 +11,7 @@ Usage:
   node scripts/delete-project-memory.cjs
 
 Behavior:
-  1. Requires the worker and agent sessions to be stopped
+  1. Automatically stops the local worker and verifies it is offline
   2. Lists projects in current data, backups, caches and the vector index
   3. Previews database, file and backup cleanup and asks for confirmation
   4. Clears associated tools, work state, deliverables, media and shared diagnostic logs

@@ -6,22 +6,30 @@ source checkout alone does not remove this data.
 
 ## Run
 
-Close agent sessions that write to claude-mem, then stop the worker:
+Run the deletion command:
 
 ```bash
-npm run worker:stop
 node scripts/delete-project-memory.cjs
 ```
 
 Alternatively, use `bun scripts/delete-project-memory.ts`. The tool requires an
-interactive terminal. Select projects, review the scope, and confirm. A held
-worker spawn lock prevents ordinary hooks from starting a worker during cleanup.
-The command leaves the worker stopped.
+interactive terminal. The command holds a worker spawn lock, automatically stops
+the local worker, and verifies it is offline before listing projects. Select
+projects, review the scope, and confirm. The lock prevents ordinary hooks from
+starting a worker during cleanup; avoid agent activity until cleanup finishes.
+If shutdown fails or another local service remains active, the command exits
+before deleting project data. It leaves the worker stopped, including on cancellation.
 
-For a custom data directory, use the same setting for both commands:
+An existing vector index is checked even when vector search is disabled, because
+that setting does not erase historical data. A read-only SQLite check skips
+Chroma startup when the index contains no document, metadata or queued records
+and no vector segment files. Otherwise, inspecting the index may require Chroma
+dependency preparation, which can take a few minutes. The terminal reports this
+separately from worker shutdown.
+
+For a custom data directory:
 
 ```bash
-CLAUDE_MEM_DATA_DIR=/path/to/.claude-mem npm run worker:stop
 CLAUDE_MEM_DATA_DIR=/path/to/.claude-mem node scripts/delete-project-memory.cjs
 ```
 

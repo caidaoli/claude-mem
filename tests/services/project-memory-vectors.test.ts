@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:te
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Database } from 'bun:sqlite';
 import { paths } from '../../src/shared/paths.js';
 import { SettingsDefaultsManager } from '../../src/shared/SettingsDefaultsManager.js';
 import { ChromaMcpManager } from '../../src/services/sync/ChromaMcpManager.js';
@@ -51,7 +52,12 @@ const fakeManager = {
 beforeEach(() => {
   dataDir = mkdtempSync(join(tmpdir(), 'project-memory-vectors-'));
   mkdirSync(join(dataDir, 'chroma'));
-  writeFileSync(join(dataDir, 'chroma', 'chroma.sqlite3'), 'mock Chroma index');
+  const db = new Database(join(dataDir, 'chroma', 'chroma.sqlite3'));
+  for (const table of ['embeddings', 'embedding_metadata', 'embedding_fulltext_search', 'embeddings_queue', 'embedding_metadata_array']) {
+    db.exec(`CREATE TABLE "${table}" (id INTEGER PRIMARY KEY)`);
+  }
+  db.exec('INSERT INTO embeddings VALUES (1)');
+  db.close();
   calls = [];
   corpus = new Map();
   getResponse = undefined;
@@ -87,6 +93,52 @@ async function listProjects(): Promise<string[]> {
 }
 
 describe('project vector deletion', () => {
+  it('skips a verified empty index without starting Chroma when vector search is disabled', async () => {
+    process.env.CLAUDE_MEM_CHROMA_ENABLED = 'false';
+    const db = new Database(join(dataDir, 'chroma', 'chroma.sqlite3'));
+    db.exec('DELETE FROM embeddings');
+    db.close();
+    expect(await prepareVectorPurge(options())).toBeNull();
+    expect(factorySpy).not.toHaveBeenCalled();
+  });
+
+  it.each(['embedding_metadata', 'embedding_fulltext_search', 'embeddings_queue', 'embedding_metadata_array'])(
+    'still inspects historical %s data when vector search is disabled', async table => {
+      process.env.CLAUDE_MEM_CHROMA_ENABLED = 'false';
+      const db = new Database(join(dataDir, 'chroma', 'chroma.sqlite3'));
+      db.exec(`DELETE FROM embeddings; INSERT INTO "${table}" VALUES (1)`);
+      db.close();
+      corpus.set('cm__history', [{ id: 'old', project: 'historical-project' }]);
+      expect(await listProjects()).toEqual(['historical-project']);
+    },
+  );
+
+  it('does not mistake leftover vector segment files for an empty index', async () => {
+    const db = new Database(join(dataDir, 'chroma', 'chroma.sqlite3'));
+    db.exec('DELETE FROM embeddings');
+    db.close();
+    mkdirSync(join(dataDir, 'chroma', 'old-vector-segment'));
+    corpus.set('cm__history', [{ id: 'old', project: 'historical-project' }]);
+    expect(await listProjects()).toEqual(['historical-project']);
+  });
+
+  it('leaves unfamiliar schemas to Chroma instead of claiming they are empty', async () => {
+    const db = new Database(join(dataDir, 'chroma', 'chroma.sqlite3'));
+    db.exec('DELETE FROM embeddings; DROP TABLE embeddings_queue');
+    db.close();
+    corpus.set('cm__history', [{ id: 'old', project: 'historical-project' }]);
+    expect(await listProjects()).toEqual(['historical-project']);
+  });
+
+  it('rejects a symlinked SQLite index before reading or starting Chroma', async () => {
+    const index = join(dataDir, 'chroma', 'chroma.sqlite3');
+    rmSync(index);
+    writeFileSync(join(dataDir, 'elsewhere.sqlite3'), 'outside');
+    symlinkSync(join(dataDir, 'elsewhere.sqlite3'), index);
+    await expect(prepareVectorPurge(options())).rejects.toThrow('not a regular file');
+    expect(factorySpy).not.toHaveBeenCalled();
+  });
+
   it('lists projects from the shared and historical collections without a SQLite row', async () => {
     corpus.set('cm__claude-mem', [{ id: 'orphan', project: 'deleted-core-project' }]);
     corpus.set('cm__historical', [{ id: 'old', project: 'history-only-project' }]);

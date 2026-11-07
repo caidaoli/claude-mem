@@ -1,5 +1,6 @@
 import { lstatSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { Database } from 'bun:sqlite';
 import { paths } from '../../shared/paths.js';
 import { ChromaMcpManager } from '../sync/ChromaMcpManager.js';
 
@@ -83,6 +84,26 @@ async function scanCollection(manager: ChromaMcpManager, collection: string): Pr
   }
 }
 
+function isEmptyLocalIndex(chromaDir: string): boolean {
+  const entries = readdirSync(chromaDir);
+  // Vector segment files can retain data even when SQLite has no live rows.
+  if (!entries.includes('chroma.sqlite3') || entries.some(name => !/^chroma\.sqlite3(?:-wal|-shm|-journal)?$/.test(name))) return false;
+  for (const name of entries) {
+    if (!lstatSync(join(chromaDir, name)).isFile()) throw new Error(`Chroma index is not a regular file: ${join(chromaDir, name)}`);
+  }
+  const db = new Database(join(chromaDir, 'chroma.sqlite3'), { readonly: true });
+  try {
+    const tables = new Set((db.query("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map(row => row.name));
+    const documentTables = ['embeddings', 'embedding_metadata', 'embedding_fulltext_search', 'embeddings_queue'];
+    // An unfamiliar schema must be inspected by Chroma itself.
+    if (documentTables.some(table => !tables.has(table))) return false;
+    if (tables.has('embedding_metadata_array')) documentTables.push('embedding_metadata_array');
+    return documentTables.every(table => db.query(`SELECT 1 FROM "${table}" LIMIT 1`).get() === null);
+  } finally {
+    db.close();
+  }
+}
+
 /** The caller must stop the local worker and reject remote Chroma before opening this session. */
 export async function prepareVectorPurge(options: VectorPurgeOptions): Promise<PreparedVectorPurge | null> {
   const chromaDir = join(options.dataDir, 'chroma');
@@ -98,6 +119,7 @@ export async function prepareVectorPurge(options: VectorPurgeOptions): Promise<P
   if (resolve(chromaDir) !== resolve(paths.chroma())) {
     throw new Error('Chroma data directory differs from the active CLI data directory');
   }
+  if (isEmptyLocalIndex(chromaDir)) return null;
 
   const manager = ChromaMcpManager.getInstance();
   const inventory = new Map<string, VectorDocument[]>();

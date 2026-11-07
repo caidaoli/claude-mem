@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { existsSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openProjectDatabases, compactProjectDatabase } from '../../src/services/project-memory/backups.js';
 import { inspectProjectDatabase, listProjectDatabaseInventory, purgeProjectDatabase } from '../../src/services/project-memory/database.js';
 import { assertCloudErasureAvailable, assertProjectDeletionOffline } from '../../src/services/project-memory/preflight.js';
 import { runDeleteProjectCommand, type DeleteProjectInteraction } from '../../src/services/project-memory/cli.js';
+import { acquireSpawnLock } from '../../src/shared/worker-spawn-gate.js';
+import type { ShutdownResult } from '../../src/services/install/shutdown-helper.js';
+
+const alreadyStopped = async (): Promise<ShutdownResult> => ({ stopped: true, workerWasRunning: false });
 
 describe('project deletion backups and preflight', () => {
   let directory: string;
@@ -119,7 +123,7 @@ describe('project deletion backups and preflight', () => {
       async confirmDeletion() { return true; },
     };
     try {
-      const result = await runDeleteProjectCommand([], { interaction });
+      const result = await runDeleteProjectCommand([], { interaction, stopWorker: alreadyStopped });
       expect(messages.join('\n')).toContain('ALL shared claude-mem diagnostic logs');
       expect(result).toBe(0);
       expect(existsSync(cache)).toBe(false);
@@ -155,7 +159,7 @@ describe('project deletion backups and preflight', () => {
       async confirmDeletion() { return true; },
     };
     try {
-      expect(await runDeleteProjectCommand([], { interaction })).toBe(0);
+      expect(await runDeleteProjectCommand([], { interaction, stopWorker: alreadyStopped })).toBe(0);
       expect(existsSync(receipt)).toBe(false);
       const reopened = new Database(join(directory, 'claude-mem.db'));
       expect(reopened.query('SELECT fields FROM work_state_entries').all()).toEqual([{ fields: 'keep' }]);
@@ -164,5 +168,86 @@ describe('project deletion backups and preflight', () => {
       if (previous === undefined) delete process.env.CLAUDE_MEM_DATA_DIR;
       else process.env.CLAUDE_MEM_DATA_DIR = previous;
     }
+  });
+
+  describe('automatic worker shutdown', () => {
+    let previousDataDir: string | undefined;
+    let messages: string[];
+    let interaction: DeleteProjectInteraction;
+    let selected: boolean;
+    let confirmed: boolean;
+
+    beforeEach(() => {
+      previousDataDir = process.env.CLAUDE_MEM_DATA_DIR;
+      process.env.CLAUDE_MEM_DATA_DIR = directory;
+      snapshot(join(directory, 'claude-mem.db'));
+      writeFileSync(join(directory, 'settings.json'), JSON.stringify({ env: { CLAUDE_MEM_WORKER_PORT: '38888' } }));
+      messages = [];
+      selected = false;
+      confirmed = false;
+      const output = (message: string) => { messages.push(message); };
+      interaction = {
+        intro: output, info: output, warn: output, success: output, cancel: output, outro: output,
+        async selectProjects() { selected = true; return ['alpha']; },
+        async confirmDeletion() { confirmed = true; return false; },
+      };
+    });
+
+    afterEach(() => {
+      if (previousDataDir === undefined) delete process.env.CLAUDE_MEM_DATA_DIR;
+      else process.env.CLAUDE_MEM_DATA_DIR = previousDataDir;
+    });
+
+    function expectDataIntact() {
+      const db = new Database(join(directory, 'claude-mem.db'), { readonly: true });
+      try { expect(listProjectDatabaseInventory(db).map(row => row.project)).toEqual(['alpha', 'beta']); }
+      finally { db.close(); }
+      expect(existsSync(join(directory, 'spawn.lock'))).toBe(false);
+      expect(existsSync(join(directory, 'project-delete-pending.json'))).toBe(false);
+    }
+
+    it('stops the configured worker while blocking respawn and still requires deletion confirmation', async () => {
+      const pidPath = join(directory, 'worker.pid');
+      writeFileSync(pidPath, JSON.stringify({ pid: process.pid }));
+      let stopped = false;
+      const result = await runDeleteProjectCommand([], {
+        interaction,
+        async stopWorker(port) {
+          expect(port).toBe(38888);
+          expect(acquireSpawnLock()).toBe(false);
+          expect(selected).toBe(false);
+          unlinkSync(pidPath);
+          stopped = true;
+          return { stopped: true, workerWasRunning: true };
+        },
+      });
+      expect(result).toBe(0);
+      expect(stopped).toBe(true);
+      expect(confirmed).toBe(true);
+      expectDataIntact();
+    });
+
+    it.each(['worker-still-running', 'port-rebound', 'port-held-by-other-process'] as const)(
+      'aborts without deletion when shutdown reports %s', async (kind) => {
+        const result = await runDeleteProjectCommand([], {
+          interaction,
+          async stopWorker() {
+            return { stopped: false, workerWasRunning: true, blocker: { kind, pid: null, ownerPid: null } };
+          },
+        });
+        expect(result).toBe(1);
+        expect(selected).toBe(false);
+        expect(messages.join('\n')).toContain(kind);
+        expectDataIntact();
+      },
+    );
+
+    it('verifies local processes are gone even when shutdown reports success', async () => {
+      writeFileSync(join(directory, '.server-beta.pid'), JSON.stringify({ pid: process.pid }));
+      expect(await runDeleteProjectCommand([], { interaction, stopWorker: alreadyStopped })).toBe(1);
+      expect(selected).toBe(false);
+      expect(messages.join('\n')).toContain('Stop claude-mem');
+      expectDataIntact();
+    });
   });
 });
