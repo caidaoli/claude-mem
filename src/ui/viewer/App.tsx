@@ -10,7 +10,7 @@ import { CleanupModal } from './components/CleanupModal';
 import { WelcomeCard, getStoredWelcomeDismissed, setStoredWelcomeDismissed } from './components/WelcomeCard';
 import { useSSE, type MemoryChange } from './hooks/useSSE';
 import { useSettings } from './hooks/useSettings';
-import { usePagination } from './hooks/usePagination';
+import { PageRejectedError, usePagination } from './hooks/usePagination';
 import { useSessionCatalog } from './hooks/useSessionCatalog';
 import { useTheme } from './hooks/useTheme';
 import { useI18n } from './i18n';
@@ -66,6 +66,8 @@ export function App() {
   const [paginatedSummaries, setPaginatedSummaries] = useState<Summary[]>([]);
   const [paginatedPrompts, setPaginatedPrompts] = useState<UserPrompt[]>([]);
   const [feedLoadError, setFeedLoadError] = useState<string | null>(null);
+  // The last feed error the server gave as a refusal (4xx): retrying repeats it.
+  const rejectedFeedErrorRef = useRef<string | null>(null);
   const [showLatestRefresh, setShowLatestRefresh] = useState(false);
   const [feedRefreshNotice, setFeedRefreshNotice] = useState<string | null>(null);
   const handledDeletionsRef = useRef(new Set<string>());
@@ -369,7 +371,9 @@ export function App() {
     } catch (error) {
       console.error('Failed to load more data:', error);
       if (isCurrentVisit()) {
-        setFeedLoadError(error instanceof Error ? error.message : en.feed.loadFailed);
+        const message = error instanceof Error ? error.message : en.feed.loadFailed;
+        if (error instanceof PageRejectedError) rejectedFeedErrorRef.current = message;
+        setFeedLoadError(message);
       }
     }
   }, [feedVersion, isConnected, connectionWaitExpired, pagination.observations, pagination.summaries, pagination.prompts]);
@@ -468,6 +472,10 @@ export function App() {
   const isLoading = (!initialReadStartedRef.current && !isConnected && !connectionWaitExpired)
     || pagination.observations.isLoading || pagination.summaries.isLoading || pagination.prompts.isLoading;
   const hasMore = pagination.observations.hasMore || pagination.summaries.hasMore || pagination.prompts.hasMore;
+  const feedOffsetCapReachedAt = hasMore ? null : pagination.observations.offsetCapReachedAt
+    ?? pagination.summaries.offsetCapReachedAt ?? pagination.prompts.offsetCapReachedAt;
+  // Retry still helps when a sibling list has more, even if one list was refused.
+  const feedCanRetry = hasMore || feedLoadError !== rejectedFeedErrorRef.current;
   const activeTab: ViewTab = route.view === 'timeline' ? 'timeline' : 'sessions';
   const tabs = (
     <>
@@ -505,6 +513,8 @@ export function App() {
         isLoading={catalog.isLoading}
         hasMore={catalog.hasMore}
         loadError={catalog.loadError}
+        canRetry={!catalog.loadErrorIsFinal}
+        offsetCapReachedAt={catalog.offsetCapReachedAt}
         onOpen={session => navigate(sessionHash(session))}
         onDelete={handleDeleteSession}
         onLoadMore={catalog.loadMore}
@@ -522,6 +532,8 @@ export function App() {
         isLoading={isLoading}
         hasMore={hasMore}
         loadError={feedLoadError}
+        canRetry={feedCanRetry}
+        offsetCapReachedAt={feedOffsetCapReachedAt}
         onLoadMore={handleLoadMore}
         onDeleted={removeDeletedItem}
         onBack={() => navigate(sessionsHash())}
@@ -537,6 +549,8 @@ export function App() {
         isLoading={isLoading}
         hasMore={hasMore}
         loadError={feedLoadError}
+        canRetry={feedCanRetry}
+        offsetCapReachedAt={feedOffsetCapReachedAt}
       />
     );
   }

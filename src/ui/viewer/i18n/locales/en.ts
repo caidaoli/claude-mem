@@ -64,6 +64,7 @@ export const en = {
     emptyHint: 'Observations appear here as you work. If a filter is selected, try another project or category.',
     loadingMore: 'Loading more...',
     noMoreItems: 'No more items to load',
+    offsetCapReached: 'This list stops at the newest {count} items. Filter by project to see older ones.',
     retry: 'Retry',
   },
 

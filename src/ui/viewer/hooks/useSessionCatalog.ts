@@ -13,6 +13,7 @@ import {
   type SessionRef,
 } from '../utils/sessions';
 import type { LiveSessionItem } from './useSSE';
+import { offsetCapOf, PageRejectedError, rejectedPageMessage } from './usePagination';
 
 /** Sessions per catalog page; older pages load as the list scrolls. */
 export const SESSION_CATALOG_PAGE_SIZE = 100;
@@ -28,6 +29,10 @@ export function useSessionCatalog() {
   const [isLoading, setIsLoading] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // The server refused the request outright (a 4xx), so Retry would repeat it.
+  const [loadErrorIsFinal, setLoadErrorIsFinal] = useState(false);
+  // Set when the server stopped the catalog at its deepest allowed offset.
+  const [offsetCapReachedAt, setOffsetCapReachedAt] = useState<number | null>(null);
   const requestSeqRef = useRef(0);
   const inFlightRef = useRef(false);
   const projectRef = useRef('');
@@ -69,6 +74,7 @@ export function useSessionCatalog() {
     inFlightRef.current = true;
     setIsLoading(true);
     setLoadError(null);
+    setLoadErrorIsFinal(false);
     setRefreshFailed(false);
     const params = new URLSearchParams({ offset: String(offset), limit: String(SESSION_CATALOG_PAGE_SIZE) });
     if (project) params.append('project', project);
@@ -76,18 +82,25 @@ export function useSessionCatalog() {
       for (;;) {
         let sessions: SessionCatalogEntry[] = [];
         let hasMore = false;
+        let capReachedAt: number | null = null;
         let pageOffset = offset;
         for (;;) {
           if (++pagesRead > pageBudget) throw new Error(en.sessions.historyChanged);
           params.set('offset', String(pageOffset));
           const response = await fetch(`${API_ENDPOINTS.SESSIONS}?${params}`, { cache: 'no-store', signal: controller.signal });
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const page = await response.json() as { sessions: SessionCatalogEntry[]; hasMore?: boolean };
+          if (!response.ok) {
+            const rejected = await rejectedPageMessage(response);
+            if (requestSeq !== requestSeqRef.current) return;
+            if (rejected !== null) throw new PageRejectedError(rejected);
+            throw new Error(`HTTP ${response.status}`);
+          }
+          const page = await response.json() as { sessions: SessionCatalogEntry[]; hasMore?: boolean; offsetCapReached?: unknown; maxOffset?: unknown };
           if (requestSeq !== requestSeqRef.current) return;
           if (!Array.isArray(page.sessions)) throw new Error(en.sessions.invalidPage);
           const pageStart = sessions.length;
           sessions.push(...page.sessions);
           hasMore = page.hasMore === true;
+          capReachedAt = offsetCapOf(page);
           if (mode !== 'refresh') break;
           if (boundary) {
             const index = sessions.findIndex(row => sameSession(catalogEntryRef(row), catalogEntryRef(boundary)));
@@ -112,6 +125,7 @@ export function useSessionCatalog() {
         const pageAdvance = data.sessions.length - deletedFromPage;
         offsetRef.current = mode === 'append' ? offsetRef.current + pageAdvance : pageAdvance;
         setHasMore(data.hasMore === true);
+        setOffsetCapReachedAt(data.hasMore ? null : capReachedAt);
         setSessions(prev => mergeCatalogPage(prev, data.sessions, journal, mode === 'append' ? 'append' : 'replace'));
         if (mode === 'append' || (journal.decreased.size === 0 && journal.recreated.size === 0)) break;
         // Counts cannot identify deletion or recreation freshness. Confirm
@@ -128,6 +142,9 @@ export function useSessionCatalog() {
     } catch (error) {
       if (requestSeq === requestSeqRef.current) {
         failedModeRef.current = mode;
+        const final = error instanceof PageRejectedError;
+        setLoadErrorIsFinal(final);
+        if (final) setHasMore(false);
         setRefreshFailed(mode === 'refresh');
         setLoadError(error instanceof Error ? error.message : String(error));
       }
@@ -210,5 +227,5 @@ export function useSessionCatalog() {
     setSessions(prev => prev.filter(entry => !sameSession(catalogEntryRef(entry), session)));
   }, []);
 
-  return { sessions, isLoading, hasMore, loadError, refreshFailed, refresh, refreshLoaded, invalidate, loadMore, touch, noteItemRemoved, remove };
+  return { sessions, isLoading, hasMore, loadError, loadErrorIsFinal, offsetCapReachedAt, refreshFailed, refresh, refreshLoaded, invalidate, loadMore, touch, noteItemRemoved, remove };
 }

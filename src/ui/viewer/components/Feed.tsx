@@ -21,9 +21,13 @@ interface FeedProps {
   isLoading: boolean;
   hasMore: boolean;
   loadError?: string | null;
+  /** False when the server refused the request outright, so Retry would only repeat it. */
+  canRetry?: boolean;
+  /** The server's deepest allowed offset when it stopped this list there instead of running out. */
+  offsetCapReachedAt?: number | null;
 }
 
-export function Feed({ items, header, onLoadMore, onDeleted, isLoading, hasMore, loadError }: FeedProps) {
+export function Feed({ items, header, onLoadMore, onDeleted, isLoading, hasMore, loadError, canRetry = true, offsetCapReachedAt = null }: FeedProps) {
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const feedRef = useRef<HTMLDivElement>(null);
   const [observationModes, setObservationModes] = useState<Record<string, ObservationViewMode>>({});
@@ -105,7 +109,7 @@ export function Feed({ items, header, onLoadMore, onDeleted, isLoading, hasMore,
         {loadError && !isLoading && (
           <div role="alert" style={{ textAlign: 'center', padding: '20px' }}>
             <p>{translateViewerError(loadError, t)}</p>
-            <button onClick={onLoadMore}>{t.feed.retry}</button>
+            {canRetry && <button onClick={onLoadMore}>{t.feed.retry}</button>}
           </div>
         )}
         {hasMore && !isLoading && !loadError && (
@@ -113,7 +117,9 @@ export function Feed({ items, header, onLoadMore, onDeleted, isLoading, hasMore,
         )}
         {!hasMore && items.length > 0 && (
           <div style={{ textAlign: 'center', padding: '20px', color: 'var(--color-text-muted)', fontSize: '14px' }}>
-            {t.feed.noMoreItems}
+            {offsetCapReachedAt !== null
+              ? t.feed.offsetCapReached.replace('{count}', () => offsetCapReachedAt.toLocaleString())
+              : t.feed.noMoreItems}
           </div>
         )}
       </div>

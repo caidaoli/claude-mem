@@ -66,6 +66,7 @@ export const zhCN: TranslationKeys = {
     emptyHint: '工作时观察记录会显示在这里。如果选了筛选条件，可以换个项目或类别试试。',
     loadingMore: '加载更多...',
     noMoreItems: '没有更多项目了',
+    offsetCapReached: '此列表只显示最新的 {count} 条。按项目筛选可查看更早的内容。',
     retry: '重试',
   },
 
