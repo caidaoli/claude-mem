@@ -257,20 +257,20 @@ describe('Custom image input', () => {
     ['image input is off', { CLAUDE_MEM_CUSTOM_IMAGE_INPUT: 'false' }],
     ['media inference is off', { CLAUDE_MEM_MEDIA_INFERENCE_ENABLED: 'false' }],
   ] as const) {
-    it(`sends today's text-only request when ${name}`, async () => {
+    it(`sends today's text-only request and keeps an uninspected link when ${name}`, async () => {
       Object.assign(settings, overrides);
       await ingest('toolu_off', redPng);
       replies.push(reply('openai', JSON.stringify(observation('Viewport', ['event1_image1']))));
       await runTurn();
       expect(requests).toHaveLength(1);
       expect(requests[0].body.messages.every((turn: { content: unknown }) => typeof turn.content === 'string')).toBe(true);
-      expect(links()).toEqual([]);
+      expect(links()).toEqual([{ label: 'event1_image1', inspection: 'uninspected' }]);
       expect(rows('SELECT result_state FROM media_events')).toEqual([{ result_state: 'stored' }]);
     });
   }
 
   for (const [protocol, status] of [['openai', 400], ['openai', 413], ['gemini', 400], ['codex', 400]] as const) {
-    it(`${protocol}: a ${status} refusal of the image request resends the turn once text-only and claims no image was read`, async () => {
+    it(`${protocol}: a ${status} refusal of the image request resends the turn once text-only and keeps an uninspected link`, async () => {
       settings.CLAUDE_MEM_CUSTOM_PROTOCOL = protocol;
       await ingest('toolu_refused', redPng);
       replies.push(failure(status, 'Invalid content: image input is not supported for this model'));
@@ -283,7 +283,7 @@ describe('Custom image input', () => {
       const resend = turns(protocol, requests[1].body);
       expect(resend.parts).toHaveLength(1);
       expect(JSON.stringify(requests[1].body)).not.toContain('data:image');
-      expect(links()).toEqual([]);
+      expect(links()).toEqual([{ label: 'event1_image1', inspection: 'uninspected' }]);
       expect(rows('SELECT title FROM observations')).toEqual([{ title: 'Viewport' }]);
       expect(rows('SELECT result_state FROM media_events')).toEqual([{ result_state: 'stored' }]);
     });

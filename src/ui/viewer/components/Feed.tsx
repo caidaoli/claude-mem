@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
+import { translateViewerError } from '../../i18n/errors';
 import { FeedItem } from '../types';
 import type { DeletableItemType } from '../utils/feed-deletion';
 import { ObservationCard } from './ObservationCard';
@@ -103,7 +104,7 @@ export function Feed({ items, header, onLoadMore, onDeleted, isLoading, hasMore,
         )}
         {loadError && !isLoading && (
           <div role="alert" style={{ textAlign: 'center', padding: '20px' }}>
-            <p>{loadError}</p>
+            <p>{translateViewerError(loadError, t)}</p>
             <button onClick={onLoadMore}>{t.feed.retry}</button>
           </div>
         )}

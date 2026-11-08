@@ -7,7 +7,7 @@ import type { HistoryImportStatus, MemoryBranch } from '../setup-flow'
 import { PageHeading, ToolMark } from './shared'
 
 function CopyUrl({ toolName }: { toolName: string }) {
-  const [status, setStatus] = useState('')
+  const [status, setStatus] = useState<'' | 'URL copied.' | 'Select and copy the URL above.'>('')
   // Resolves false when the copy failed, so the button shows no check; the status line says what to do.
   const copy = async () => {
     try {

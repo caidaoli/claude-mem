@@ -2,6 +2,9 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useI18n } from '../i18n';
 
 type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
+type LogError = string | { key: 'fetchFailed' | 'clearFailed'; status: string }
+  | { key: 'unknownError' | 'clearTimedOut' | 'clearTimedOutUnrefreshed' };
+
 type LogComponent = 'HOOK' | 'WORKER' | 'SDK' | 'PARSER' | 'DB' | 'SYSTEM' | 'HTTP' | 'SESSION' | 'CHROMA' | 'OTHER';
 
 interface ParsedLogLine {
@@ -75,7 +78,7 @@ export function LogsDrawer({ isOpen, onClose }: LogsDrawerProps) {
   const { t } = useI18n();
   const [logs, setLogs] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<LogError | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [height, setHeight] = useState(350);
   const [isResizing, setIsResizing] = useState(false);
@@ -144,16 +147,17 @@ export function LogsDrawer({ isOpen, onClose }: LogsDrawerProps) {
     try {
       const response = await fetch('/api/logs');
       if (!response.ok) {
-        throw new Error(t.logs.fetchFailed.replace('{status}', () => response.statusText));
+        if (request === requestSeqRef.current) setError({ key: 'fetchFailed', status: response.statusText });
+        return;
       }
       const data = await response.json();
       if (request === requestSeqRef.current) setLogs(data.logs || '');
     } catch (err) {
-      if (request === requestSeqRef.current) setError(err instanceof Error ? err.message : t.logs.unknownError);
+      if (request === requestSeqRef.current) setError(err instanceof Error ? err.message : { key: 'unknownError' });
     } finally {
       if (request === requestSeqRef.current) setIsLoading(false);
     }
-  }, [checkIfAtBottom, t]);
+  }, [checkIfAtBottom]);
 
   useEffect(() => {
     scrollToBottom();
@@ -172,7 +176,8 @@ export function LogsDrawer({ isOpen, onClose }: LogsDrawerProps) {
     try {
       const response = await fetch('/api/logs/clear', { method: 'POST', signal: controller.signal });
       if (!response.ok) {
-        throw new Error(t.logs.clearFailed.replace('{status}', () => response.statusText));
+        if (request === requestSeqRef.current) setError({ key: 'clearFailed', status: response.statusText });
+        return;
       }
       if (request === requestSeqRef.current) setLogs('');
     } catch (err) {
@@ -188,17 +193,17 @@ export function LogsDrawer({ isOpen, onClose }: LogsDrawerProps) {
           const data = await response.json();
           if (request === requestSeqRef.current) {
             setLogs(data.logs || '');
-            setError(t.logs.clearTimedOut);
+            setError({ key: 'clearTimedOut' });
           }
         } catch {
           if (request === requestSeqRef.current) {
-            setError(t.logs.clearTimedOutUnrefreshed);
+            setError({ key: 'clearTimedOutUnrefreshed' });
           }
         } finally {
           clearTimeout(reconciliationTimeout);
         }
       } else if (request === requestSeqRef.current) {
-        setError(err instanceof Error ? err.message : t.logs.unknownError);
+        setError(err instanceof Error ? err.message : { key: 'unknownError' });
       }
     } finally {
       clearTimeout(timeout);
@@ -504,7 +509,8 @@ export function LogsDrawer({ isOpen, onClose }: LogsDrawerProps) {
 
       {error && (
         <div className="console-error">
-          ⚠ {error}
+          ⚠ {typeof error === 'string' ? error : 'status' in error
+            ? t.logs[error.key].replace('{status}', () => error.status) : t.logs[error.key]}
         </div>
       )}
 

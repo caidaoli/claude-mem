@@ -1,3 +1,4 @@
+import { displayTime } from '@/lib/display-time'
 // The area header above My Work when a focus area (or Other) is selected: the goal sentence, combined progress of the
 // reviewed requests in it, what shipped, the asks nothing is working on yet, the owner's words, and the area menu.
 // Rollup, Quotes and WhyItsHere moved here from the retired goals page unchanged.
@@ -88,7 +89,7 @@ export function Quotes({ quotes }: { quotes: Quote[] }) {
       <div className="space-y-2">
         {quotes.map((quote) => (
           <InlineCitationQuote key={quote.at + quote.quote} className="border-border text-foreground/80 not-italic">
-            “{quote.quote}” <time className="ml-1 text-xs whitespace-nowrap text-muted-foreground">{formatPromptTime(quote.at)}</time>
+            “{quote.quote}” <time className="ml-1 text-xs whitespace-nowrap text-muted-foreground">{displayTime(formatPromptTime(quote.at))}</time>
           </InlineCitationQuote>
         ))}
       </div>

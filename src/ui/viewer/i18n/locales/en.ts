@@ -12,6 +12,8 @@ export const en = {
     joinDiscord: 'Join our Discord community',
     showWelcome: 'Show welcome card',
     settings: 'Settings',
+    proTrialPitch: '{days} Day Free Trial — memory runs off-plan. Get up to {percent}% more usage from your plan',
+    teambrainPitch: 'TeamBrain: see who on your team is working on what, inside every session',
   },
 
   sync: {
@@ -176,6 +178,20 @@ export const en = {
     previewTitle: 'Saved context preview',
     previewDesc: 'Preview the saved configuration for the selected source and project.',
     errorLoadingPreview: 'Failed to load preview',
+    noProjectSelected: 'No project selected',
+    images: 'Images',
+    imagesDesc: "Screenshots and images from your agent's tools",
+    keepImages: 'Keep images',
+    keepImagesDesc: 'Keep the screenshots and images your agent reads or makes, so they show on your requests in My Work. Images stay on this computer until their event is deleted. With Cloud Sync on, they are also uploaded privately to your cmem.ai account. This switch never sends images to an AI model. Turning it off stops keeping new images; images already kept stay.',
+    endpointPresetLabels: {
+      minimax: 'MiniMax (global)',
+      'minimax-cn': 'MiniMax (China)',
+      ollama: 'Ollama (local)',
+      lmstudio: 'LM Studio (local)',
+      vllm: 'vLLM (self-hosted)',
+      custom: 'Custom OpenAI-compatible endpoint',
+    },
+    iflytekTokenPlanNote: 'Token Plan keys need Base URL https://maas-token-api.cn-huabei-1.xf-yun.com/v2; the default endpoint is pay-as-you-go and answers them with 403.',
     // Loading section
     loading: 'Loading',
     loadingDesc: 'How many observations to inject',

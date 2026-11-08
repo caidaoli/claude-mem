@@ -143,6 +143,7 @@ export interface Settings {
   // AI Provider Configuration
   CLAUDE_MEM_PROVIDER?: string;  // 'claude' | 'gemini' | 'openrouter' | 'codex' | 'openai-compatible' | 'custom'
   CLAUDE_MEM_OBSERVER_ENABLED?: string;
+  CLAUDE_MEM_MEDIA_CAPTURE_ENABLED?: string;
   CLAUDE_MEM_CLAUDE_AUTH_METHOD?: string;
   CLAUDE_MEM_CODEX_MODEL?: string;
   CLAUDE_MEM_GEMINI_API_KEY?: string;
@@ -167,6 +168,7 @@ export interface Settings {
   CLAUDE_MEM_QUOTA_FALLBACK_AUTH_METHOD?: string;
   CLAUDE_MEM_WORK_VIEW_COPY_PROVIDER?: string;
   CLAUDE_MEM_WORK_VIEW_COPY_MODEL?: string;
+  CLAUDE_MEM_WORK_VIEW_AGENT?: string;
 
   // Custom Provider Configuration
   CLAUDE_MEM_CUSTOM_API_URL?: string;

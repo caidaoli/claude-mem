@@ -5,7 +5,8 @@ import { TerminalPreview } from './TerminalPreview';
 import { useContextPreview } from '../hooks/useContextPreview';
 import { useBackupStatus } from '../hooks/useBackupStatus';
 import { useI18n } from '../i18n';
-import type { TranslationKeys } from '../i18n/locales/en';
+import { translateSettingsStatus } from '../../i18n/errors';
+import { getLocale } from '../../i18n/core';
 import { DEFAULT_SETTINGS } from '../constants/settings';
 import { isClaudeMemObserverBaseUrl } from '../utils/observer-endpoint';
 import { CLAUDE_AUTH_METHODS, DEFAULT_CLAUDE_AUTH_METHOD } from '../utils/claude-auth-method';
@@ -27,14 +28,6 @@ interface ContextSettingsModalProps {
 
 export function saveStatusClass(saveStatus: string): string {
   return saveStatus.includes('✗') ? 'error' : saveStatus.includes('✓') ? 'success' : '';
-}
-
-/** useSettings reports save progress as fixed English strings; show them in the UI language. */
-function localizeSaveStatus(saveStatus: string, t: TranslationKeys['settings']): string {
-  if (saveStatus === 'Saving...') return t.saving;
-  if (saveStatus === '✓ Saved') return t.saved;
-  const error = /^✗ Error: (.*)$/s.exec(saveStatus);
-  return error ? t.saveError.replace('{error}', () => error[1]) : saveStatus;
 }
 
 function CollapsibleSection({
@@ -154,7 +147,7 @@ function ToggleSwitch({
 
 function formatEpochMs(epochMs: number | null | undefined, never: string): string {
   if (typeof epochMs !== 'number' || !Number.isFinite(epochMs)) return never;
-  return new Date(epochMs).toLocaleString();
+  return new Date(epochMs).toLocaleString(getLocale());
 }
 
 /** One label/value line in the backup status readout (toggle-row styling). */
@@ -429,6 +422,22 @@ export function ContextSettingsModal({
                     onChange={() => toggleBoolean('CLAUDE_MEM_CONTEXT_SHOW_SAVINGS_AMOUNT')}
                   />
                 </div>
+              </div>
+            </CollapsibleSection>
+
+            {/* Images: open by default so the capture switch is in plain view */}
+            <CollapsibleSection
+              title={t.settings.images}
+              description={t.settings.imagesDesc}
+            >
+              <div className="toggle-group">
+                <ToggleSwitch
+                  id="media-capture-enabled"
+                  label={t.settings.keepImages}
+                  description={t.settings.keepImagesDesc}
+                  checked={formState.CLAUDE_MEM_MEDIA_CAPTURE_ENABLED === 'true'}
+                  onChange={(checked) => updateSetting('CLAUDE_MEM_MEDIA_CAPTURE_ENABLED', checked ? 'true' : 'false')}
+                />
               </div>
             </CollapsibleSection>
 
@@ -860,13 +869,13 @@ export function ContextSettingsModal({
                       onChange={(e) => updateSetting('CLAUDE_MEM_OPENAI_COMPAT_PRESET', e.target.value)}
                     >
                       {OPENAI_COMPAT_PRESET_OPTIONS.map(preset => (
-                        <option key={preset.id} value={preset.id}>{preset.label}</option>
+                        <option key={preset.id} value={preset.id}>{t.settings.endpointPresetLabels[preset.id as keyof typeof t.settings.endpointPresetLabels] ?? preset.label}</option>
                       ))}
                     </select>
                   </FormField>
                   {openAICompatPresetOption(formState.CLAUDE_MEM_OPENAI_COMPAT_PRESET).note && (
                     <span className="toggle-description">
-                      {openAICompatPresetOption(formState.CLAUDE_MEM_OPENAI_COMPAT_PRESET).note}
+                      {t.settings.iflytekTokenPlanNote}
                     </span>
                   )}
                   <FormField
@@ -1082,7 +1091,7 @@ export function ContextSettingsModal({
             ) : !isLoaded ? (
               <span>{t.settings.loadingSettings}</span>
             ) : (
-              saveStatus && <span className={saveStatusClass(saveStatus)}>{localizeSaveStatus(saveStatus, t.settings)}</span>
+              saveStatus && <span className={saveStatusClass(saveStatus)}>{translateSettingsStatus(saveStatus, t)}</span>
             )}
           </div>
           <button

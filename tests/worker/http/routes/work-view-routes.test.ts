@@ -129,6 +129,12 @@ describe('configuredRefreshAsk', () => {
       expect(ask).not.toBeNull();
       expect(await ask!('group these', {})).toBe('answer');
       expect(custom.asked).toEqual(['group these']);
+      for (const choice of ['off', 'claude-code', 'codex', 'gemini', 'all']) {
+        settings.CLAUDE_MEM_WORK_VIEW_AGENT = choice;
+        expect(configuredRefreshAsk(undefined, custom)).toBeNull();
+      }
+      settings.CLAUDE_MEM_WORK_VIEW_AGENT = '';
+      expect(configuredRefreshAsk(undefined, custom)).not.toBeNull();
       expect(configuredRefreshAsk(undefined, null)).toBeNull();
       settings.CLAUDE_MEM_PROVIDER = 'claude';
       expect(configuredRefreshAsk(undefined, custom)).toBeNull();

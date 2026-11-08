@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { SessionCatalogEntry } from '../types';
-import { useI18n } from '../i18n';
+import { en } from '../i18n/locales/en';
 import { API_ENDPOINTS } from '../constants/api';
 import {
   catalogEntryRef,
@@ -24,7 +24,6 @@ export const SESSION_CATALOG_PAGE_SIZE = 100;
  * every tab over the stream.
  */
 export function useSessionCatalog() {
-  const { t } = useI18n();
   const [sessions, setSessions] = useState<SessionCatalogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [hasMore, setHasMore] = useState(false);
@@ -79,13 +78,13 @@ export function useSessionCatalog() {
         let hasMore = false;
         let pageOffset = offset;
         for (;;) {
-          if (++pagesRead > pageBudget) throw new Error(t.sessions.historyChanged);
+          if (++pagesRead > pageBudget) throw new Error(en.sessions.historyChanged);
           params.set('offset', String(pageOffset));
           const response = await fetch(`${API_ENDPOINTS.SESSIONS}?${params}`, { cache: 'no-store', signal: controller.signal });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           const page = await response.json() as { sessions: SessionCatalogEntry[]; hasMore?: boolean };
           if (requestSeq !== requestSeqRef.current) return;
-          if (!Array.isArray(page.sessions)) throw new Error(t.sessions.invalidPage);
+          if (!Array.isArray(page.sessions)) throw new Error(en.sessions.invalidPage);
           const pageStart = sessions.length;
           sessions.push(...page.sessions);
           hasMore = page.hasMore === true;
@@ -141,7 +140,7 @@ export function useSessionCatalog() {
         setIsLoading(false);
       }
     }
-  }, [t.sessions]);
+  }, []);
 
   const refresh = useCallback((project: string) => fetchPage(project, 'replace'), [fetchPage]);
   const refreshLoaded = useCallback((project: string) => fetchPage(project, 'refresh'), [fetchPage]);

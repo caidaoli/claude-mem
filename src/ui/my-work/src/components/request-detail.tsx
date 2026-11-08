@@ -1,3 +1,4 @@
+import { displayTime } from '@/lib/display-time'
 import { useEffect, useRef, useState } from 'react'
 import { CheckIcon, ChevronDownIcon, FileTextIcon, Undo2Icon } from 'lucide-react'
 import { ChainOfThought, ChainOfThoughtContent, ChainOfThoughtHeader, ChainOfThoughtStep } from '@/components/ai-elements/chain-of-thought'
@@ -23,6 +24,8 @@ import { FocusChangeBar, useFocusChanges } from './focus-changes'
 import { OpenFollowUps } from './request-card'
 import { localizeRequest } from '@/live/localize-work-model'
 import { mergeRequestDetail, requestDetailKey } from '@/live/request-detail-state'
+import { ObsMediaStrip } from './observation-media/ObsMedia'
+import { requestImages } from './observation-media/request-images'
 
 const RECENT_RECORDS = 5
 
@@ -41,7 +44,7 @@ function Disclosure({ label, children }: { label: string; children: React.ReactN
     <Collapsible className="group/disclosure">
       <CollapsibleTrigger className="flex min-h-11 w-full items-center gap-2 text-left text-sm text-muted-foreground hover:text-foreground md:min-h-9">
         <ChevronDownIcon className="size-4 transition-transform group-data-[state=open]/disclosure:rotate-180 motion-reduce:transition-none" />
-        {label}
+        {t(label)}
       </CollapsibleTrigger>
       <CollapsibleContent className="pt-2">{children}</CollapsibleContent>
     </Collapsible>
@@ -56,12 +59,18 @@ function Records({ records }: { records: Request['granular'] }) {
           <div className="flex items-center gap-2">
             <QueueItemIndicator completed={record.kind === 'memory'} />
             <QueueItemContent className="text-xs">{record.text}</QueueItemContent>
-            <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{record.kind === 'memory' ? t('memory') : t('work')} · {record.at}</span>
+            <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{record.kind === 'memory' ? t("memory") : t("work")} · {displayTime(record.at)}</span>
           </div>
+          {record.media && <div className="mt-1.5 pl-6"><ObsMediaStrip media={record.media} title={record.text} /></div>}
         </QueueItem>
       ))}
     </QueueList>
   )
+}
+
+/** The drawer is a Radix modal whose Escape closes it; while the image viewer inside it is open, Escape closes only the viewer. */
+function keepDrawerOpenForGallery(event: KeyboardEvent) {
+  if (event.target instanceof Element && event.target.closest('.obs-media-gallery')) event.preventDefault()
 }
 
 type CheckNotice = { tone: 'saved' | 'problem'; message: string }
@@ -267,9 +276,10 @@ function LoadedRequestDetail({ request, onClose, onOpenFocus }: { request: Reque
   const recent = request.granular.slice(0, RECENT_RECORDS)
   const earlier = request.granular.slice(RECENT_RECORDS)
   const conversationCount = request.conversations.length || 1
+  const images = requestImages(request)
   return (
     <Sheet open onOpenChange={(open) => { if (!open) onClose() }}>
-      <SheetContent className="w-full gap-0 overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
+      <SheetContent onEscapeKeyDown={keepDrawerOpenForGallery} className="w-full gap-0 overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
         <Req ids={['R3.6', 'R3.2']}>
           <SheetHeader className="gap-3 border-b p-5 md:p-6">
             <div className="flex min-w-0 flex-wrap items-center gap-2 pr-10"><StateBadge state={request.state} /><AgentIcon agentId={request.agentId} withDevice /></div>
@@ -290,9 +300,11 @@ function LoadedRequestDetail({ request, onClose, onOpenFocus }: { request: Reque
               <FocusAreaChip focusAreaId={request.focusAreaId} onOpen={onOpenFocus} />
               {/* Sample fixtures change in memory; live requests save as my-focus rows. */}
               <MoveTo request={request} />
-              <span>{t('Asked by {name} · started {at}', { name: t(request.askedBy), at: t(request.startedAt) })} · {t(request.runningFor)} · {t(request.stage)}</span>
+              <span>{t('Asked by {name} · started {at}', { name: t(request.askedBy), at: displayTime(request.startedAt) })} · {t(request.runningFor)} · {t(request.stage)}</span>
             </div>
           </div>
+
+          {images && <ObsMediaStrip media={images} title={title} />}
 
           <Req ids={['R5.10', 'R5.12']}>
             <Section title={t('Deliverables')}>
@@ -356,12 +368,12 @@ function LoadedRequestDetail({ request, onClose, onOpenFocus }: { request: Reque
               ? t(conversationCount === 1 ? '{count} conversation, {sources} sources' : '{count} conversations, {sources} sources', { count: conversationCount, sources: request.evidence.length })
               : t(conversationCount === 1 ? '{count} conversation' : '{count} conversations', { count: conversationCount })}`}>
               <div className="space-y-2.5 pb-2">
-                {request.conversations.length === 0 && request.prompts.length === 0 && <p className="text-sm text-muted-foreground">{t('One conversation so far.')}</p>}
+                {request.conversations.length === 0 && request.prompts.length === 0 && <p className="text-sm text-muted-foreground">{t("One conversation so far.")}</p>}
                 {request.conversations.map((conversation, index) => (
-                  <p key={`${index}-${conversation.at}`} className="text-sm"><span className="text-muted-foreground">{t(conversation.tool)} · {t(conversation.at)}</span> — {conversation.title}</p>
+                  <p key={`${index}-${displayTime(conversation.at)}`} className="text-sm"><span className="text-muted-foreground">{conversation.tool} · {displayTime(conversation.at)}</span> — {conversation.title}</p>
                 ))}
                 {request.prompts.map((prompt, index) => (
-                  <blockquote key={`${index}-${prompt.at}`} className="border-l-2 pl-3 text-sm text-muted-foreground">“{prompt.quote}” <span className="text-[11px]">{t(prompt.at)}</span></blockquote>
+                  <blockquote key={`${index}-${displayTime(prompt.at)}`} className="border-l-2 pl-3 text-sm text-muted-foreground">“{prompt.quote}” <span className="text-[11px]">{displayTime(prompt.at)}</span></blockquote>
                 ))}
                 {request.evidence.map((source) => (
                   <ProductLink key={source.href === '#' ? source.title : source.href} href={source.href} className="flex min-h-9 items-center gap-2 text-xs text-muted-foreground"><FileTextIcon className="size-3.5" />{source.title}</ProductLink>

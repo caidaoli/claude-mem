@@ -8,6 +8,7 @@ import { DatabaseManager } from '../src/services/worker/DatabaseManager';
 import { SessionManager } from '../src/services/worker/SessionManager';
 import { ModeManager } from '../src/services/domain/ModeManager';
 import { SettingsDefaultsManager } from '../src/shared/SettingsDefaultsManager';
+import { sessionDbWithoutMedia } from './fixtures/worker/session-db-without-media.js';
 
 let rateLimitingEnabled = 'false';
 let queuedMessages: Array<Record<string, unknown>> = [];
@@ -75,7 +76,7 @@ describe('GeminiProvider', () => {
   let originalFetch: typeof global.fetch;
 
   let mockStoreObservation: any;
-  let mockStoreObservations: any; 
+  let mockStoreObservations: any;
   let mockStoreSummary: any;
   let mockMarkSessionCompleted: any;
   let mockSyncObservation: any;
@@ -135,7 +136,7 @@ describe('GeminiProvider', () => {
       storeSummary: mockStoreSummary,
       markSessionCompleted: mockMarkSessionCompleted,
       getSessionById: mock(() => ({ memory_session_id: 'mem-session-123' })), // Required by ResponseProcessor.ts for FK fix
-      ensureMemorySessionIdRegistered: mock(() => {}) 
+      db: sessionDbWithoutMedia(), ensureMemorySessionIdRegistered: mock(() => {})
     };
 
     const mockChromaSync = {

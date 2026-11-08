@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useI18n } from '../i18n';
 import type { ProjectCatalog, Settings } from '../types';
 
 interface UseContextPreviewResult {
@@ -26,6 +27,7 @@ function withDefaultSources(sources: string[]): string[] {
 }
 
 export function useContextPreview(settings: Settings): UseContextPreviewResult {
+  const { t } = useI18n();
   const [preview, setPreview] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -138,7 +140,7 @@ export function useContextPreview(settings: Settings): UseContextPreviewResult {
   }, [settings, refresh]);
 
   return {
-    preview,
+    preview: preview === 'No project selected' ? t.settings.noProjectSelected : preview,
     isLoading,
     error,
     projects,

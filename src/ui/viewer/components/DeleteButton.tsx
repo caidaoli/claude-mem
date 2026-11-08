@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { translateViewerError } from '../../i18n/errors';
 import { deleteFeedItem, type DeletableItemType } from '../utils/feed-deletion';
 import { useI18n } from '../i18n';
 
@@ -26,7 +27,7 @@ export function DeleteButton({ itemType, id, onDeleted }: DeleteButtonProps) {
     setIsDeleting(true);
     setFailure(null);
     try {
-      await deleteFeedItem(itemType, id, fetch, t.deleteFailure);
+      await deleteFeedItem(itemType, id);
       onDeleted(itemType, id);
     } catch (error) {
       setFailure(error instanceof Error ? error.message : String(error));
@@ -50,7 +51,7 @@ export function DeleteButton({ itemType, id, onDeleted }: DeleteButtonProps) {
           <line x1="14" y1="11" x2="14" y2="17"></line>
         </svg>
       </button>
-      {failure && <span className="card-delete-error" role="alert">{failure}</span>}
+      {failure && <span className="card-delete-error" role="alert">{translateViewerError(failure, t)}</span>}
     </>
   );
 }

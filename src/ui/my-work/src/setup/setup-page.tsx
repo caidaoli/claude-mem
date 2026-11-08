@@ -4,7 +4,8 @@
 import { CheckIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { CmemMark } from '@/components/brand'
-import { t } from '@/i18n'
+import { setLocale, t, useLocale, type Locale } from '@/i18n'
+import { uiMessage, renderUiMessage, type UiMessage } from '../../../ui-message'
 import { EMPTY_SETUP_DATA, localSetupSource, SETUP_TOOLS, type SetupData, type SetupSource } from './setup-data'
 import { choiceLocked, guardStep, initialFlowState, nextAfterSavings, progressItemFor, type MemoryBranch, type SetupFlowState, type SetupStep } from './setup-flow'
 import { CheckoutScreen } from './screens/checkout-screen'
@@ -38,7 +39,7 @@ function useSetupSource(): SetupSource | null {
 function ProgressBar({ step, branch, showCheckout }: { step: SetupStep; branch: MemoryBranch; showCheckout: boolean }) {
   const current = progressItemFor(step)
   if (!current) return null
-  const items = [['memory', 'Memory'], ['savings', 'Token Savings'], ...(branch === 'go' && showCheckout ? [['checkout', 'Checkout']] : []), ['finish', 'Finish Setup']]
+  const items = [['memory', t('Memory')], ['savings', t('Token Savings')], ...(branch === 'go' && showCheckout ? [['checkout', t('Checkout')]] : []), ['finish', t('Finish Setup')]]
   const currentIndex = items.findIndex(([id]) => id === current)
   return (
     <nav aria-label={t('Setup progress')}>
@@ -46,7 +47,7 @@ function ProgressBar({ step, branch, showCheckout }: { step: SetupStep; branch: 
         {items.map(([id, label], index) => (
           <li key={id} className={index < currentIndex ? 'is-done' : index === currentIndex ? 'is-current' : undefined} aria-current={index === currentIndex ? 'step' : undefined}>
             <span className="dot" aria-hidden="true">{index < currentIndex && <CheckIcon strokeWidth={3} />}</span>
-            {t(label)}
+            {label}
           </li>
         ))}
       </ol>
@@ -55,6 +56,7 @@ function ProgressBar({ step, branch, showCheckout }: { step: SetupStep; branch: 
 }
 
 export default function SetupPage({ onComplete }: { onComplete: () => void }) {
+  const locale = useLocale()
   const source = useSetupSource()
   const telemetry = useMemo(() => createSetupTracker(sendSetupEvent), [])
   const [branchConfirmed, setBranchConfirmed] = useState(false)
@@ -71,7 +73,7 @@ export default function SetupPage({ onComplete }: { onComplete: () => void }) {
   useEffect(() => source?.subscribe(setData), [source])
 
   const [improveProduct, setImproveProduct] = useState<boolean | null>(null)
-  const [preferenceError, setPreferenceError] = useState<string | null>(null)
+  const [preferenceError, setPreferenceError] = useState<UiMessage | null>(null)
   const preferenceRevision = useRef(0)
   const changeImproveProduct = async (checked: boolean) => {
     if (!source) return
@@ -84,11 +86,11 @@ export default function SetupPage({ onComplete }: { onComplete: () => void }) {
       failed()
       if (revision !== preferenceRevision.current) return
       setImproveProduct(null)
-      setPreferenceError(error instanceof Error ? error.message : String(error))
+      setPreferenceError(uiMessage('Could not save this choice: {error}', { error: error instanceof Error ? error.message : String(error) }))
     }
   }
 
-  const [consentError, setConsentError] = useState<string | null>(null)
+  const [consentError, setConsentError] = useState<UiMessage | null>(null)
   const consentPending = useRef(false)
   const [consentSending, setConsentSending] = useState(false)
   const confirmUpload = async (upload: boolean, agents?: string[]) => {
@@ -103,7 +105,7 @@ export default function SetupPage({ onComplete }: { onComplete: () => void }) {
       await source.confirmUpload(upload, agents, improveProduct ?? data.scan.improveProduct)
     } catch (error) {
       failed()
-      setConsentError(error instanceof Error ? error.message : String(error))
+      setConsentError(uiMessage('Could not confirm your choice: {error}. If you chose to upload, your prompts may already have been uploaded; reload this page to check.', { error: error instanceof Error ? error.message : String(error) }))
     } finally { consentPending.current = false; setConsentSending(false) }
   }
 
@@ -215,7 +217,7 @@ export default function SetupPage({ onComplete }: { onComplete: () => void }) {
   }
 
   const screens: Record<SetupStep, () => ReactNode> = {
-    scan: () => <ScanScreen scan={{ ...data.scan, improveProduct: improveProduct ?? data.scan.improveProduct }} onImproveProductChange={(checked) => void changeImproveProduct(checked)} onConfirmUpload={(upload, agents) => void confirmUpload(upload, agents)} consentError={consentError && t('Could not confirm your choice: {error}. If you chose to upload, your prompts may already have been uploaded; reload this page to check.', { error: consentError })} consentSending={consentSending} preferenceError={preferenceError && t('Could not save this choice: {error}', { error: preferenceError })} onRetry={() => void retryScan()} retrying={retrying} retryError={retryError} />,
+    scan: () => <ScanScreen scan={{ ...data.scan, improveProduct: improveProduct ?? data.scan.improveProduct }} onImproveProductChange={(checked) => void changeImproveProduct(checked)} onConfirmUpload={(upload, agents) => void confirmUpload(upload, agents)} consentError={consentError && renderUiMessage(consentError, t)} consentSending={consentSending} preferenceError={preferenceError && renderUiMessage(preferenceError, t)} onRetry={() => void retryScan()} retrying={retrying} retryError={retryError} />,
     reveal: () => <RevealScreen agents={data.scan.agents} reveal={data.reveal} extraction={data.extraction} uploadedAgents={data.scan.uploadedAgents} recentPrompts={data.recentPrompts} hostedNotice={data.scan.hostedNotice} onContinue={() => update({ revealContinued: true }, 'choice')} />,
     choice: () => <ChoiceScreen branch={flow.branch} onChoose={(branch) => { telemetry.action('choose_memory', { branch, branch_confirmed: false }); setBranchConfirmed(false); update({ branch, memoryBilling: branch === 'go' ? 'hosted' : 'existing', choiceContinued: true, savingsComplete: false, checkoutReviewed: false, setupComplete: false, finishTools: [] }, 'savings') }} />,
     savings: () => (
@@ -245,6 +247,17 @@ export default function SetupPage({ onComplete }: { onComplete: () => void }) {
       <header className="setup-header">
         <span className="brand" role="img" aria-label="CMEM"><CmemMark /></span>
         <ProgressBar step={step} branch={flow.branch} showCheckout={!flow.alreadyPro} />
+        <div className="setup-header-actions">
+          <select
+            aria-label={t('Language')}
+            value={locale}
+            onChange={(e) => setLocale(e.target.value as Locale)}
+            className="setup-lang-select"
+          >
+            <option value="en">English</option>
+            <option value="zh-CN">简体中文</option>
+          </select>
+        </div>
       </header>
       <main id="setup-main" ref={main} tabIndex={-1} className={`setup-main step-${step}${['scan', 'reveal', 'choice', 'savings', 'workspace'].includes(step) ? ' is-centered' : ''}`}>
         {handOffError && <p className="scan-error" role="alert">{handOffError}</p>}

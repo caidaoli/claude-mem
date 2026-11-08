@@ -1,6 +1,7 @@
 import { ArrowRightIcon, SearchIcon } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { intlLocale, t } from '@/i18n'
+import { uiMessage, renderUiMessage, type UiMessage } from '../../../../ui-message'
 import type { MemoryResult } from '../setup-data'
 import { prefersReducedMotion } from '../format'
 
@@ -49,8 +50,7 @@ export function WorkspaceScreen({ suggestions, search, keepNote, forgetNote, onC
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<MemoryResult[]>([])
   const [notes, setNotes] = useState<KeptNote[]>([])
-  // English text and its placeholder values, translated when rendered.
-  const [status, setStatus] = useState<[string, Record<string, string | number>?]>(['Your projects, sessions and decisions. In one place.'])
+  const [status, setStatus] = useState<UiMessage | string | null>(null)
   const searched = results.length > 0 || notes.length > 0
 
   useEffect(() => {
@@ -61,24 +61,24 @@ export function WorkspaceScreen({ suggestions, search, keepNote, forgetNote, onC
   const run = async (text: string) => {
     const trimmed = text.trim()
     if (!trimmed) { inputRef.current?.focus(); return }
-    setStatus(['Searching your memory…'])
+    setStatus(uiMessage('Searching your memory…'))
     let found: MemoryResult[]
     try { found = (await search(trimmed)).filter((record) => !notes.some((note) => note.record.id === record.id)) }
-    catch (error) { setStatus([error instanceof Error ? error.message : String(error)]); return }
+    catch (error) { setStatus(error instanceof Error ? error.message : String(error)); return }
     setResults(found)
-    setStatus(found.length === 0 ? ['No matching memories found.'] : [found.length === 1 ? '{count} memory found across your projects.' : '{count} memories found across your projects.', { count: found.length }])
+    setStatus(found.length === 0 ? uiMessage('No matching memories found.') : uiMessage(found.length === 1 ? '{count} memory found across your projects.' : '{count} memories found across your projects.', { count: found.length }))
   }
   const submit = (event: FormEvent) => { event.preventDefault(); void run(query) }
-  const discard = (id: string) => { setResults((current) => current.filter((record) => record.id !== id)); setStatus(['Removed from this view.']); inputRef.current?.focus() }
+  const discard = (id: string) => { setResults((current) => current.filter((record) => record.id !== id)); setStatus(uiMessage('Removed from this view.')); inputRef.current?.focus() }
   // A kept note is a new memory; the result it came from is never changed.
-  const save = async (record: MemoryResult, text: string, message: string): Promise<number | null> => {
+  const save = async (record: MemoryResult, text: string, message: UiMessage): Promise<number | null> => {
     let id: number
-    try { id = await keepNote(record, text) } catch (error) { setStatus([error instanceof Error ? error.message : String(error)]); return null }
-    setStatus([message])
+    try { id = await keepNote(record, text) } catch (error) { setStatus(error instanceof Error ? error.message : String(error)); return null }
+    setStatus(message)
     return id
   }
   const keep = async (record: MemoryResult) => {
-    const savedId = await save(record, record.body, 'Kept as a note in your memory.')
+    const savedId = await save(record, record.body, uiMessage('Kept as a note in your memory.'))
     if (savedId === null) return
     setNotes((current) => [{ record, text: record.body, saved: record.body, savedId }, ...current])
     setResults((current) => current.filter((entry) => entry.id !== record.id))
@@ -87,12 +87,12 @@ export function WorkspaceScreen({ suggestions, search, keepNote, forgetNote, onC
   // The edited text is saved first, then the earlier copy is removed, so memory holds one copy of the note.
   const saveEdit = async (note: KeptNote) => {
     if (!note.text.trim() || note.text === note.saved) return
-    const savedId = await save(note.record, note.text, 'Note saved.')
+    const savedId = await save(note.record, note.text, uiMessage('Note saved.'))
     if (savedId === null) return
     setNotes((current) => current.map((entry) => entry.record.id === note.record.id ? { ...entry, saved: note.text, savedId } : entry))
     if (savedId === note.savedId) return
     try { await forgetNote(note.savedId) } catch (error) {
-      setStatus(['Note saved, but its earlier copy is still in your memory: {error}', { error: error instanceof Error ? error.message : String(error) }])
+      setStatus(uiMessage('Note saved, but its earlier copy is still in your memory: {error}', { error: error instanceof Error ? error.message : String(error) }))
     }
   }
 
@@ -114,7 +114,7 @@ export function WorkspaceScreen({ suggestions, search, keepNote, forgetNote, onC
           {suggestions.map((suggestion) => <button key={suggestion} type="button" onClick={() => { setQuery(suggestion); void run(suggestion) }}>{suggestion}</button>)}
         </div>
       )}
-      <p className="workspace-status" role="status" aria-live="polite">{t(...status)}</p>
+      <p className="workspace-status" role="status" aria-live="polite">{status === null ? t('Your projects, sessions and decisions. In one place.') : renderUiMessage(status, t)}</p>
       {results.length > 0 && (
         <div className="workspace-results" aria-label={t('Memory search results')}>
           {results.map((record) => <ResultCard key={record.id} record={record} onDiscard={() => discard(record.id)} onKeep={() => void keep(record)} />)}
@@ -128,7 +128,7 @@ export function WorkspaceScreen({ suggestions, search, keepNote, forgetNote, onC
               <ResultCard key={note.record.id} record={note.record} note={note}
                 onEdit={(text) => setNotes((current) => current.map((entry) => entry.record.id === note.record.id ? { ...entry, text } : entry))}
                 onSave={() => void saveEdit(note)}
-                onDiscard={() => { setNotes((current) => current.filter((entry) => entry.record.id !== note.record.id)); setStatus(['Note removed.']); inputRef.current?.focus() }} />
+                onDiscard={() => { setNotes((current) => current.filter((entry) => entry.record.id !== note.record.id)); setStatus(uiMessage('Note removed.')); inputRef.current?.focus() }} />
             ))}
           </div>
         </section>

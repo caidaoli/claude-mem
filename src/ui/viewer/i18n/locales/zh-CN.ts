@@ -14,6 +14,8 @@ export const zhCN: TranslationKeys = {
     joinDiscord: '加入我们的 Discord 社区',
     showWelcome: '显示欢迎卡片',
     settings: '设置',
+    proTrialPitch: '免费试用 {days} 天 — 记忆不占用套餐额度，让套餐可用量最多增加 {percent}%',
+    teambrainPitch: 'TeamBrain：在每次会话中查看团队成员正在处理的工作',
   },
 
   sync: {
@@ -178,6 +180,20 @@ export const zhCN: TranslationKeys = {
     previewTitle: '已保存上下文预览',
     previewDesc: '预览所选来源和项目的已保存配置。',
     errorLoadingPreview: '加载预览失败',
+    noProjectSelected: '尚未选择项目',
+    images: '图片',
+    imagesDesc: '代理工具生成或读取的截图和图片',
+    keepImages: '保留图片',
+    keepImagesDesc: '保留代理读取或生成的截图和图片，以便在“我的工作”请求中显示。图片会保存在这台电脑上，直到对应事件被删除。开启云同步后，图片还会私密上传到你的 cmem.ai 账户。此开关不会将图片发送给 AI 模型。关闭后不再保留新图片，已保留的图片不受影响。',
+    endpointPresetLabels: {
+      minimax: 'MiniMax（国际）',
+      'minimax-cn': 'MiniMax（中国）',
+      ollama: 'Ollama（本地）',
+      lmstudio: 'LM Studio（本地）',
+      vllm: 'vLLM（自托管）',
+      custom: '自定义 OpenAI 兼容端点',
+    },
+    iflytekTokenPlanNote: 'Token Plan 密钥需要使用基础 URL https://maas-token-api.cn-huabei-1.xf-yun.com/v2；默认端点按量计费，使用此类密钥会返回 403。',
     // Loading section
     loading: '加载配置',
     loadingDesc: '注入多少条观察记录',

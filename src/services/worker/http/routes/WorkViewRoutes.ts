@@ -404,11 +404,12 @@ export function configuredHumanCopyProvider(settingsPath = USER_SETTINGS_PATH, c
   return provider;
 }
 
-/** The automatic refresh's answerer while Custom is the selected, configured provider; null runs it on the agent CLIs. */
+/** Custom answers when refresh follows the selected provider; explicit agent choices use the agent runner. */
 export function configuredRefreshAsk(settingsPath = USER_SETTINGS_PATH, custom: CustomWorkView | null = null): AskAgent | null {
   if (!custom) return null;
   const settings = SettingsDefaultsManager.loadFromFile(settingsPath, true, { readOnly: true });
-  return settings.CLAUDE_MEM_PROVIDER === 'custom' && isCustomAvailable(settingsPath) ? custom.askRefresh.bind(custom) : null;
+  return !settings.CLAUDE_MEM_WORK_VIEW_AGENT.trim()
+    && settings.CLAUDE_MEM_PROVIDER === 'custom' && isCustomAvailable(settingsPath) ? custom.askRefresh.bind(custom) : null;
 }
 
 /** The refresh answered by Custom, in the agent runner's result shape. A failure waits for the next check:

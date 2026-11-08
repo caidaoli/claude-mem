@@ -1,6 +1,6 @@
 import type { SessionCatalogEntry, StreamEvent } from '../types';
 import { API_ENDPOINTS } from '../constants/api';
-import { en, type TranslationKeys } from '../i18n/locales/en';
+import { en } from '../i18n/locales/en';
 
 /**
  * A session is identified by (platform_source, content_session_id): the same
@@ -87,18 +87,17 @@ export function parseViewRoute(hash: string): ViewRoute {
 /** User-facing reason for a refused session delete, by the worker's status code. */
 export function describeSessionDeleteFailure(
   status: number,
-  messages: TranslationKeys['deleteFailure'] = en.deleteFailure,
 ): string {
   if (status === 409) {
-    return messages.sessionBusy;
+    return en.deleteFailure.sessionBusy;
   }
   if (status === 503) {
-    return messages.syncUnavailable;
+    return en.deleteFailure.syncUnavailable;
   }
   if (status === 404) {
-    return messages.sessionGone;
+    return en.deleteFailure.sessionGone;
   }
-  return messages.httpStatus.replace('{status}', String(status));
+  return en.deleteFailure.httpStatus.replace('{status}', String(status));
 }
 
 /**
@@ -108,14 +107,13 @@ export function describeSessionDeleteFailure(
 export async function deleteSession(
   ref: SessionRef,
   fetchImpl: typeof fetch = fetch,
-  messages: TranslationKeys['deleteFailure'] = en.deleteFailure,
 ): Promise<void> {
   const url = `${API_ENDPOINTS.SESSIONS}/${encodeURIComponent(ref.platformSource)}/${encodeURIComponent(ref.contentSessionId)}`;
   const response = await fetchImpl(url, { method: 'DELETE' }).catch(() => {
-    throw new Error(messages.unreachable);
+    throw new Error(en.deleteFailure.unreachable);
   });
   if (!response.ok) {
-    throw new Error(describeSessionDeleteFailure(response.status, messages));
+    throw new Error(describeSessionDeleteFailure(response.status));
   }
 }
 

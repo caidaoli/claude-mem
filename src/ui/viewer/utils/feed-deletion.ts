@@ -1,5 +1,5 @@
 import type { FeedItemType, StreamEvent } from '../types';
-import { en, type TranslationKeys } from '../i18n/locales/en';
+import { en } from '../i18n/locales/en';
 
 /**
  * Rows the viewer offers to delete. Prompts are left out: deleting one shifts
@@ -18,15 +18,14 @@ const FEED_ITEM_TYPES: readonly FeedItemType[] = ['observation', 'summary', 'pro
 /** User-facing reason for a refused delete, by the worker's status code. */
 export function describeDeleteFailure(
   status: number,
-  messages: TranslationKeys['deleteFailure'] = en.deleteFailure,
 ): string {
   if (status === 404) {
-    return messages.itemSyncedOrGone;
+    return en.deleteFailure.itemSyncedOrGone;
   }
   if (status === 503) {
-    return messages.syncUnavailable;
+    return en.deleteFailure.syncUnavailable;
   }
-  return messages.httpStatus.replace('{status}', String(status));
+  return en.deleteFailure.httpStatus.replace('{status}', String(status));
 }
 
 /**
@@ -37,13 +36,12 @@ export async function deleteFeedItem(
   itemType: DeletableItemType,
   id: number,
   fetchImpl: typeof fetch = fetch,
-  messages: TranslationKeys['deleteFailure'] = en.deleteFailure,
 ): Promise<void> {
   const response = await fetchImpl(`${DELETE_ENDPOINTS[itemType]}/${id}`, { method: 'DELETE' }).catch(() => {
-    throw new Error(messages.unreachable);
+    throw new Error(en.deleteFailure.unreachable);
   });
   if (!response.ok) {
-    throw new Error(describeDeleteFailure(response.status, messages));
+    throw new Error(describeDeleteFailure(response.status));
   }
 }
 

@@ -14,6 +14,8 @@ import { usePagination } from './hooks/usePagination';
 import { useSessionCatalog } from './hooks/useSessionCatalog';
 import { useTheme } from './hooks/useTheme';
 import { useI18n } from './i18n';
+import { en } from './i18n/locales/en';
+import { translateViewerError } from '../i18n/errors';
 import { Observation, Summary, UserPrompt, FeedItemType } from './types';
 import { buildFeedItems, mergeAndDeduplicateByProject } from './utils/data';
 import { removeLoadedRow } from './utils/feed-deletion';
@@ -161,7 +163,7 @@ export function App() {
       resyncPausedRef.current = true;
       pendingResyncRef.current.clear();
       for (const kind of kinds) failedResyncRef.current.add(kind);
-      setFeedLoadError(t.feed.refreshOverloaded);
+      setFeedLoadError(en.feed.refreshOverloaded);
       setShowLatestRefresh(true);
       return;
     }
@@ -222,13 +224,13 @@ export function App() {
         } catch (error) {
           if (!current()) return;
           failedResyncRef.current.add(kind);
-          errors.push(error instanceof Error ? error.message : t.feed.refreshFailed);
+          errors.push(error instanceof Error ? error.message : en.feed.refreshFailed);
         }
       }));
       if (current()) {
-        setFeedLoadError(previous => errors.length ? `${t.feed.refreshFailed} ${errors.join(' ')}` : failedResyncRef.current.size ? previous : null);
+        setFeedLoadError(previous => errors.length ? `${en.feed.refreshFailed} ${errors.join(' ')}` : failedResyncRef.current.size ? previous : null);
         setShowLatestRefresh(failedResyncRef.current.size > 0);
-        if (latest && !errors.length) setFeedRefreshNotice(t.feed.latestNotice);
+        if (latest && !errors.length) setFeedRefreshNotice(en.feed.latestNotice);
         resyncInterruptionsRef.current = 0;
         void refreshProjects();
         void catalog.refreshLoaded(route.view === 'session' ? '' : currentFilter);
@@ -367,10 +369,10 @@ export function App() {
     } catch (error) {
       console.error('Failed to load more data:', error);
       if (isCurrentVisit()) {
-        setFeedLoadError(error instanceof Error ? error.message : t.feed.loadFailed);
+        setFeedLoadError(error instanceof Error ? error.message : en.feed.loadFailed);
       }
     }
-  }, [feedVersion, isConnected, connectionWaitExpired, pagination.observations, pagination.summaries, pagination.prompts, t.feed]);
+  }, [feedVersion, isConnected, connectionWaitExpired, pagination.observations, pagination.summaries, pagination.prompts]);
 
   // One removal path for a deleted row, whether this tab deleted it or another
   // tab did (item_deleted SSE, which also reaches this tab): drop it from the
@@ -435,7 +437,7 @@ export function App() {
   async function handleDeleteSession(session: SessionRef): Promise<void> {
     const key = sessionKey(session);
     const deletionVersion = sessionDeletionVersionsRef.current.get(key) ?? 0;
-    await deleteSession(session, fetch, t.deleteFailure);
+    await deleteSession(session);
     // The stream may have already delivered this delete, followed by a new
     // live row recreating the session. Its HTTP acknowledgment must not delete
     // that newer incarnation a second time.
@@ -484,7 +486,7 @@ export function App() {
             refreshLatestRef.current = true;
             queueDataRefresh({});
           }}>{t.feed.refreshLatest}</button>}
-          {feedRefreshNotice && <p role="status">{feedRefreshNotice}</p>}
+          {feedRefreshNotice && <p role="status">{translateViewerError(feedRefreshNotice, t)}</p>}
         </div>
         <ViewTabs
           active={activeTab}

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { translateViewerError } from '../../i18n/errors';
 import { SessionCatalogEntry } from '../types';
 import { formatDate } from '../utils/formatters';
 import { SessionCardMenu } from './SessionCardMenu';
@@ -88,7 +89,7 @@ export function SessionCard({ session, onOpen, onDelete }: SessionCardProps) {
         <span className="session-card-date">{date}</span>
       </div>
       {failure && (
-        <div className="card-delete-error" role="alert" onClick={e => e.stopPropagation()}>{failure}</div>
+        <div className="card-delete-error" role="alert" onClick={e => e.stopPropagation()}>{translateViewerError(failure, t)}</div>
       )}
     </div>
   );

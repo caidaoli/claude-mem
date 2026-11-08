@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
+import { Database } from 'bun:sqlite';
 import * as zlib from 'node:zlib';
 
 import { CustomAgent, isCustomAvailable, resolveCustomConfig } from '../../src/services/worker/CustomAgent.js';
+import { SessionStore } from '../../src/services/sqlite/SessionStore.js';
 import { SettingsDefaultsManager } from '../../src/shared/SettingsDefaultsManager.js';
 import { ModeManager } from '../../src/services/domain/ModeManager.js';
 import * as EnvManager from '../../src/shared/EnvManager.js';
@@ -83,6 +85,7 @@ const toolMessage = { _persistentId: 101, _originalTimestamp: Date.now(), type: 
 
 describe('CustomAgent session behavior', () => {
   const originalFetch = global.fetch;
+  const sessionStores: SessionStore[] = [];
   let settings: ReturnType<typeof SettingsDefaultsManager.getAllDefaults>;
   let mode: any;
   let credential: string | undefined;
@@ -111,9 +114,11 @@ describe('CustomAgent session behavior', () => {
   }
   function fixture(messages: any[] = [toolMessage]) {
     const session = createSession();
+    const sessionStore = new SessionStore(new Database(':memory:'), { syncOpsEnabled: false });
+    sessionStores.push(sessionStore);
     const storeObservations = mock(() => ({ observationIds: [1], summaryId: null, createdAtEpoch: Date.now() }));
     const updateMemorySessionId = mock(() => {});
-    const store = { getSessionById: () => ({ memory_session_id: 'mem-custom-1' }), updateMemorySessionId,
+    const store = { db: sessionStore.db, getSessionById: () => ({ memory_session_id: 'mem-custom-1' }), updateMemorySessionId,
       ensureMemorySessionIdRegistered: () => {}, storeObservations };
     const dbManager = { getSessionStore: () => store, getCloudSync: () => null,
       getChromaSync: () => ({ syncObservation: async () => {}, syncSummary: async () => {} }) } as unknown as DatabaseManager;
@@ -159,7 +164,11 @@ describe('CustomAgent session behavior', () => {
       return typeof reply === 'function' ? reply(options.signal) : reply;
     }) as any;
   });
-  afterEach(() => { global.fetch = originalFetch; mock.restore(); });
+  afterEach(() => {
+    global.fetch = originalFetch;
+    mock.restore();
+    for (const store of sessionStores.splice(0)) store.close();
+  });
 
   for (const protocol of ['openai', 'gemini', 'codex'] as const) {
     for (const compression of ['none', 'gzip', 'zstd'] as const) {

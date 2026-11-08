@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { translateViewerError } from '../../i18n/errors';
 import { SessionCatalogEntry } from '../types';
 import { SessionCard } from './SessionCard';
 import { catalogEntryRef, sessionKey, type SessionRef } from '../utils/sessions';
@@ -48,7 +49,7 @@ export function SessionList({ header, sessions, isLoading, hasMore, loadError, o
       <div className="session-list-content">
         {header}
         {loadError && <div className="card-delete-error" role="alert">
-          {t.sessions.loadFailed.replace('{error}', () => loadError)}
+          {t.sessions.loadFailed.replace('{error}', () => translateViewerError(loadError, t))}
           {!isLoading && <button onClick={onLoadMore}>{t.sessions.retry}</button>}
           {!isLoading && onRefreshLatest && <button onClick={onRefreshLatest}>{t.sessions.refreshLatest}</button>}
         </div>}

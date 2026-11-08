@@ -111,7 +111,7 @@ function Comments({ focusAreaId }: { focusAreaId: string }) {
             {comments.map((comment) => <Comment key={comment.id} comment={comment} />)}
           </ol>
         )}
-        {error && <p className="text-xs text-destructive" role="alert">{error}</p>}
+        {error && <p className="text-xs text-destructive" role="alert">{t(error)}</p>}
         <div className="space-y-2">
           <Textarea aria-label={t('Answer as yourself')} placeholder={t('Answer as yourself')} value={draft} maxLength={COMMENT_MAX_CHARS} onChange={(event) => setDraft(event.target.value)} rows={2} />
           <div className="flex justify-end">
@@ -214,7 +214,7 @@ export function ShareFocusDialog({ area, open, onOpenChange }: { area: FocusArea
             </Req>
           </div>
         )}
-        {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
+        {error && <p className="text-sm text-destructive" role="alert">{t(error)}</p>}
       </DialogContent>
     </Dialog>
   )

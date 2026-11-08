@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useLayoutEffect } from 'react';
 import { Observation, Summary, UserPrompt } from '../types';
-import { useI18n } from '../i18n';
+import { en } from '../i18n/locales/en';
 import { UI } from '../constants/ui';
 import { API_ENDPOINTS } from '../constants/api';
 import { sessionKey, type SessionRef } from '../utils/sessions';
@@ -16,7 +16,6 @@ function boundaryOf(row: DataItem | undefined): Boundary | null {
 }
 
 function usePaginationFor<TItem extends DataItem>(endpoint: string, dataType: DataType, currentFilter: string, currentSession: SessionRef | null) {
-  const { t } = useI18n();
   const [state, setState] = useState<PaginationState>({ isLoading: false, hasMore: true });
   const selectionKey = `${currentFilter}|${currentSession ? sessionKey(currentSession) : ''}`;
   const offsetRef = useRef(0);
@@ -78,7 +77,7 @@ function usePaginationFor<TItem extends DataItem>(endpoint: string, dataType: Da
     let hasMore = stateRef.current.hasMore;
     try {
       for (;;) {
-        if (++pageCount > maxPages) throw new Error(t.feed.historyChanged);
+        if (++pageCount > maxPages) throw new Error(en.feed.historyChanged);
         const params = new URLSearchParams({ offset: String(offset), limit: String(UI.PAGINATION_PAGE_SIZE) });
         if (currentFilter) params.append('project', currentFilter);
         if (currentSession) {
@@ -87,10 +86,10 @@ function usePaginationFor<TItem extends DataItem>(endpoint: string, dataType: Da
         }
         const response = await fetch(`${endpoint}?${params}`, { cache: 'no-store', signal: controller.signal });
         if (stale()) return [];
-        if (!response.ok) throw new Error(t.feed.pageFailed.replace('{kind}', t.feed[dataType]).replace('{error}', () => response.statusText));
+        if (!response.ok) throw new Error(en.feed.pageFailed.replace('{kind}', en.feed[dataType]).replace('{error}', () => response.statusText));
         const data = await response.json() as { items: TItem[]; hasMore: boolean };
         if (stale()) return [];
-        if (!Array.isArray(data.items)) throw new Error(t.feed.pageFailed.replace('{kind}', t.feed[dataType]).replace('{error}', t.feed.invalidPage));
+        if (!Array.isArray(data.items)) throw new Error(en.feed.pageFailed.replace('{kind}', en.feed[dataType]).replace('{error}', en.feed.invalidPage));
         let reachedBoundary = false;
         let retained = 0;
         for (const row of data.items) {
@@ -117,7 +116,7 @@ function usePaginationFor<TItem extends DataItem>(endpoint: string, dataType: Da
       return rows;
     } catch (error) {
       if (stale() || (controller.signal.aborted && !timedOut)) return [];
-      if (timedOut) throw new Error(t.feed.loadTimedOut.replace('{kind}', t.feed[dataType]));
+      if (timedOut) throw new Error(en.feed.loadTimedOut.replace('{kind}', en.feed[dataType]));
       throw error;
     } finally {
       clearTimeout(timeout);
@@ -128,7 +127,7 @@ function usePaginationFor<TItem extends DataItem>(endpoint: string, dataType: Da
     }
     // selectionKey covers both filter fields without retiring abandoned renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectionKey, selectionVersion, endpoint, dataType, t.feed]);
+  }, [selectionKey, selectionVersion, endpoint, dataType]);
 
   const loadMore = useCallback(() => read(false), [read]);
   const refresh = useCallback(() => read(true), [read]);

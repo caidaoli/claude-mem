@@ -7,10 +7,10 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/h
 import { Progress } from '@/components/ui/progress'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { t } from '@/i18n'
+import { t, useLocale } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { Req } from '@/spec/req'
-import { isSampleHref, measuredEstimate, SAMPLE_DEVICES, type Device, type LiveState, type Request, type Run, type SkillRun } from '@/data'
+import { isSampleHref, measuredEstimate, SAMPLE_DEVICES, OTHER_FOCUS_AREA_ID, type Device, type LiveState, type Request, type Run, type SkillRun } from '@/data'
 import { agentById, deviceById, useConnection, useStore, useWorkModel, useWorkspace } from '@/store'
 import type { ConnectionStatus } from '@/live/connection-status'
 import type { AutoRefresh } from '@/live/work-data-source'
@@ -96,11 +96,11 @@ export function FocusAreaChip({ focusAreaId, onOpen }: { focusAreaId?: string; o
       {placed ? (
         <button type="button" onClick={(event) => { event.stopPropagation(); onOpen?.(placed) }} className="inline-flex min-h-11 max-w-full items-center gap-1.5 self-start text-left text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline md:min-h-6">
           <CornerLeftUpIcon className="size-3.5 shrink-0" />
-          <span className="truncate">{label}</span>
+          <span className="truncate">{placed === OTHER_FOCUS_AREA_ID ? t('Other') : label}</span>
         </button>
       ) : (
         // Not placed yet is not the same claim as Other: the next refresh places it.
-        <span className="inline-flex min-h-6 items-center gap-1.5 self-start text-xs text-muted-foreground/80 italic">{label}</span>
+        <span className="inline-flex min-h-6 items-center gap-1.5 self-start text-xs text-muted-foreground/80 italic">{t(label)}</span>
       )}
     </Req>
   )
@@ -137,7 +137,7 @@ export function ProgressMeter({ request, compact = false }: { request: Request; 
   return (
     <Req ids={['R5.9', 'R5.6', 'R5.11']}>
       <div className="space-y-1.5">
-        <Progress value={progress.percent ?? 0} aria-label={progress.percent === null ? t('Not reviewed yet') : t('{percent}% complete', { percent: progress.percent })} className={cn('h-1.5 bg-muted', {
+        <Progress value={progress.percent ?? 0} aria-label={progress.percent === null ? t('Not reviewed yet') : t('{percent}% complete', { percent: progress.percent })} className={cn('h-1.5 bg-muted [&_[data-slot=progress-indicator]]:duration-700 [&_[data-slot=progress-indicator]]:ease-out', request.state === 'working' && 'progress-sweep', {
           '[&_[data-slot=progress-indicator]]:bg-working-foreground/75': request.state === 'working',
           '[&_[data-slot=progress-indicator]]:bg-review-foreground/75': request.state === 'needs-check',
           '[&_[data-slot=progress-indicator]]:bg-attention-foreground/75': request.state === 'your-move',
@@ -259,6 +259,7 @@ const CLAUDE_MEM_REPO_API_URL = 'https://api.github.com/repos/thedotmack/claude-
 
 /** The repo's GitHub star count, read once from the public API. Shows no number until a real one arrives. */
 export function GitHubStars() {
+  const locale = useLocale()
   const [stargazerCount, setStargazerCount] = useState<number | null>(null)
   useEffect(() => {
     let cancelled = false
@@ -276,7 +277,7 @@ export function GitHubStars() {
       <a href={CLAUDE_MEM_REPO_URL} target="_blank" rel="noreferrer" aria-label={t('Star claude-mem on GitHub')}>
         <StarIcon className="size-3.5" />
         <span className="hidden sm:inline">{t('Star')}</span>
-        {stargazerCount !== null && <span className="tabular-nums">{new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(stargazerCount)}</span>}
+        {stargazerCount !== null && <span className="tabular-nums">{new Intl.NumberFormat(locale === 'zh-CN' ? 'zh-CN' : 'en', { notation: 'compact', maximumFractionDigits: 1 }).format(stargazerCount)}</span>}
       </a>
     </Button>
   )
