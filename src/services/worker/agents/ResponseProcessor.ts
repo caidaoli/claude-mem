@@ -5,6 +5,7 @@ import {
   parseAgentXml,
   parseObservationsJsonResult,
   parseSummaryJson,
+  SKIP_SUMMARY_TAG,
   type ParsedObservation,
   type ParsedSummary,
   type ParseResult,
@@ -608,7 +609,7 @@ export function hasUnfinishedObservationBlock(text: string): boolean {
   const outsideWholeBlocks = text
     .replace(/<observation>[\s\S]*?<\/observation>/gi, '')
     .replace(/<summary>[\s\S]*?<\/summary>/gi, '')
-    .replace(/<skip_summary(?:\s+reason="[^"]*")?\s*\/>/gi, '');
+    .replace(new RegExp(SKIP_SUMMARY_TAG.source, 'gi'), '');
   return /<observation>/i.test(outsideWholeBlocks);
 }
 

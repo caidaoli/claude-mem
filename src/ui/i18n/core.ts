@@ -21,7 +21,7 @@ export function setLocale(locale: Locale): void {
   switchLocale(locale);
 }
 
-if (typeof window !== 'undefined') {
+if (typeof document !== 'undefined') {
   switchLocale(readLocale());
   const applyLanguage = () => { document.documentElement.lang = getLocale(); };
   applyLanguage();

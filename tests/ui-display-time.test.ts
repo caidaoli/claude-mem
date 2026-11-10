@@ -1,0 +1,32 @@
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { setLocale } from '../src/ui/i18n/core';
+import { displayTime } from '../src/ui/my-work/src/lib/display-time';
+
+// My Work shows model-written display dates such as "Today 3:45 pm"; only the UI language changes how they read.
+describe('displayTime', () => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  beforeAll(() => {
+    let stored: string | null = null;
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: { localStorage: {
+      getItem: () => stored,
+      setItem: (_key: string, value: string) => { stored = value; },
+    } } });
+    Object.defineProperty(globalThis, 'document', { configurable: true, value: { documentElement: { lang: 'en' } } });
+  });
+  afterAll(() => {
+    if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow); else Reflect.deleteProperty(globalThis, 'window');
+    if (previousDocument) Object.defineProperty(globalThis, 'document', previousDocument); else Reflect.deleteProperty(globalThis, 'document');
+  });
+
+  it('leaves English as written', () => {
+    setLocale('en');
+    expect(displayTime('Today 3:45 pm')).toBe('Today 3:45 pm');
+  });
+
+  it('keeps the Chinese wording as before', () => {
+    setLocale('zh-CN');
+    expect(displayTime('Today 3:45 pm')).toBe('今天 3:45 下午');
+    expect(displayTime('Nov 3')).toBe('11月3日');
+  });
+});

@@ -17,7 +17,7 @@ dialogs, accessibility labels, settings descriptions and known UI error envelope
 Recorded requests, memory titles, narratives, quotes, file paths, model identifiers,
 commands, product names and opaque server error details remain verbatim.
 The display language does not change the language of generated memories. Configure
-`CLAUDE_MEM_MODE=code--zh` separately when Chinese observations are wanted.
+`CLAUDE_MEM_MODE=code--zh` or `code--ko` separately when Chinese or Korean observations are wanted.
 
 ## Development
 

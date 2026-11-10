@@ -113,6 +113,8 @@ function jsonAttachmentLabels(value: unknown): string[] | undefined {
   return labels.length > 0 ? labels : undefined;
 }
 
+export const SKIP_SUMMARY_TAG = /<skip_summary(?:\s+reason\s*=\s*(?:"([^"]*)"|'([^']*)'))?\s*\/>/i;
+
 export function parseAgentXml(raw: string, correlationId?: string | number): ParseResult {
   if (typeof raw !== 'string' || !raw.trim()) {
     return { valid: false };
@@ -120,8 +122,9 @@ export function parseAgentXml(raw: string, correlationId?: string | number): Par
 
   raw = stripCodeFences(raw);
 
-  const skipMatch = /<skip_summary(?:\s+reason="([^"]*)")?\s*\/>/i.exec(raw);
+  const skipMatch = SKIP_SUMMARY_TAG.exec(raw);
   if (skipMatch) {
+    const reason = skipMatch[1] ?? skipMatch[2];
     return {
       valid: true,
       observations: [],
@@ -133,7 +136,7 @@ export function parseAgentXml(raw: string, correlationId?: string | number): Par
         next_steps: null,
         notes: null,
         skipped: true,
-        skip_reason: skipMatch[1] === undefined ? null : decodeXmlReferences(skipMatch[1]),
+        skip_reason: reason === undefined ? null : decodeXmlReferences(reason),
       },
     };
   }
@@ -600,9 +603,10 @@ export function parseSummaryJson(text: string, sessionId?: number): ParsedSummar
 
   // Models that see XML elsewhere in the conversation sometimes answer with the
   // XML sentinel even in JSON mode; it means the same thing.
-  const xmlSkip = /<skip_summary(?:\s+reason="([^"]*)")?\s*\/>/i.exec(text);
+  const xmlSkip = SKIP_SUMMARY_TAG.exec(text);
   if (xmlSkip && !text.includes('{')) {
-    return skipped(xmlSkip[1] === undefined ? null : decodeXmlReferences(xmlSkip[1]));
+    const reason = xmlSkip[1] ?? xmlSkip[2];
+    return skipped(reason === undefined ? null : decodeXmlReferences(reason));
   }
 
   const jsonText = preprocessJsonResponse(text);

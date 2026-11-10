@@ -5,7 +5,8 @@
  *   { "command": "claude-mem", "args": ["hook", "claude-code", "<event>"] }
  * This launcher's only job is to find the installed plugin root, run
  * `<root>/scripts/worker-service.cjs <args…>` under Bun with the same argv
- * (plus the hook's stdin for `hook`), and fail open (exit 0 + one stderr line)
+ * (plus the hook's stdin for `hook`, which runs the hook-only
+ * `<root>/scripts/hook-service.cjs` instead when the plugin ships it), and fail open (exit 0 + one stderr line)
  * on every failure. Subcommands are never interpreted here, so new worker
  * subcommands work without recompiling the on-PATH binary.
  *
@@ -235,7 +236,11 @@ function collectStdin(): Promise<Buffer | null> {
  * hint reads. Exit 0: the marker file, not the exit code, is the durable signal.
  */
 function reportEmptyStdinAndExit(stdinData: Buffer | null, workerScriptPath: string, pluginRoot: string): never {
-  const dataDir = process.env.CLAUDE_MEM_DATA_DIR || join(homedir(), '.claude-mem');
+  // expandHome, as in neutralBunSpawnCwd: a `~/x` data dir must not become a
+  // literal `~` directory inside the user's project (the launch directory).
+  const dataDir = process.env.CLAUDE_MEM_DATA_DIR
+    ? expandHome(process.env.CLAUDE_MEM_DATA_DIR)
+    : join(homedir(), '.claude-mem');
   const payloadType = stdinData === null
     ? 'null (no data event or stream error)'
     : 'empty Buffer (zero bytes received)';
@@ -301,6 +306,13 @@ async function runThroughWorker(workerServiceArguments: string[]): Promise<never
     exitContinuingWithoutMemory('plugin scripts not found');
   }
   const workerScriptPath = join(pluginRoot, 'scripts', 'worker-service.cjs');
+  // A hook is a short-lived process: parsing the whole worker bundle for it costs
+  // ~0.3 s and ~120 MB. `hook` runs the hook-only bundle when the plugin ships
+  // one and falls back to worker-service.cjs for an older plugin.
+  const hookScriptPath = join(pluginRoot, 'scripts', 'hook-service.cjs');
+  const scriptPath = workerServiceArguments[0] === 'hook' && existsSync(hookScriptPath)
+    ? hookScriptPath
+    : workerScriptPath;
 
   const bunRuntime = await selectBunRuntime();
   if (!bunRuntime) {
@@ -316,11 +328,11 @@ async function runThroughWorker(workerServiceArguments: string[]): Promise<never
     stdinData = await collectStdin();
     // A hook always needs a payload, so an empty one is reported before spawning.
     if (!stdinData || stdinData.length === 0) {
-      reportEmptyStdinAndExit(stdinData, workerScriptPath, pluginRoot);
+      reportEmptyStdinAndExit(stdinData, scriptPath, pluginRoot);
     }
   }
 
-  const workerArguments = [workerScriptPath, ...workerServiceArguments];
+  const workerArguments = [scriptPath, ...workerServiceArguments];
   const spawnOptions: SpawnOptions = {
     stdio: ['pipe', 'inherit', 'inherit'],
     windowsHide: true,

@@ -1,7 +1,7 @@
 
 import path from 'path';
 import { homedir } from 'os';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, mkdirSync } from 'fs';
 import { execSync } from 'child_process';
 import { logger } from '../../utils/logger.js';
 import {
@@ -13,6 +13,7 @@ import { writeMcpJsonConfig, PLACEHOLDER_CONTEXT } from './McpIntegrations.js';
 import { readJsonSafe } from '../../utils/json-utils.js';
 import { findContextBlockRange, injectContextIntoMarkdownFile } from '../../utils/context-injection.js';
 import { ANTIGRAVITY_HOOK_TIMEOUT_MS } from '../../shared/host-hook-limits.js';
+import { parseJsonWithBom, writeJsonFileAtomic, writeTextFileAtomic } from '../../shared/atomic-json.js';
 
 // agy hook schema (builtin `agy-customizations/docs/hooks.md`): each top-level
 // key of hooks.json is a hook NAME, mapping to an object of event keys. Only
@@ -242,7 +243,7 @@ function readAntigravitySettings(): AntigravitySettingsJson {
 
   const content = readFileSync(GEMINI_SETTINGS_PATH, 'utf-8');
   try {
-    return JSON.parse(content) as AntigravitySettingsJson;
+    return parseJsonWithBom<AntigravitySettingsJson>(content);
   } catch (error) {
     if (error instanceof Error) {
       logger.error('WORKER', 'Corrupt JSON in Antigravity CLI (shared Gemini) settings', { path: GEMINI_SETTINGS_PATH }, error);
@@ -255,7 +256,7 @@ function readAntigravitySettings(): AntigravitySettingsJson {
 
 function writeAntigravitySettings(settings: AntigravitySettingsJson): void {
   mkdirSync(GEMINI_CONFIG_DIR, { recursive: true });
-  writeFileSync(GEMINI_SETTINGS_PATH, JSON.stringify(settings, null, 2) + '\n');
+  writeJsonFileAtomic(GEMINI_SETTINGS_PATH, settings);
 }
 
 // Read the standalone `hooks.json` agy loads. Returns the whole file (named
@@ -272,7 +273,7 @@ function readAntigravityHooksConfig(): AntigravityHooksConfig {
     return {};
   }
   try {
-    return JSON.parse(content) as AntigravityHooksConfig;
+    return parseJsonWithBom<AntigravityHooksConfig>(content);
   } catch (error) {
     logger.error(
       'WORKER',
@@ -286,7 +287,7 @@ function readAntigravityHooksConfig(): AntigravityHooksConfig {
 
 function writeAntigravityHooksConfig(hooksConfig: AntigravityHooksConfig): void {
   mkdirSync(path.dirname(GEMINI_HOOKS_CONFIG_PATH), { recursive: true });
-  writeFileSync(GEMINI_HOOKS_CONFIG_PATH, JSON.stringify(hooksConfig, null, 2) + '\n');
+  writeJsonFileAtomic(GEMINI_HOOKS_CONFIG_PATH, hooksConfig);
 }
 
 // Merge claude-mem's named hook into an existing hooks.json, preserving other
@@ -388,7 +389,7 @@ ${contextEndTag}`;
   const newContent = content + separator + placeholder + '\n';
 
   mkdirSync(GEMINI_CONFIG_DIR, { recursive: true });
-  writeFileSync(GEMINI_MD_PATH, newContent);
+  writeTextFileAtomic(GEMINI_MD_PATH, newContent);
 }
 
 // B0 found `~/.gemini/config/mcp_config.json` existing but genuinely empty (0
@@ -400,7 +401,7 @@ ${contextEndTag}`;
 // the shared writer, so an empty placeholder doesn't get misread as corrupt.
 function seedEmptyMcpConfigFile(mcpConfigPath: string): void {
   if (existsSync(mcpConfigPath) && readFileSync(mcpConfigPath, 'utf-8').trim() === '') {
-    writeFileSync(mcpConfigPath, '{}\n');
+    writeTextFileAtomic(mcpConfigPath, '{}\n');
   }
 }
 
@@ -508,7 +509,7 @@ function removeClaudeMemFromMcpConfig(mcpConfigPath: string): boolean {
   }
 
   delete config.mcpServers['claude-mem'];
-  writeFileSync(mcpConfigPath, JSON.stringify(config, null, 2) + '\n');
+  writeJsonFileAtomic(mcpConfigPath, config);
   return true;
 }
 
@@ -521,7 +522,7 @@ export function removeContextTagBlock(filePath: string): boolean {
 
   const start = content[block.start - 1] === '\n' ? block.start - 1 : block.start;
   const end = content[block.end] === '\n' ? block.end + 1 : block.end;
-  writeFileSync(filePath, content.slice(0, start) + content.slice(end));
+  writeTextFileAtomic(filePath, content.slice(0, start) + content.slice(end));
   return true;
 }
 
