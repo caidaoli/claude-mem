@@ -335,6 +335,20 @@ describe('CustomAgent session behavior', () => {
     expect(requests[2].body.stream).toBeUndefined();
     expect(f.session.paidSendBudget.spentPaidSends).toBe(1);
   });
+  it('resends once without the disable when the model refuses to turn reasoning off', async () => {
+    settings.CLAUDE_MEM_CUSTOM_MODEL = 'mimo-v2';
+    const mandatory = () => new Response(JSON.stringify({ error: { message: 'Reasoning is mandatory for this endpoint and cannot be disabled.' } }), { status: 400 });
+    replies.push(mandatory(), chat(), mandatory(), chat());
+    const f = fixture([toolMessage, { ...toolMessage, _persistentId: 102 }]);
+    await f.agent.startSession(f.session);
+    expect(requests).toHaveLength(4);
+    expect(requests[0].body).toMatchObject({ reasoning: { enabled: false }, thinking: { type: 'disabled' } });
+    expect(requests[1].body.reasoning).toBeUndefined();
+    expect(requests[1].body.thinking).toBeUndefined();
+    // Not remembered: the next request asks for reasoning off again.
+    expect(requests[2].body.reasoning).toEqual({ enabled: false });
+    expect(f.storeObservations).toHaveBeenCalledTimes(2);
+  });
   it('uses max_completion_tokens when the endpoint explicitly refuses max_tokens', async () => {
     replies.push(new Response(JSON.stringify({ error: { message: "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead." } }), { status: 400 }), chat());
     const f = fixture();

@@ -22,7 +22,7 @@ import type { PaidSendBudget } from './paid-send-budget.js';
 import { resolveObserverMaxOutputTokens, resolveContextWindowTokens, observationFieldMaxChars } from './context-window.js';
 import { sendChatCompletion, streamsChatCompletion, resolveStreamLiveness, resolveStreamIdleTimeoutMs } from './streamed-chat-completion.js';
 import {
-  endpointRejectsReasoningField, isUnknownReasoningParameter, rememberEndpointRejectsReasoningField,
+  endpointRejectsReasoningField, isUnknownReasoningParameter, isReasoningDisabledRejection, rememberEndpointRejectsReasoningField,
   REASONING_DISABLED, resolveOpenAICompatReasoning, isLengthTruncatedEmptyReply,
   claimReasoningBudgetRetry, combineBilledChatUsage,
 } from './reasoning-budget.js';
@@ -572,7 +572,8 @@ class CustomImageRejectedError extends ClassifiedProviderError {
 /** A refusal of the image request itself, as opposed to auth, quota, reasoning-field or transient failures. */
 function asImageRejection(error: ClassifiedProviderError, status: number | undefined, bodyText: string | undefined): ClassifiedProviderError {
   if (status === 413 || status === 415) return new CustomImageRejectedError(error);
-  if ((status === 400 || status === 422) && error.kind === 'unrecoverable' && !isUnknownReasoningParameter(bodyText ?? '')) {
+  if ((status === 400 || status === 422) && error.kind === 'unrecoverable'
+    && !isUnknownReasoningParameter(bodyText ?? '') && !isReasoningDisabledRejection(bodyText ?? '')) {
     return new CustomImageRejectedError(error);
   }
   return error;
@@ -1214,11 +1215,11 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
           return this.queryNative(url, body, config, key, attemptSignal, sessionId, clientAttemptId, carriesImages);
         }
 
-        const send = async (reasoning: boolean) => {
+        const send = async (reasoning: boolean, requestBody: Record<string, unknown> = body) => {
           const exchange = await sendChatCompletion({
             url,
             headers: { ...buildBearerJsonHeaders(key, sessionId), 'x-client-request-id': clientAttemptId },
-            body: { ...body, ...(reasoning ? { reasoning: REASONING_DISABLED } : {}) },
+            body: { ...requestBody, ...(reasoning ? { reasoning: REASONING_DISABLED } : {}) },
             requestCompression: config.requestCompression,
             maxOutputTokens,
             signal: attemptSignal,
@@ -1244,9 +1245,20 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
           data = await send(includeReasoning);
         } catch (error) {
           const detail = error instanceof Error ? `${error.message}\n${error.cause instanceof Error ? error.cause.message : ''}` : String(error);
-          if (!includeReasoning || !isClassified(error) || error.kind !== 'unrecoverable' || !isUnknownReasoningParameter(detail)) throw error;
-          rememberEndpointRejectsReasoningField(url);
-          data = await send(false);
+          if (!isClassified(error) || error.kind !== 'unrecoverable') throw error;
+          const { thinking: disabledThinking, ...withoutDisabledThinking } = body;
+          if (includeReasoning && isUnknownReasoningParameter(detail)) {
+            rememberEndpointRejectsReasoningField(url);
+            data = await send(false);
+          } else if ((includeReasoning || disabledThinking !== undefined) && error.paidSendOutcome !== 'output_failure'
+            && isReasoningDisabledRejection(detail)) {
+            // The model reasons on every request (#5265): resend once without the disable.
+            // Not remembered, so a model switch on the same URL keeps reasoning off.
+            logger.warn('SDK', 'Custom/OpenAI endpoint refused to disable reasoning; resending once without the disable', { url });
+            data = await send(false, withoutDisabledThinking);
+          } else {
+            throw error;
+          }
         }
         let choice = data.choices?.[0];
         const firstContent = stripLeadingThinkBlock(assistantText(choice?.message?.content));

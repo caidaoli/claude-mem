@@ -536,32 +536,36 @@ function extractBalancedJsonFromIndex(text: string, startIdx: number): string | 
  * and trailing garbage after a valid JSON payload.
  */
 function extractBalancedJson(text: string, allowArray: boolean = false): string | null {
-  const scanFor = (startChar: '{' | '['): string | null => {
-    for (let i = 0; i < text.length; i++) {
-      if (text[i] !== startChar) continue;
-
-      const candidate = extractBalancedJsonFromIndex(text, i);
-      if (!candidate) continue;
-
-      try {
-        JSON.parse(candidate);
-        return candidate;
-      } catch {
-        // Continue searching for a later valid JSON segment
-      }
+  const parsableFrom = (startIdx: number, allowSkip: boolean = true): string | null => {
+    const candidate = extractBalancedJsonFromIndex(text, startIdx);
+    if (!candidate) return null;
+    try {
+      const data = JSON.parse(candidate);
+      if (!allowSkip && (Object.keys(data).length === 0 || data.skip === true)) return null;
+      return candidate;
+    } catch {
+      return null;
     }
-    return null;
   };
 
-  // Prefer object roots first to avoid accidentally extracting small arrays
-  // nested inside malformed object text (e.g., "files_modified":[]).
-  const objectCandidate = scanFor('{');
-  if (objectCandidate) return objectCandidate;
-
-  if (allowArray) {
-    return scanFor('[');
+  // An array counts only as the reply's root. A nested array such as
+  // "files_read":["a.ts"] inside a malformed object is not an answer, and
+  // returning it would hide the parse failure.
+  if (allowArray && text.startsWith('[')) {
+    const root = parsableFrom(0);
+    if (root) return root;
   }
 
+  // A skip ({} or {"skip":true}) counts only as the first object in the reply.
+  // One found after a malformed object is a fragment of that object's text,
+  // and accepting it would acknowledge the lost observation as skipped.
+  let firstObject = true;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== '{') continue;
+    const candidate = parsableFrom(i, firstObject);
+    firstObject = false;
+    if (candidate) return candidate;
+  }
   return null;
 }
 

@@ -340,6 +340,9 @@ export function snapshotResponseContext(session: ActiveSession, media?: Response
   };
 }
 
+/** A JSON-mode observation or summary object, optionally fenced, by its first key. */
+const JSON_OBSERVER_REPLY = /^\s*(?:```(?:json)?\s*)?\{\s*"(?:observations|skip|type|title|subtitle|facts|narrative|concepts|files_read|files_modified|request|investigated|learned|completed|next_steps|notes)"/;
+
 function isResponseContext(
   value: ProcessAgentResponseOptions | ResponseContext | undefined
 ): value is ResponseContext {
@@ -644,22 +647,24 @@ export async function processAgentResponse(
   // prose and auth prose are refusals, not conversational turns; appending them
   // makes the next request strictly larger than the one that just failed, which
   // is how an overflowed session could never recover on its own (#3800).
+  const parseAsJsonObservation = options?.parseJsonObservation === true;
+  const parseAsJsonSummary = options?.parseJsonSummary === true;
+  const usesJsonParsing = parseAsJsonObservation || parseAsJsonSummary;
+  // A JSON-mode reply that opens as the requested object answered the batch,
+  // even when it does not parse: an HTTP 403 it investigated is not a refusal.
+  const rejectionText = usesJsonParsing && JSON_OBSERVER_REPLY.test(text) ? '' : text;
   const isRejectionProse =
-    !!text &&
-    (isContextOverflowObserverOutput(text) ||
-      isQuotaLimitedObserverOutput(text) ||
-      isRateLimitedObserverOutput(text) ||
-      isAnthropicVerificationHoldObserverOutput(text) ||
-      isAuthFailureObserverOutput(text) ||
-      isTransportFailureObserverOutput(text));
+    !!rejectionText &&
+    (isContextOverflowObserverOutput(rejectionText) ||
+      isQuotaLimitedObserverOutput(rejectionText) ||
+      isRateLimitedObserverOutput(rejectionText) ||
+      isAnthropicVerificationHoldObserverOutput(rejectionText) ||
+      isAuthFailureObserverOutput(rejectionText) ||
+      isTransportFailureObserverOutput(rejectionText));
 
   if (text && !isRejectionProse) {
     session.conversationHistory.push({ role: 'assistant', content: text });
   }
-
-  const parseAsJsonObservation = options?.parseJsonObservation === true;
-  const parseAsJsonSummary = options?.parseJsonSummary === true;
-  const usesJsonParsing = parseAsJsonObservation || parseAsJsonSummary;
 
   let parsed: ParseResult;
   if (usesJsonParsing) {
@@ -687,7 +692,7 @@ export async function processAgentResponse(
     // The conversation filled up. Retire it and start a fresh generation
     // seeded with this session's own observations, rather than re-queueing into
     // a conversation that can only keep growing.
-    if (isContextOverflowObserverOutput(text)) {
+    if (isContextOverflowObserverOutput(rejectionText)) {
       await recycleObserverConversation(
         session,
         sessionManager,
@@ -698,7 +703,7 @@ export async function processAgentResponse(
       return null;
     }
 
-    if (isQuotaLimitedObserverOutput(text)) {
+    if (isQuotaLimitedObserverOutput(rejectionText)) {
       logger.warn('PARSER', `${agentName} returned quota-limit prose — pausing generator and preserving queued batch`, {
         sessionId: session.sessionDbId,
         outputClass: 'prose',
@@ -720,7 +725,7 @@ export async function processAgentResponse(
     // batch, so confirming it would lose the work; it is a throttle, not a
     // spent allowance, so it pauses under its own 'rate_limit' category and
     // the runner books the short rate-limit window a thrown 429 gets.
-    if (isRateLimitedObserverOutput(text)) {
+    if (isRateLimitedObserverOutput(rejectionText)) {
       logger.warn('PARSER', `${agentName} returned a rate-limit reply — pausing generator and preserving queued batch`, {
         sessionId: session.sessionDbId,
         outputClass: 'prose',
@@ -738,7 +743,7 @@ export async function processAgentResponse(
       return null;
     }
 
-    if (isAnthropicVerificationHoldObserverOutput(text)) {
+    if (isAnthropicVerificationHoldObserverOutput(rejectionText)) {
       await sessionManager.resetProcessingToPending(session.sessionDbId);
       session.abortReason = 'auth:observer_verification_hold';
       try {
@@ -757,11 +762,11 @@ export async function processAgentResponse(
       return null;
     }
 
-    if (isAuthFailureObserverOutput(text)) {
+    if (isAuthFailureObserverOutput(rejectionText)) {
       // An org that disabled subscription access is refused like a signed-out
       // observer, but /login cannot fix it (#4677): keep it apart so the
       // runner books the API-key / admin remedy instead.
-      const orgDisabledSubscription = isOrgDisabledSubscriptionObserverOutput(text);
+      const orgDisabledSubscription = isOrgDisabledSubscriptionObserverOutput(rejectionText);
       await sessionManager.resetProcessingToPending(session.sessionDbId);
       session.abortReason = orgDisabledSubscription ? 'auth:observer_org_policy' : 'auth:observer_text';
       try {
@@ -789,7 +794,7 @@ export async function processAgentResponse(
     // run. Preserve the batch like the quota and auth cases above; confirming
     // it here would turn a transient network fault into permanent data loss
     // (#3752).
-    if (isTransportFailureObserverOutput(text)) {
+    if (isTransportFailureObserverOutput(rejectionText)) {
       await sessionManager.resetProcessingToPending(session.sessionDbId);
       session.abortReason = 'transport:observer_text';
       try {

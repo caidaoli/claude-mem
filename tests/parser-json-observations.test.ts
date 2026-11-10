@@ -54,7 +54,7 @@ describe('parseObservationsJson', () => {
     expect(parseObservationsJsonResult(input)).toEqual({ valid: false });
   });
 
-  it.each(['{"skip":true}', '{}', '[]', '{"observations":[]}', '```json\n{"skip":true}\n```'])('accepts an explicit JSON skip: %s', input => {
+  it.each(['{"skip":true}', '{}', '[]', '{"observations":[]}', '```json\n{"skip":true}\n```', 'Nothing to record: {"skip":true}'])('accepts an explicit JSON skip: %s', input => {
     expect(parseObservationsJsonResult(input)).toEqual({ valid: true, observations: [], summary: null });
   });
 
@@ -69,10 +69,16 @@ describe('parseObservationsJson', () => {
     expect(result).toEqual([]);
   });
 
-  it('logs raw response content on JSON parse failure', () => {
+  it.each([
+    '```json\n{"type":}\n```',
+    // A nested array must not stand in for the malformed object and hide the failure.
+    '{"type":"discovery","narrative":"ran "curl"","files_read":["a.ts"]}',
+    // Nor may an empty object inside it pass as an explicit skip.
+    '{"type":"discovery","narrative":"ran "x" and got {} back"}',
+    '{"type":"discovery","narrative":"ran "x" and got {"skip":true} back"}',
+  ])('logs raw response content on JSON parse failure: %s', input => {
     const errorSpy = loggerSpies[1];
 
-    const input = '```json\n{"type":}\n```';
     const result = parseObservationsJson(input, 'test-correlation-id');
     expect(result).toEqual([]);
 

@@ -612,6 +612,8 @@ describe('ResponseProcessor', () => {
     it.each([
       ['json-observation', ''], ['json-observation', 'not JSON'],
       ['json-observation', '{"observations":'], ['json-observation', '{"error":"failed"}'],
+      // Malformed observation JSON about an HTTP 403 is an unusable answer, not an auth refusal.
+      ['json-observation', '{"type":"discovery","facts":["curl returned HTTP 403"],"narrative":"ran "curl"","files_read":["a.ts"]}'],
       ['json-summary', ''], ['json-summary', 'not JSON'],
       ['json-summary', '{"request":'], ['json-summary', '{}'],
     ] as const)('retries an unusable %s batch once, then drops it visibly: %s', async (format, text) => {
