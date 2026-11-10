@@ -24,6 +24,11 @@ import { DATA_DIR, DB_PATH, USER_SETTINGS_PATH, ensureDir, paths } from '../shar
 import { HookSpool, migrateLegacySessionEndReplay } from '../shared/hook-spool.js';
 import { HookSpoolDrainer, hookSpoolConsumedMarkers } from './worker/hook-spool-drain.js';
 import { pruneOldLogs } from './worker/log-retention.js';
+import {
+  PLUGIN_CACHE_PRUNE_FIRST_DELAY_MS,
+  PLUGIN_CACHE_PRUNE_INTERVAL_MS,
+  pruneSupersededPluginCache,
+} from '../npx-cli/utils/prune-cache.js';
 import { parseRetentionDays } from '../shared/retention-days.js';
 import { HookSpoolRoutes } from './worker/http/routes/HookSpoolRoutes.js';
 import { HOOK_TIMEOUTS } from '../shared/hook-constants.js';
@@ -144,9 +149,10 @@ import {
   handleDevinCommand
 } from './integrations/DevinHooksInstaller.js';
 import {
-  handleAntigravityCliCommand
+  handleAntigravityCliCommand,
+  healStaleAntigravityHooksConfig
 } from './integrations/AntigravityCliHooksInstaller.js';
-import { notifyGrokBotIndex, watchGrokBotIndexSettings } from './integrations/GrokBotIndexWriter.js';
+import { notifyGrokBotIndex, watchGrokBotIndexChanges, stopGrokBotIndexChanges } from './integrations/GrokBotIndexWriter.js';
 
 import { DatabaseManager } from './worker/DatabaseManager.js';
 import { SessionManager } from './worker/SessionManager.js';
@@ -333,6 +339,8 @@ export class WorkerService implements WorkerRef {
   private bootWatchdog: ReturnType<typeof setTimeout> | null = null;
   private pendingSessionResumeTimer: ReturnType<typeof setInterval> | null = null;
   private logRetentionTimer: ReturnType<typeof setTimeout> | null = null;
+  private pluginCachePruneTimer: ReturnType<typeof setTimeout> | null = null;
+  private pluginCachePruneInFlight = false;
   private autoUpdateTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly hookSpool = new HookSpool();
   private readonly hookSpoolDrainer = new HookSpoolDrainer(this.hookSpool);
@@ -639,6 +647,52 @@ export class WorkerService implements WorkerRef {
       clearTimeout(this.logRetentionTimer);
       clearInterval(this.logRetentionTimer);
       this.logRetentionTimer = null;
+    }
+  }
+
+  /**
+   * Claude Code's marketplace update drops each release into its own folder
+   * under the plugin cache and leaves the old ones there (#5681). The
+   * installer only prunes when it copies a version itself (#4105), and a
+   * worker that stays up never goes through that copy. Sweep once boot has
+   * settled, then hourly. The folder this process is running from is kept.
+   */
+  private startPluginCachePrune(): void {
+    if (this.pluginCachePruneTimer != null || this.isShuttingDown) return;
+    const sweep = (): void => {
+      if (this.pluginCachePruneInFlight || this.isShuttingDown) return;
+      this.pluginCachePruneInFlight = true;
+      void pruneSupersededPluginCache({
+        runningScriptPath: __dirname,
+        additionalProtectedVersions: [packageVersion],
+      }).then(result => {
+        if (result.removed.length > 0) {
+          logger.info('SYSTEM', `Pruned ${result.removed.length} stale plugin cache version(s)`, { removed: result.removed });
+        }
+        for (const failure of result.failed) {
+          logger.warn('SYSTEM', `Could not prune plugin cache version ${failure.version}`, { reason: failure.reason });
+        }
+      }).catch(error => {
+        logger.warn('SYSTEM', 'Plugin cache prune failed; old version folders are kept until the next sweep', {},
+          error instanceof Error ? error : new Error(String(error)));
+      }).finally(() => {
+        this.pluginCachePruneInFlight = false;
+      });
+    };
+    this.pluginCachePruneTimer = setTimeout(() => {
+      sweep();
+      if (this.isShuttingDown) return;
+      this.pluginCachePruneTimer = setInterval(sweep, PLUGIN_CACHE_PRUNE_INTERVAL_MS);
+      this.pluginCachePruneTimer.unref?.();
+    }, PLUGIN_CACHE_PRUNE_FIRST_DELAY_MS);
+    this.pluginCachePruneTimer.unref?.();
+  }
+
+  private stopPluginCachePrune(): void {
+    if (this.pluginCachePruneTimer != null) {
+      clearTimeout(this.pluginCachePruneTimer);
+      clearInterval(this.pluginCachePruneTimer);
+      this.pluginCachePruneTimer = null;
     }
   }
 
@@ -1362,8 +1416,8 @@ export class WorkerService implements WorkerRef {
       // Seed Grok Bot Memory INDEX files from current observations so seats
       // do not wait for the next store before the mid-attach file exists.
       notifyGrokBotIndex();
-      // Standing line / project-map edits must reach idle seats too.
-      watchGrokBotIndexSettings();
+      // Imports, sync, deletions and settings edits must reach idle seats too.
+      watchGrokBotIndexChanges();
 
       if (this.chromaMcpManager) {
         ChromaSync.registerBackfillStore(this.dbManager.getSessionStore());
@@ -1392,6 +1446,7 @@ export class WorkerService implements WorkerRef {
       // lands ~5 minutes after start, then every backup interval.
       this.dbManager.getBackupManager()?.start();
       this.startLogRetention();
+      this.startPluginCachePrune();
 
       const mcpServerPath = path.join(__dirname, 'mcp-server.cjs');
       this.mcpReady = existsSync(mcpServerPath);
@@ -1562,6 +1617,7 @@ export class WorkerService implements WorkerRef {
       markShuttingDown: () => { this.isShuttingDown = true; },
       beforeGracefulShutdown: async () => {
         this.memoryFeedInvalidation.close();
+        stopGrokBotIndexChanges();
         void this.deepSearchClient.close();
         this.workViewRoutes?.close();
         this.workViewRoutes = null;
@@ -1569,6 +1625,7 @@ export class WorkerService implements WorkerRef {
         this.sharedWorkSync = null;
         this.stopPendingSessionResume();
         this.stopLogRetention();
+        this.stopPluginCachePrune();
         this.stopAutoUpdateTimer();
         this.hookSpoolDrainer.stop();
         // Stop the idle monitor before the drain: its own trigger has
@@ -2259,6 +2316,14 @@ export async function main() {
     }
 
     case 'hook': {
+      // A pre-#5085 Antigravity install left a PreToolUse entry in
+      // ~/.gemini/config/hooks.json pointing at this binary; the current
+      // adapter answers it with no `decision`, so agy denies every tool call
+      // until the file is migrated (#5665). Heal it on the way in — a no-op
+      // when the file is current, missing, or corrupt.
+      if (process.argv[3] === 'antigravity-cli') {
+        healStaleAntigravityHooksConfig();
+      }
       // Shared with the hook-only bundle (src/cli/hook-entry.ts), which the
       // launcher and bun-runner.js run for `hook` when the plugin ships it.
       const { runHookSubcommand } = await import('../cli/run-hook-subcommand.js');
@@ -2379,6 +2444,10 @@ export async function main() {
     // never a foreground worker (#5490).
     case undefined:
     case '--daemon': {
+      // Worker startup also migrates stale Antigravity hooks.json entries
+      // left by an in-place upgrade (#5665); see the `hook` case.
+      healStaleAntigravityHooksConfig();
+
       // Before anything below spawns a child (the reclaim probes, the
       // supervisor, chroma-mcp), stand in claude-mem's data dir rather than
       // whatever cwd this daemon was launched with (#3706; EPERM on

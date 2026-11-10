@@ -34,6 +34,7 @@ export interface OwnerRule {
   when: string
   then: string
   quotes: RuleQuote[]
+  quotesOmitted?: WorkViewRule['quotesOmitted']
   timesSeen: number
   latestAt: string
   latestAtEpoch?: number

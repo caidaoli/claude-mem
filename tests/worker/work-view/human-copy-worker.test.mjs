@@ -514,3 +514,19 @@ test('the chat-completions adapter retains HTTP failure semantics', async () => 
   });
   await assert.rejects(provider({}), { message: 'Summary request returned 503.' });
 });
+
+// A temporary source read failure is not evidence that a queued request was deleted.
+test('failed and stale snapshots do not retire pending requests', async () => {
+  let now = 0, calls = 0;
+  const instance = worker(async input => { calls++; return { output: copy(input) }; }, { now: () => now, quietMs: 100 });
+  disposals.push(() => instance.close());
+  instance.observe({ ...view(request()), source: { connected: true, stale: false } });
+  instance.observe({ ...view(), source: { connected: false, stale: true } });
+  assert.equal(instance.status().queued, 1);
+  instance.observe({ ...view(), source: { connected: true, stale: true } });
+  assert.equal(instance.status().queued, 1);
+  now = 1000;
+  instance.pump();
+  await waitForWorker(instance);
+  assert.equal(calls, 1);
+});

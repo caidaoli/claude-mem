@@ -210,8 +210,6 @@ export function ContextSettingsModal({
   const { t } = useI18n();
   const dialogRef = useDialogFocus(isOpen);
   const [formState, setFormState] = useState<Settings>(settings);
-  // From the saved settings, not the form: the field stays editable while a
-  // user types any other URL, and read-only for the observer's own endpoint.
   const observerManagesBaseUrl = isClaudeMemObserverBaseUrl(settings.CLAUDE_MEM_OPENROUTER_BASE_URL);
   // Unknown or missing values read as the stored default, like claudeProviderOptionLabel.
   const claudeAuthMethod = CLAUDE_AUTH_METHODS.find(m => m === formState.CLAUDE_MEM_CLAUDE_AUTH_METHOD)
@@ -640,11 +638,14 @@ export function ContextSettingsModal({
                     <input
                       type="text"
                       value={formState.CLAUDE_MEM_OPENROUTER_BASE_URL || ''}
-                      onChange={(e) => updateSetting('CLAUDE_MEM_OPENROUTER_BASE_URL', e.target.value)}
                       placeholder="https://openrouter.ai/api/v1"
-                      readOnly={observerManagesBaseUrl}
+                      readOnly
                     />
                   </FormField>
+                  <span className="toggle-description">
+                    {t.settings.endpointConfigSet} <code>CLAUDE_MEM_OPENROUTER_BASE_URL</code>{' '}{t.settings.endpointConfigIn}{' '}
+                    <code>~/.claude-mem/settings.json</code>{' '}{t.settings.openrouterEndpointConfigOutro}
+                  </span>
                   {!observerManagesBaseUrl && (
                     <FormField
                       label={t.settings.reasoningEffort}
@@ -859,7 +860,7 @@ export function ContextSettingsModal({
                   >
                     <select
                       value={openAICompatPresetOption(formState.CLAUDE_MEM_OPENAI_COMPAT_PRESET).id}
-                      onChange={(e) => updateSetting('CLAUDE_MEM_OPENAI_COMPAT_PRESET', e.target.value)}
+                      disabled
                     >
                       {OPENAI_COMPAT_PRESET_OPTIONS.map(preset => (
                         <option key={preset.id} value={preset.id}>{t.settings.endpointPresetLabels[preset.id as keyof typeof t.settings.endpointPresetLabels] ?? preset.label}</option>
@@ -878,10 +879,14 @@ export function ContextSettingsModal({
                     <input
                       type="text"
                       value={formState.CLAUDE_MEM_OPENAI_COMPAT_BASE_URL || ''}
-                      onChange={(e) => updateSetting('CLAUDE_MEM_OPENAI_COMPAT_BASE_URL', e.target.value)}
                       placeholder={openAICompatPresetOption(formState.CLAUDE_MEM_OPENAI_COMPAT_PRESET).baseUrl || 'https://my-gateway.example.com/v1'}
+                      readOnly
                     />
                   </FormField>
+                  <span className="toggle-description">
+                    {t.settings.compatEndpointConfigIntro} <code>~/.claude-mem/settings.json</code>{' '}
+                    {t.settings.compatEndpointConfigOutro}
+                  </span>
                   <FormField
                     label={t.settings.model}
                     tooltip={t.settings.compatModelTooltip}

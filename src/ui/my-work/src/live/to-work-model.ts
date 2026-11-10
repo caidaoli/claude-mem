@@ -165,7 +165,13 @@ function toRequest(raw: WorkViewHumanRequest, agents: WorkViewAgent[], now: numb
   const focusAreaId = resolveFocusAreaId(raw.focusAreaId, focusAreas)
   const title = generatedTitle ? raw.title.trim() || null : copyReady && copy.title?.trim() ? copy.title.trim() : null
   // Checked against the full prompts here, since the card's quotes are cut to 400 characters.
-  const titleRepeatsPrompt = !!title && repeatsOwnerWords(title, [raw.original, ...raw.scopeUpdates].map((prompt) => prompt.text ?? ''))
+  const ownerWords = [raw.original, ...raw.scopeUpdates].map((prompt) => prompt.text ?? '')
+  const titleRepeatsPrompt = !!title && repeatsOwnerWords(title, ownerWords)
+  const summary = raw.groupId && recordedReview ? (reviewCounts ? recordedReview.summary?.trim() || null : null) : copyReady && copy.summary?.trim() ? copy.summary.trim() : null
+  const summaryRepeatsPrompt = !!summary && repeatsOwnerWords(summary, ownerWords)
+  // Check the recorded text before a blocked request adds its "Unblock:" label.
+  // Checked requests use a fixed next step instead of this recorded text.
+  const nextRepeatsPrompt = status !== 'checked' && repeatsOwnerWords(recordedNext, ownerWords)
 
   const estimateAt = measuredCompletionAt(readings, status === 'shipped')
   const displayTime = {
@@ -183,7 +189,9 @@ function toRequest(raw: WorkViewHumanRequest, agents: WorkViewAgent[], now: numb
     // Only an untitled request reads "Title unavailable": a group title stands even when the human-copy writer gave up.
     titleUnavailable: (!title && copy?.state === 'unavailable') || undefined,
     ...(titleRepeatsPrompt ? { titleRepeatsPrompt } : {}),
-    summary: raw.groupId && recordedReview ? (reviewCounts ? recordedReview.summary?.trim() || null : null) : copyReady && copy.summary?.trim() ? copy.summary.trim() : null,
+    summary,
+    ...(summaryRepeatsPrompt ? { summaryRepeatsPrompt } : {}),
+    ...(nextRepeatsPrompt ? { nextRepeatsPrompt } : {}),
     stageNote: copy?.stage?.trim() || undefined,
     ...(focusAreaId ? { focusAreaId } : {}),
     canMoveFocus: !!raw.anchorConversationKey,
@@ -396,6 +404,7 @@ function toOwnerRule(rule: WorkViewRule, now: number): OwnerRule {
     when: rule.when,
     then: rule.then,
     quotes,
+    quotesOmitted: rule.quotesOmitted ?? 0,
     timesSeen: rule.timesSeen,
     latestAt: Number.isFinite(latest) ? formatRecordTime(latest, now) : 'not recorded',
     ...(Number.isFinite(latest) ? { latestAtEpoch: latest } : {}),

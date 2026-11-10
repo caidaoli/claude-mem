@@ -35,6 +35,7 @@ import { boundedInteger } from './CodexAppServerPool.js';
 import { sameObservationContext } from './codex-observation-batch.js';
 import { prepareTurnImages, type ChatContentPart, type PreparedTurnMedia, type TurnImage, type TurnImageRequest } from '../media/inference.js';
 import { isMediaInferenceEnabled, LOCAL_IMAGE_REQUEST_BOUNDS } from './media-capability.js';
+import { MediaError } from '../../shared/media-contract.js';
 
 // tiktoken is external (wasm sidecar) and the worker bundle is shared by every
 // hook, which may run from a plugin cache without node_modules. Load it on first
@@ -822,7 +823,11 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
       return null;
     }
     const store = this.dbManager.getMediaStore();
-    return prepareTurnImages(messages, attachmentId => store.readVariant(attachmentId, 'llm'), LOCAL_IMAGE_REQUEST_BOUNDS);
+    return prepareTurnImages(messages, async attachmentId => {
+      const metadata = store.getMetadata(attachmentId).llm;
+      if (!metadata) throw new MediaError('media_not_ready');
+      return { bytes: await store.readVariant(attachmentId, 'llm'), width: metadata.width, height: metadata.height };
+    }, LOCAL_IMAGE_REQUEST_BOUNDS);
   }
 
   /** One read-only question from My Work's automatic refresh (refresh-task.ts), answered as text the
