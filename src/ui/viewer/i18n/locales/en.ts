@@ -215,8 +215,6 @@ export const en = {
     readCostDesc: 'Tokens to read this observation',
     workInvestment: 'Work investment',
     workInvestmentDesc: 'Tokens spent creating this observation',
-    savings: 'Savings',
-    savingsDesc: 'Total tokens saved by reusing context',
     // Backups section
     backups: 'Backups',
     backupsDesc: 'Automatic snapshots of your memory database',
@@ -543,6 +541,7 @@ export const en = {
       change: 'Change',
       security_alert: 'Security Alert',
       security_note: 'Security Note',
+      sensitive: 'Sensitive',
       other: 'Other',
     },
   },

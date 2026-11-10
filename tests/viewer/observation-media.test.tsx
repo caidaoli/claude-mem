@@ -42,6 +42,15 @@ const noop = () => {};
 // Never in any generic rendering: locators, raw URLs, provenance internals.
 const FORBIDDEN = ['/Users/', 'file://', 'data:image', 'source_pointer', 'sourceLocatorPath', 'http://', 'https://'];
 
+describe('image-free observations', () => {
+  it('renders no media strip without attachments', () => {
+    const html = render(<ObservationCard observation={baseObservation} onDeleted={noop} />);
+    expect(html).not.toContain('media-strip');
+    // An empty ref set renders the same way.
+    expect(render(<ObservationCard observation={{ ...baseObservation, media: { version: 1, attachments: [] } }} onDeleted={noop} />)).toBe(html);
+  });
+});
+
 describe('thumbnail strip', () => {
   it('bounds thumbnails, counts the rest and labels every tile from its request label', () => {
     const media = mediaWith(6, true);

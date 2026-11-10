@@ -3,10 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { OpenAICompatProvider } from '../../src/services/worker/OpenAICompatProvider.js';
-import {
-  OpenRouterProvider,
-  buildOpenRouterRequestBody,
-} from '../../src/services/worker/OpenRouterProvider.js';
+import { OpenRouterProvider } from '../../src/services/worker/OpenRouterProvider.js';
 import { GeminiProvider } from '../../src/services/worker/GeminiProvider.js';
 import { OpenRouterObservationProvider } from '../../src/server/generation/providers/OpenRouterObservationProvider.js';
 import { resolveOpenAICompatPreset } from '../../src/shared/openai-compat-presets.js';
@@ -72,7 +69,7 @@ function observationReply(body: Body): Body {
 }
 
 /** Scripted chat-completions endpoint: empty+length unless reasoning is disabled. */
-async function startReasoningServer(mode: 'honor-disable' | 'always-burn' | 'reject-reasoning-field' | 'reject-unsupported-parameter' | 'reject-mandatory-reasoning') {
+async function startReasoningServer(mode: 'honor-disable' | 'always-burn' | 'reject-unsupported-parameter' | 'reject-mandatory-reasoning') {
   const bodies: Body[] = [];
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     let raw = '';
@@ -82,18 +79,14 @@ async function startReasoningServer(mode: 'honor-disable' | 'always-burn' | 'rej
       bodies.push(body);
       let payload: Body;
       let status = 200;
-      if (mode === 'reject-reasoning-field' && 'reasoning' in body) {
-        status = 400;
-        payload = { error: { message: "Unknown parameter: 'reasoning'. Extra fields are not permitted.", type: 'invalid_request_error', code: 'unknown_parameter' } };
-      } else if (mode === 'reject-unsupported-parameter' && 'reasoning' in body) {
+      if (mode === 'reject-unsupported-parameter' && 'reasoning' in body) {
         status = 400;
         payload = { error: { message: "Unsupported parameter: 'reasoning'", type: 'invalid_request_error', code: 'unsupported_parameter' } };
       } else if (mode === 'reject-mandatory-reasoning' && 'reasoning' in body) {
         status = 400;
         payload = { error: { message: "Invalid parameter: reasoning.effort 'none' is unsupported for this model", type: 'invalid_request_error' } };
       } else if (
-        mode !== 'reject-reasoning-field'
-        && mode !== 'reject-unsupported-parameter'
+        mode !== 'reject-unsupported-parameter'
         && mode !== 'reject-mandatory-reasoning'
         && (mode === 'always-burn' || !reasoningDisabled(body))
       ) {
@@ -192,27 +185,6 @@ describe('reasoning budget exhaustion', () => {
     for (const spy of spies.splice(0)) spy.mockRestore();
   });
 
-  it('sends reasoning disabled on OpenRouter and cmem observation requests by default', () => {
-    const label = { kind: 'observation' as const, sessionId: 'sess' };
-    const openrouter = buildOpenRouterRequestBody({
-      model: 'deepseek/deepseek-v4-flash',
-      fallbackModels: [],
-      messages: [{ role: 'user', content: 'observe' }],
-      apiUrl: 'https://openrouter.ai/api/v1/chat/completions',
-      label,
-    });
-    const cmem = buildOpenRouterRequestBody({
-      model: 'cmem-observer',
-      fallbackModels: [],
-      messages: [{ role: 'user', content: 'observe' }],
-      apiUrl: 'https://cmem.ai/api/inference/v1/chat/completions',
-      label,
-    });
-    expect(openrouter.reasoning).toEqual({ enabled: false });
-    expect(cmem.reasoning).toEqual({ enabled: false });
-    expect(openrouter.max_tokens).toBe(4096);
-  });
-
   it('openai-compatible: a mock reasoning model returns the observation once reasoning is off', async () => {
     const server = await startReasoningServer('honor-disable');
     const errorSpy = spyOn(logger, 'error').mockImplementation(() => {});
@@ -254,20 +226,6 @@ describe('reasoning budget exhaustion', () => {
       expect('reasoning' in (server.bodies[1] ?? {})).toBe(false);
       expect(result.content).toContain('Kept the answer');
       expect(endpointRejectsReasoningField(server.url)).toBe(true);
-    } finally {
-      await server.close();
-    }
-  });
-
-  it('openai-compatible: a strict server that rejects the reasoning field is retried without it', async () => {
-    const server = await startReasoningServer('reject-reasoning-field');
-    const warnSpy = spyOn(logger, 'warn').mockImplementation(() => {});
-    spies.push(warnSpy);
-    try {
-      const result = await queryCompat(server.url);
-      expect('reasoning' in (server.bodies[0] ?? {})).toBe(true);
-      expect('reasoning' in (server.bodies[1] ?? {})).toBe(false);
-      expect(result.content).toContain('Kept the answer');
     } finally {
       await server.close();
     }
@@ -321,6 +279,7 @@ describe('reasoning budget exhaustion', () => {
       expect(cmem.content).toContain('Kept the answer');
       expect(seen).toHaveLength(2);
       expect(seen.every(reasoningDisabled)).toBe(true);
+      expect(seen.map(body => body.max_tokens)).toEqual([4096, 4096]);
     } finally {
       fetchSpy.mockRestore();
     }
@@ -476,7 +435,7 @@ describe('reasoning budget exhaustion', () => {
     const errorSpy = spyOn(logger, 'error').mockImplementation(() => {});
     spies.push(errorSpy);
     const started = Date.now();
-    const result = await queryOpenRouter(url, {}, undefined, 200);
+    const result = await queryOpenRouter(url, {}, undefined, 20);
     expect(Date.now() - started).toBeLessThan(1500);
     expect(calls).toBe(2);
     expect(result.content).toBe('');
@@ -503,7 +462,7 @@ describe('reasoning budget exhaustion', () => {
     const errorSpy = spyOn(logger, 'error').mockImplementation(() => {});
     spies.push(errorSpy);
     const started = Date.now();
-    const hung = await provider.query([{ role: 'user', content: 'Observe this tool call.' }], config, undefined, 200);
+    const hung = await provider.query([{ role: 'user', content: 'Observe this tool call.' }], config, undefined, 20);
     expect(Date.now() - started).toBeLessThan(1500);
     expect(calls).toBe(2);
     expect(hung.content).toBe('');

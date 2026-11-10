@@ -217,8 +217,6 @@ export const zhCN: TranslationKeys = {
     readCostDesc: '读取此观察记录的 Token 数',
     workInvestment: '工作投入',
     workInvestmentDesc: '创建此观察记录花费的 Token 数',
-    savings: '节省',
-    savingsDesc: '通过复用上下文节省的总 Token 数',
     // Backups section
     backups: '备份',
     backupsDesc: '自动快照记忆数据库',
@@ -542,6 +540,7 @@ export const zhCN: TranslationKeys = {
       change: '变更',
       security_alert: '安全警报',
       security_note: '安全备注',
+      sensitive: '敏感',
       other: '其他',
     },
   },
