@@ -17,6 +17,7 @@ import { logger } from '../../utils/logger.js';
 import { findContextBlockRange } from '../../utils/context-injection.js';
 import { readJsonFileWithBom, writeJsonFileAtomic, writeTextFileAtomic } from '../../shared/atomic-json.js';
 import { paths } from '../../shared/paths.js';
+import { RUNTIME_SKILLS } from '../../shared/runtime-skills.js';
 import { buildSpawnSyncInvocation, lookupWindowsCommandCandidates, type SpawnSyncInvocation } from '../../shared/spawn.js';
 
 const CODEX_DIR = path.resolve(process.env.CODEX_HOME || path.join(homedir(), '.codex'));
@@ -32,7 +33,7 @@ const REQUIRED_MARKETPLACE_FILES = [
   path.join('plugin', '.codex-plugin', 'plugin.json'),
   path.join('plugin', '.mcp.json'),
   path.join('plugin', 'hooks', 'codex-hooks.json'),
-  path.join('plugin', 'skills', 'mem-search', 'SKILL.md'),
+  path.join('plugin', 'skills', RUNTIME_SKILLS.memSearch, 'SKILL.md'),
 ];
 const WINDOWS_CODEX_EXTENSIONS = new Set(['.cmd', '.exe', '.bat', '.com']);
 const MACOS_CODEX_BUNDLE_PATHS = [
@@ -302,6 +303,24 @@ function tomlTableKey(line: string): string | null {
   const table = /^\s*\[(?!\[)(.*)\]\s*$/.exec(line);
   const parsed = table ? tomlKeyPath(table[1]) : null;
   return parsed && !parsed.rest ? JSON.stringify(parsed.keys) : null;
+}
+
+/** Read the same semantic table/key names that the managed writer updates. */
+export function readTomlBooleanInTable(content: string, header: string, key: string): boolean | undefined {
+  const tableKey = tomlTableKey(header);
+  let inTable = false;
+  for (const line of tomlStructuralLines(content.split('\n'))) {
+    if (/^\s*\[/.test(line)) {
+      inTable = tableKey !== null && tomlTableKey(line) === tableKey;
+      continue;
+    }
+    if (!inTable) continue;
+    const parsed = tomlKeyPath(line);
+    if (parsed?.keys.length !== 1 || parsed.keys[0] !== key) continue;
+    const value = /^=\s*(true|false)\s*$/.exec(parsed.rest);
+    if (value) return value[1] === 'true';
+  }
+  return undefined;
 }
 
 export function setTomlBooleanInTable(content: string, header: string, key: string, enabled: boolean): string {

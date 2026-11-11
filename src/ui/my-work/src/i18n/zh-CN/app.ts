@@ -27,4 +27,5 @@ export const APP_ZH_CN: Readonly<Record<string, string>> = {
   'Spec IDs': '规格编号',
 
   "Account & billing": "账户与账单",
+  "Loading…": "加载中…",
 }

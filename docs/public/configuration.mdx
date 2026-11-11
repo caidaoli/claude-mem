@@ -9,6 +9,61 @@ description: "Environment variables and settings for Claude-Mem"
 
 Settings are managed in `~/.claude-mem/settings.json`. The file is auto-created with defaults on first run.
 
+### Choose bundled skills
+
+All bundled skills are enabled by default. To hide unwanted skills from Claude
+Code's listing and slash commands, add their folder names to `settings.json`:
+
+```json
+{
+  "CLAUDE_MEM_SKILLS_DISABLED": "make-plan,do,smart-explore"
+}
+```
+
+A JSON array of names also works. Use bare names such as `make-plan`, not
+`claude-mem:make-plan`. Names are case-sensitive; paths and wildcards are rejected.
+The environment variable `CLAUDE_MEM_SKILLS_DISABLED` overrides the file, including
+an empty value. Save the preference in `settings.json` if it must survive updates
+started by a process that does not inherit your shell's environment.
+
+The installer applies the list to the installed version cache and marketplace
+copy on install, update, and repair. The published package and source checkout
+keep every skill. New skills introduced by an update remain enabled unless named
+in the list. This controls plugin skill discovery, not memory capture or MCP tools.
+
+Four skills always stay enabled, because claude-mem reads their files while it runs.
+If you list one of them, it is left in place and the installer and SessionStart
+hook print a warning naming it:
+
+| Skill              | Read by                                                        |
+|--------------------|----------------------------------------------------------------|
+| `mem-search`       | The `/api/instructions` endpoint and `install --ide codex`     |
+| `how-it-works`     | The viewer's "How it works" explainer                          |
+| `request-progress` | The My Work refresh                                            |
+| `owner-goals`      | The My Work refresh                                            |
+
+Claude Code's SessionStart hook also reapplies the list after marketplace updates
+and settings changes. When it reports that selection changed, restart Claude Code
+to reload its skill listing: the current session may have already loaded the old
+list. Removing a name, or setting the list to `""`, restores that skill through
+the same flow. Other hosts may cache their own copy and need a reinstall/reload.
+
+Skills are moved, not deleted, to `.claude-mem-disabled-skills` beside the installed
+`skills` directory. If an update supplies a new copy in the same directory, the
+older copy is preserved in `.claude-mem-disabled-skills/.history`; enabling the
+skill uses the new copy. These are install-local backups, not a backup of custom
+edits across reinstalls, which already replace the installed plugin tree.
+Use the normal updater rather than overlaying a partial plugin tree: if a partial
+update removes an upstream skill but leaves its parked copy, re-enabling it can
+restore that older copy.
+
+An invalid setting or unsafe path leaves skill content in place and reports the
+problem; install and repair still finish. Symbolic links, foreign backup directories, and incomplete skill
+folders are refused. Concurrent sessions serialize changes with the empty
+`.claude-mem-skill-selection.lock` directory. If a process is killed during a
+change, close the other sessions, inspect the installed tree, remove that empty
+lock directory, and restart to finish applying the saved selection.
+
 ### Core Settings
 
 | Setting                       | Default                         | Description                           |
@@ -36,6 +91,7 @@ Settings are managed in `~/.claude-mem/settings.json`. The file is auto-created 
 | `CLAUDE_MEM_SEMANTIC_INJECT_FORMAT` | `narrative`              | `narrative` adds each match's title and full narrative. `index` adds one line per match with its id, title and subtitle and points Claude to `get_observations` for the details. `narrative` is the default because it works without Claude making a tool call: in `index` mode a match it does not expand only contributes its title and subtitle. An `index` line costs a fraction of a narrative, so `index` can carry more matches for the same tokens; pair it with a higher limit. |
 | `CLAUDE_MEM_SEARCH_RECENCY_DAYS` | `90`                      | Date-less semantic search (`search`, `search_observations`, the timeline) only ranks matches created in the last N days; older matches are left out of the answer. `0` turns the window off so every indexed match stays eligible; a larger N widens it. A request that passes `dateStart`/`dateEnd` always uses that range instead of the window. Restart the worker after changing it. |
 | `CLAUDE_MEM_FILE_READ_GATE_ENABLED` | `true`                    | Block whole-file Reads of code files of 32 KB and up that have observation history and send Claude to `smart_outline` / `smart_unfold` / `get_observations` instead (Claude Code only). Targeted Reads with `offset`/`limit` still work. `false` lets every Read through and still adds the file's timeline as context. See [File Read Gate](/file-read-gate). |
+| `CLAUDE_MEM_LINE_ANCHORS_ENABLED` | `false`                     | Opt-in; only `true` turns it on. When the worker stores an observation, it then records in the observation's metadata the path, line number and exact text of up to 3 distinctive lines in the files that observation names, taken from the batch's Claude Code tool calls and never from model output: a line inside the text an `Edit` or `MultiEdit` edit wrote, or a line of a `Read` with an `offset` above 1 that its stored tool response holds. A file's timeline before a Read then ends each such row with where that code is now (`@L212`), found again by its text (exact, then ignoring whitespace), or `(code changed since)` when it is gone or now in more than one place: a line number is never guessed. Off, nothing is recorded or read and the timeline is unchanged. The recorded lines are source text and go wherever the observation goes, Cloud Sync included; secrets in them are left out only when [auto-redaction](/usage/auto-redaction) (`CLAUDE_MEM_REDACT_ENABLED`) is on. Set in `settings.json`, it applies from the next Read and the next stored observation; an environment variable of the same name overrides `settings.json`, and the worker reads its environment only when it starts. See [Line Anchors](/file-read-gate#line-anchors). |
 | `CLAUDE_MEM_WORKER_PORT`      | `37700 + (uid % 100)`           | Worker service port (per-user default; override for fixed port) |
 | `CLAUDE_MEM_WORKER_HOST`      | `127.0.0.1`                     | Worker service host address           |
 | `CLAUDE_MEM_WORKER_URL`       | _(empty)_                       | Explicit client base URL for the worker API; overrides host and port. Use HTTPS for remote workers. Plain HTTP is accepted only on loopback (including a local port forward). A non-empty URL selects HTTP hook-spool delivery in `auto`; invalid URLs fail instead of falling back to host and port. A non-empty URL also turns autostart off on that client, so `CLAUDE_MEM_WORKER_AUTOSTART` does not need setting, and `restart` refuses to run. |
@@ -191,6 +247,8 @@ My Work can generate readable card wording using the configured OpenRouter, Open
 
 The My Work refresh (goals, grouping, review, focus and story steps) runs on one agent: Claude Code, Codex, Gemini, or the API provider you selected (see `CLAUDE_MEM_WORK_VIEW_AGENT` below for which one). By default the light steps (grouping, focus) use a small model and the others a stronger one: `haiku`/`sonnet` on Claude Code, `flash-lite`/`flash` on Gemini, and Codex's CLI default for the careful steps. On Claude Code the refresh runs on your Claude subscription, so set a model here to cap it, for example `haiku`. Each setting puts every step of that agent on one model and is read at the start of every refresh.
 
+The goals step updates a saved snapshot from new owner prompts, including a snapshot that contains only rules. When no new prompts need processing, it validates and saves the existing snapshot without a model call for goals. Other refresh steps may still need the selected agent.
+
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `CLAUDE_MEM_WORK_VIEW_AGENT` | empty | Which agent runs the My Work refresh. Empty uses the agent `CLAUDE_MEM_PROVIDER` names (`claude` → Claude Code, `codex` → Codex, `gemini` → Gemini) and only that one, so a failed run never moves to another agent's quota. A provider that is an API endpoint (`openrouter`, `openai-compatible`, `cmem`) uses the first logged-in agent and only that one. Set `api` to run the refresh on the selected API provider; this spends that provider's credit every refresh. Set `claude-code`, `codex` or `gemini` to pick a local agent, `off` to run no agent, or `all` to let a failed run fall through to every other logged-in agent. |
@@ -201,6 +259,14 @@ The My Work refresh (goals, grouping, review, focus and story steps) runs on one
 | `CLAUDE_MEM_WORK_VIEW_TEXT_LANGUAGE` | empty | Language for the text the refresh writes (request titles, reviews, focus areas, the story), such as `Turkish`. When set, every step except goals is told to write in it, so separate review batches never pick different languages. Empty uses the language most of your asks are written in, decided once per refresh by the grouping step (which already reads them, so it costs no extra model call) and kept for later refreshes that have nothing to group. |
 
 In this fork, an empty `CLAUDE_MEM_WORK_VIEW_AGENT` with `CLAUDE_MEM_PROVIDER=custom` uses the configured Custom endpoint directly. Explicit agent choices (including `off` and `all`) take precedence; Custom failures never fall through to an agent CLI.
+
+### Knowledge Corpus Agent
+
+`prime_corpus`, `query_corpus` and `reprime_corpus` answer through the Claude Agent SDK, which spends your Claude subscription. That does not change when you select another provider; opt in if you want the corpus on the provider you selected.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `CLAUDE_MEM_CORPUS_AGENT` | empty | Empty answers corpus questions through the Claude Agent SDK. `api` answers them over chat completions on the provider `CLAUDE_MEM_PROVIDER` selects (`openrouter` or `openai-compatible`) and spends that provider's credit. `api` with any other provider fails with an error instead of running somewhere else, and a provider refusal (401, 402, 429) fails the call without moving it to Claude. With `api`, `prime_corpus` makes no model call, and `query_corpus` sends the observations that best match the question (the most recent ones when none match), within a fixed budget of 12,000 estimated tokens that is not a setting; the reply reports `observations_sent` and `observations_matching` (and `observations_in_corpus`, which counts what a no-match fallback to the most recent observations left out) so a partial excerpt is visible. The selection is lexical, on words split at spaces and punctuation: it works best for languages that separate words with spaces, and a question in Chinese or Japanese, or a Russian word in another case, may match nothing and fall back to the most recent observations (the reply says so). An observation that alone exceeds the budget is cut to it, and the reply reports that as `observations_truncated`. The model needs a context window of at least 32,768 tokens for this (about 29,500 for the excerpt, the instructions and the 16,000-token reply reserve); a model with a smaller window, such as a small local one, refuses the request and the provider's error is returned. Corpora primed under the other agent report "not primed" until you prime them again. Any other value fails with `CORPUS_AGENT_UNAVAILABLE` and never runs the Claude agent. Read on every call, so a change applies without a restart. |
 
 ### Quota Fallback Settings
 
@@ -351,6 +417,10 @@ Optional. Copies each new observation into a Notion database as it is stored. Se
 
 Opt-in (off by default) dedup of observations whose titles describe the same recurring
 work but are worded slightly differently, so `content_hash` (byte-identical only) misses them.
+With this setting off, different facts, subtitles, types or concepts remain separate
+observations even when their title and narrative match. Repeating the same content
+reuses the original observation, including observations saved before an upgrade.
+
 Two deterministic tiers:
 
 - **Tier 0 — exact-normalized-title** → safe silent auto-merge: a new observation whose
@@ -365,7 +435,7 @@ Two deterministic tiers:
 
 | Setting                              | Default | Description                           |
 |--------------------------------------|---------|---------------------------------------|
-| `CLAUDE_MEM_DEDUP_ENABLED`           | `false` | Master switch. Off = byte-identical legacy behavior |
+| `CLAUDE_MEM_DEDUP_ENABLED`           | `false` | Master switch. Off = exact content deduplication only |
 | `CLAUDE_MEM_DEDUP_COSINE_THRESHOLD`  | `0.80`  | Min IDF-weighted cosine for a Tier-1 candidate |
 | `CLAUDE_MEM_DEDUP_IDF_VETO_DF`       | `10`    | A title token in ≤ N project rows is "discriminating" and vetoes a merge |
 | `CLAUDE_MEM_DEDUP_MIN_SHARED_TOKENS` | `2`     | Require ≥ N shared tokens before scoring (kills sparse-vector noise) |
@@ -511,7 +581,7 @@ claude-mem files every observation under a project name, and SessionStart inject
 - **Inside a git repository** the name is the repository root's folder name, so every subfolder shares it. A git worktree is stored as `<repo>/<worktree>` (a worktree whose folder has the repository's own name, like Codex's `~/.codex/worktrees/<id>/<repo>`, is stored as `<repo>`) and a git submodule as `<superproject>/<path>`; both also read their parent repository's memory. Memory a submodule stored under its own folder name before it was grouped this way stays readable from it. When a worktree or submodule checkout is deleted, the worker folds its memory into the parent repository at its next start (merged or not), so nothing is stranded.
 - **With `CLAUDE_MEM_PROJECT_NAME_SOURCE=git-remote`** a repository that has an `origin` remote is named by its `org/repo` slug instead (e.g. `thedotmack/claude-mem`), so renaming or re-cloning the folder keeps its memory, two repositories with the same folder name stay apart, and every worktree of the repository shares the slug (a submodule, being a repository of its own, is named by its own `origin`). Memory stored under the folder-based names stays readable, and a deleted worktree's memory from before the switch is still folded into the repository. Repositories without a usable `origin` (or with a local one) keep the folder-based name.
 - **Outside git** the name is the current folder's name. To give a non-git project one name across all of its subfolders, put an empty `.claude-mem-project` file (or a `.claude-mem.json`) in its root folder: every folder below it then uses the root folder's name. Memory stored under a subfolder's own name before you added the file stays readable from that subfolder. Marker files in your home directory, the system temp directory or Claude's config directory are ignored, so they can never fold unrelated folders together.
-- **Named environments** (`CLAUDE_MEM_PROJECT_ENVIRONMENTS`) group several folders, git or not, into one project and win over every rule above. For example, `[{"name": "acme", "patterns": ["~/work/acme/**"]}]` files everything under `~/work/acme` as `acme`, and SessionStart labels it as an environment. Memory those folders stored under their own names stays readable from them; to fold it into the environment for good, run `npx claude-mem project merge <old-name> acme` (it runs inside claude-mem's worker whenever the worker is running). The merge rewrites nothing (rows are marked as merged, the way a worktree folds into its repository) and brings along memory already folded into the old name, such as a merged worktree's. It reaches your other devices through cloud sync and updates semantic search; if that last step fails, the command says so, and running it again retries it.
+- **Named environments** (`CLAUDE_MEM_PROJECT_ENVIRONMENTS`) group several folders, git or not, into one project and win over every rule above. For example, `[{"name": "acme", "patterns": ["~/work/acme/**"]}]` files everything under `~/work/acme` as `acme`, and SessionStart labels it as an environment. Memory those folders stored under their own names stays readable from them; to fold it into the environment for good, run `npx claude-mem project merge <old-name> acme` (it runs inside claude-mem's worker whenever the worker is running). The merge rewrites nothing (rows are marked as merged, the way a worktree folds into its repository) and brings along memory already folded into the old name, such as a merged worktree's. This follows the complete chain of whole-project merges, including after an environment is merged again; partially adopted projects contribute only their adopted rows. It reaches your other devices through cloud sync and updates semantic search; if that last step fails, the command says so, and running it again retries it.
 
 ### Choosing an environment's memory scope
 
@@ -809,6 +879,10 @@ The most recent N observations (set by Count) show their full narrative or facts
 | **Work investment** | true | Show tokens spent creating the observation |
 
 Token economics help you understand the value of cached observations vs. re-reading files.
+
+Read cost is an estimate at four characters per token, rounded up for each
+observation. It counts the stored title, subtitle, narrative and facts JSON once;
+missing fields add no content. The setup Token Savings page uses the same estimate.
 
 ### Advanced Settings
 

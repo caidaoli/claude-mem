@@ -10,12 +10,15 @@
 // `read` or `Read` entry keeps matching either way. Entries ending with '*'
 // are prefix patterns (e.g. 'mcp__*' skips every MCP tool). Fork commit 7ff1b4a5.
 
-export function isToolSkipped(toolName: string, skipToolsSetting: string | undefined): boolean {
+export function isToolSkipped(toolName: string, skipToolsSetting: string | undefined, nativeToolName?: string): boolean {
   if (!skipToolsSetting) return false;
-  const name = toolName.toLowerCase();
-  return skipToolsSetting.split(',').some(entry => {
-    const pattern = entry.trim().toLowerCase();
-    if (!pattern) return false;
-    return pattern.endsWith('*') ? name.startsWith(pattern.slice(0, -1)) : name === pattern;
-  });
+  const patterns = skipToolsSetting.split(',').map(tool => tool.trim().toLowerCase()).filter(Boolean);
+  const matches = (name: string) =>
+    patterns.some(pattern => (pattern.endsWith('*') ? name.startsWith(pattern.slice(0, -1)) : name === pattern));
+  if (matches(toolName.toLowerCase())) return true;
+  // Match the host's actual name after an adapter renames it for evidence.
+  // Qualified MCP exclusions keep their server scope: a native name that
+  // happens to look qualified must not match a different server's tool.
+  const nativeName = typeof nativeToolName === 'string' ? nativeToolName.toLowerCase() : undefined;
+  return !!nativeName && !nativeName.startsWith('mcp__') && matches(nativeName);
 }

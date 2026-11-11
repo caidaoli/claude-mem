@@ -26,6 +26,7 @@ import { FOCUS_AUTO_PLACE_THRESHOLD, judgeFocusBatch, placesAlone, type FocusJud
 import { isWithdrawnArea, PROPOSAL_KINDS, readFocusAreas, type FocusArea, type RouterFocusBody } from './my-focus.mjs';
 import { NAV_LABELS } from './nav-words.mjs';
 import { routeUndecided, type RequestJudge } from './request-judge.mjs';
+import { RUNTIME_SKILLS } from '../../shared/runtime-skills.js';
 
 /** claude-mem MCP tools a refresh may call: reads only. Saves go through the skills' scripts and their
  * validators (save_goals.py, the request-groups CLI), never a raw work_state_write. */
@@ -218,10 +219,10 @@ export interface RefreshTaskOptions {
 function skillPaths(pluginRoot: string) {
   const skills = join(pluginRoot, 'skills');
   return {
-    requestProgressSkill: join(skills, 'request-progress', 'SKILL.md'),
-    ownerGoalsSkill: join(skills, 'owner-goals', 'SKILL.md'),
-    cli: join(skills, 'request-progress', 'scripts', 'request-groups.mjs'),
-    saveScript: join(skills, 'owner-goals', 'scripts', 'save_goals.py'),
+    requestProgressSkill: join(skills, RUNTIME_SKILLS.requestProgress, 'SKILL.md'),
+    ownerGoalsSkill: join(skills, RUNTIME_SKILLS.ownerGoals, 'SKILL.md'),
+    cli: join(skills, RUNTIME_SKILLS.requestProgress, 'scripts', 'request-groups.mjs'),
+    saveScript: join(skills, RUNTIME_SKILLS.ownerGoals, 'scripts', 'save_goals.py'),
   };
 }
 
@@ -294,7 +295,11 @@ export function buildRefreshTask(options: RefreshTaskOptions): AgentTask & { ste
     const database = openDatabase();
     // A withdrawn area (a seed undo) is no match target: the owner never had it, so it is left out of the saved areas.
     try { savedGoals = readGoals(database); savedAreas = readFocusAreas(database, { localDeviceId: options.localDeviceId() }).filter(area => !isWithdrawnArea(area)); } finally { database.close(); }
-    since = savedGoals.goals.length && Number.isFinite(Date.parse(savedGoals.generatedAt ?? '')) ? localMinute(Date.parse(savedGoals.generatedAt!)) : null;
+    // A valid snapshot can contain only rules, which live in the story rather than the owner-goals list.
+    const hasSavedItems = savedGoals.goals.length > 0
+      || (readLedger(ledgerDir).story?.preferences ?? []).some((preference: { source?: string }) => preference.source === 'owner-goals');
+    const generatedAt = Date.parse(savedGoals.generatedAt ?? '');
+    since = hasSavedItems && Number.isFinite(generatedAt) ? localMinute(generatedAt) : null;
     exportedAt = new Date(now()).toISOString();
     exported = await writeOwnerPrompts(goalsFolder, since);
   };

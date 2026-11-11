@@ -79,19 +79,9 @@ export async function performGracefulShutdown(config: GracefulShutdownConfig): P
 }
 
 async function closeHttpServer(server: http.Server): Promise<void> {
-  try {
-    server.closeAllConnections();
-  } catch (error) {
-    if (!isServerAlreadyClosed(error)) {
-      throw error;
-    }
-  }
-
-  if (process.platform === 'win32') {
-    await new Promise(r => setTimeout(r, 500));
-  }
-
   await new Promise<void>((resolve, reject) => {
+    // Close the listener before sweeping active connections. Reconnecting
+    // streams must not enter between the sweep and close().
     server.close(err => {
       if (!err) {
         resolve();
@@ -111,6 +101,13 @@ async function closeHttpServer(server: http.Server): Promise<void> {
       }
       reject(err);
     });
+    try {
+      server.closeAllConnections();
+    } catch (error) {
+      if (!isServerAlreadyClosed(error)) {
+        throw error;
+      }
+    }
   });
 
   if (process.platform === 'win32') {

@@ -995,6 +995,7 @@ var init_SettingsDefaultsManager = __esm({
     raisedDefaultFailuresReported = /* @__PURE__ */ new Set();
     SettingsDefaultsManager = class {
       static DEFAULTS = {
+        CLAUDE_MEM_SKILLS_DISABLED: "",
         CLAUDE_MEM_MEMORY_SEARCH_HOOK_ENABLED: "true",
         CLAUDE_MEM_MEMORY_INSTRUCTIONS_ENABLED: "true",
         // Explicit JSON [{path, project, platformSource?}]. Empty means no files imported.
@@ -1191,6 +1192,8 @@ var init_SettingsDefaultsManager = __esm({
         // Context window use (1-95) that starts the auto-clear
         CLAUDE_MEM_FILE_READ_GATE_ENABLED: "true",
         // 'false' = never block a full-file Read; the file's observation timeline is still added as context
+        CLAUDE_MEM_LINE_ANCHORS_ENABLED: "false",
+        // #4943, opt-in: the worker records line anchors in observation metadata and the file-context timeline shows where that code is now (@L123) or "(code changed since)". Only 'true' turns it on
         CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED: "false",
         CLAUDE_MEM_FOLDER_USE_LOCAL_MD: "false",
         // When true, writes to CLAUDE.local.md instead of CLAUDE.md
@@ -1381,6 +1384,8 @@ var init_SettingsDefaultsManager = __esm({
         // #5164 — same for Gemini; empty keeps flash-lite/flash per step
         CLAUDE_MEM_WORK_VIEW_API_MODEL: "",
         // Model for every My Work refresh step on the selected API provider; empty keeps the provider's configured model
+        CLAUDE_MEM_CORPUS_AGENT: "",
+        // Which agent answers knowledge-corpus prime/query/reprime: '' uses the Claude Agent SDK (the Claude subscription); 'api' answers over chat completions on the selected openrouter/openai-compatible provider and spends that provider's credit
         CLAUDE_MEM_WORK_VIEW_TEXT_LANGUAGE: "",
         // Language for My Work's generated text (titles, reviews, story), such as 'Turkish'. No extra model call; empty uses the language the grouping step finds in the owner's asks, decided once per run (#5660)
         // Automatic local DB snapshots (BackupManager). Off by default; opt-in.
@@ -1790,7 +1795,7 @@ function commitSubjects(command2) {
     if (substituted) return short(substituted[1]);
     const inline = invocation.match(/\s-[a-zA-Z]*m\s+(?:"((?:[^"\\]|\\.)*)"|'([^']*)')/);
     const heredoc = invocation.match(/\s-F\s+-\s*<<-?\s*['"]?\w+['"]?\n([^\n]*)/);
-    const text5 = inline ? (inline[1] ?? inline[2]).replace(BASH_DOUBLE_QUOTE_ESCAPE, "$1") : heredoc?.[1];
+    const text5 = inline ? inline[1]?.replace(BASH_DOUBLE_QUOTE_ESCAPE, "$1") ?? inline[2] : heredoc?.[1];
     return short(text5?.split("\n")[0]);
   });
 }
@@ -1827,20 +1832,74 @@ function commitsFrom(command2, response, out) {
   return [...unique.values()];
 }
 function pushTargets(command2) {
-  const pattern = gitPattern(String.raw`push\b((?:[ \t]+(?:"[^"]*"|'[^']*'|[^\s;&|)]+))*)`, "g");
+  const word = String.raw`(?:[^\s"'<>;&|()]+|"[^"]*"|'[^']*')+`;
+  const redirection = String.raw`(?:\d*(?:>>?|<{1,3})&?|&>>?)`;
+  const pattern = gitPattern(String.raw`push\b((?:[ \t]+(?:#[^\n]*)?|${redirection}|${word})*)`, "g");
+  const redirect = new RegExp(`^${redirection}$`);
   return [...command2.matchAll(pattern)].map(([, args]) => {
-    const tokens = args.trim().split(/\s+/).filter(Boolean).map(unquote);
-    const [remote, ...refspecs] = tokens.filter((token) => !token.startsWith("-"));
-    const destinations = refspecs.map((spec) => spec.startsWith(":") ? "" : spec.replace(/^\+/, "").split(":").at(-1));
-    const deleting = tokens.some((token) => ["-d", "--delete"].includes(token));
+    const shellTokens = args.match(new RegExp(`${redirection}|${word}`, "g")) ?? [];
+    const tokens = [];
+    for (let index = 0; index < shellTokens.length; index++) {
+      if (shellTokens[index].startsWith("#")) break;
+      if (redirect.test(shellTokens[index])) {
+        index++;
+        continue;
+      }
+      tokens.push(unquote(shellTokens[index]));
+    }
+    const positional = [];
+    let dryRun = false, deleting = false, tags = false, repoOption;
+    for (let index = 0; index < tokens.length; index++) {
+      const token = tokens[index];
+      if (token === "--") {
+        positional.push(...tokens.slice(index + 1));
+        break;
+      }
+      if (token === "--repo") {
+        repoOption = tokens[++index];
+        continue;
+      }
+      if (token.startsWith("--repo=")) {
+        repoOption = token.slice("--repo=".length);
+        continue;
+      }
+      if (/^--(?:push-option|receive-pack|exec|recurse-submodules)$/.test(token)) {
+        index++;
+        continue;
+      }
+      if (token.startsWith("--")) {
+        if (token === "--dry-run" || token === "--no-dry-run") dryRun = token === "--dry-run";
+        if (token === "--delete" || token === "--no-delete") deleting = token === "--delete";
+        if (token === "--tags" || token === "--no-tags") tags = token === "--tags";
+        continue;
+      }
+      if (token.startsWith("-")) {
+        let flags = token.slice(1);
+        const valueAt = flags.indexOf("o");
+        if (valueAt !== -1) {
+          if (valueAt === flags.length - 1) index++;
+          flags = flags.slice(0, valueAt);
+        }
+        if (flags.includes("n")) dryRun = true;
+        if (flags.includes("d")) deleting = true;
+        continue;
+      }
+      positional.push(token);
+    }
+    const [remote, ...refspecs] = positional;
+    const destinations = [];
+    for (let index = 0; index < refspecs.length; index++) {
+      const spec = refspecs[index];
+      if (spec === "tag") {
+        tags = true;
+        index++;
+        continue;
+      }
+      destinations.push(spec.startsWith(":") ? "" : spec.replace(/^\+/, "").split(":").at(-1));
+    }
     const branches = deleting ? [] : destinations.map((ref) => ref && ref !== "HEAD" && (!ref.startsWith("refs/") || ref.startsWith("refs/heads/")) ? ref.replace(/^refs\/heads\//, "") : null);
-    const deletesOrTags = deleting || tokens.includes("--tags") || destinations.some((ref) => ref.startsWith("refs/tags/"));
-    return {
-      repo: githubRepo(remote),
-      branches,
-      dryRun: tokens.some((token) => token === "--dry-run" || /^-[a-zA-Z]*n[a-zA-Z]*$/.test(token)),
-      deletesOrTags
-    };
+    const deletesOrTags = deleting || tags || destinations.some((ref) => ref.startsWith("refs/tags/"));
+    return { repo: githubRepo(remote ?? repoOption), branches, dryRun, deletesOrTags };
   });
 }
 function pushesFrom(command2, response, out) {
@@ -1884,8 +1943,8 @@ function pushesFrom(command2, response, out) {
       if (!target?.deletesOrTags || target.branches.includes(branch2) || line.includes("[new branch]")) add(branch2, ref[1]);
     }
   }
-  const branch = recorded ?? target?.branches[0];
-  if (!pushes.size && targets.length <= 1 && !target?.dryRun && !target?.deletesOrTags && branch && !/Everything up-to-date|\[up to date\]|\[new tag\]|\[deleted\]|\[rejected\]|failed to push|^fatal:/m.test(out)) add(branch);
+  const branch = recorded ?? target?.branches.find(Boolean);
+  if (!pushes.size && targets.length <= 1 && !target?.dryRun && branch && (!target?.deletesOrTags || target.branches.includes(branch)) && !/Everything up-to-date|\[up to date\]|\[new tag\]|\[deleted\]|\[rejected\]|failed to push|^fatal:/m.test(out)) add(branch);
   return [...pushes.values()];
 }
 function createdBranchesFrom(command2, out) {
@@ -2171,7 +2230,7 @@ var init_work_product = __esm({
     };
     GIT_PREFIX = String.raw`(?:^|[;&|(\n])\s*(?:rtk\s+)?(?:\/usr\/bin\/)?git(?:\s+-[Cc]\s+(?:"[^"]*"|'[^']*'|\S+))*\s+`;
     gitPattern = (subcommand, flags = "") => new RegExp(GIT_PREFIX + subcommand, flags);
-    GITHUB_REMOTE = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/;
+    GITHUB_REMOTE = /^(?:https:\/\/github\.com\/|(?:git@)?github\.com:|ssh:\/\/(?:git@)?(?:github\.com(?::22)?|ssh\.github\.com:443)\/)([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/;
     SHA = "[0-9a-f]{7,40}";
     unquote = (token) => token.replace(/^(["'])(.*)\1$/, "$2");
     matchingCommitSha = (left, right) => left.startsWith(right) || right.startsWith(left);
@@ -2883,7 +2942,7 @@ function originalFor(session, prompts) {
   if (isHumanActionRequest(session.user_prompt)) return initial();
   return null;
 }
-function buildHumanRequests(view, records2 = {}, { titleCache = {}, ledger = null } = {}) {
+function buildHumanRequests(view, records2 = {}, { titleCache = {}, ledger = null, onProductFile = null } = {}) {
   const sessions = new Map((records2.sessions ?? []).map((session) => [session.id, session]));
   const prompts = records2.prompts ?? [];
   const flattened = (view.agents ?? []).flatMap((agent) => (agent.work ?? []).map((item) => ({ ...item, agentId: agent.id, agentLabel: agent.label, agentSessionId: agent.sessionId })));
@@ -3037,8 +3096,13 @@ function buildHumanRequests(view, records2 = {}, { titleCache = {}, ledger = nul
   for (const request of requests.values()) {
     const merged = mergeProducts([...recordedProducts.get(request) ?? [], ...request.items.flatMap((item) => item.workProduct ?? [])]);
     const copies = merged.filter((product) => product.deliverable && product.sourcePath);
-    const covered = (product) => Boolean(product.path) && copies.some((copy) => copy.sourcePath === product.path && copyCoversSource(copy, product.path));
-    request.workProduct = merged.filter((product) => !covered(product)).map((product) => ({ ...product, fileUrl: fileUrl(product), available: product.path ? Boolean(servableFile(product)) : product.deliverable ? bucketFileAvailable(product) : true }));
+    const coverage = new Map(copies.map((copy) => [copy, copyCoversSource(copy, copy.sourcePath)]));
+    const covered = (product) => Boolean(product.path) && copies.some((copy) => copy.sourcePath === product.path && coverage.get(copy));
+    request.workProduct = merged.filter((product) => !covered(product)).map((product) => {
+      const available = product.path ? Boolean(servableFile(product)) : product.deliverable ? bucketFileAvailable(product) : true;
+      if (product.path || product.bucketPath) onProductFile?.(product, available, coverage.get(product) ?? null);
+      return { ...product, fileUrl: fileUrl(product), available };
+    });
     const relatedIds = new Set(request.conversationKeys.flatMap((key) => sessionIdsByKey.get(key) ?? []));
     const related = [...relatedIds].flatMap((id) => promptsBySession.get(id) ?? []);
     request.updatedAtEpoch = Math.max(request.updatedAtEpoch, request.original.atEpoch ?? 0, ...related.map((prompt) => prompt.created_at_epoch ?? 0));
@@ -3501,6 +3565,12 @@ var init_redaction = __esm({
       // POSTMAN_API_KEY lines and `newman` / `postman` CLI commands print.
       { name: "grafana_token", regex: /\b(?:glsa_[A-Za-z0-9]{32}_[A-Fa-f0-9]{8}(?!\w)|glc_[A-Za-z0-9+\/]{32,400}={0,2}(?![\w+\/=]))/g },
       { name: "postman_key", regex: /\bPMAK-[a-f0-9]{24}-[a-f0-9]{34}(?!\w)/g },
+      // Pulumi access tokens (`pul-` + 40 hex), which PULUMI_ACCESS_TOKEN lines,
+      // `pulumi login` output and CI configs print. Doppler personal tokens
+      // (`dp.pt.` + 43 alphanumerics), which DOPPLER_TOKEN lines and
+      // `doppler configure` dumps print.
+      { name: "pulumi_token", regex: /\bpul-[a-f0-9]{40}(?!\w)/g },
+      { name: "doppler_token", regex: /\bdp\.pt\.[A-Za-z0-9]{43}(?!\w)/g },
       // Incoming webhook URLs carry their secret in the path, so anyone holding
       // one can post to the channel: Slack (`hooks.slack.com/services/T…/B…/…`,
       // plus workflow and trigger URLs) and Discord (`discord.com/api/webhooks/
@@ -5945,7 +6015,8 @@ function observationMediaFromMetadata(metadataJson) {
 // src/services/work-view/agent-view.mjs
 init_work_state_status();
 var PROJECT_KEY = (value) => String(value ?? "").replace(/[A-Z]/g, (c) => c.toLowerCase());
-var PLATFORMS = { codex: "Codex", claude: "Claude Code", "gemini-cli": "Gemini CLI", "antigravity-cli": "Antigravity CLI", kimi: "Kimi", "hermes-cli": "Hermes", "pi-agent": "Pi" };
+var PLATFORMS = { codex: "Codex", claude: "Claude Code", gemini: "Gemini CLI", "gemini-cli": "Gemini CLI", "antigravity-cli": "Antigravity CLI", kimi: "Kimi", "hermes-cli": "Hermes", "pi-agent": "Pi" };
+var platformLabel = (platform) => PLATFORMS[platform] ?? compactText(platform, 48) ?? "Unassigned";
 var stamp = (value) => Number.isFinite(Number(value)) && Number(value) > 0 ? new Date(Number(value)).toISOString() : null;
 var fingerprint = (value) => JSON.stringify(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)));
 var callKey = (project, list2, fields) => JSON.stringify([PROJECT_KEY(project), list2, fingerprint(fields)]);
@@ -6088,7 +6159,7 @@ function launchRequest(launch) {
   const text5 = launch.description ?? launch.prompt;
   return text5 ? { text: text5, source: "agent-launch", sourceId: launch.shared ? null : launch.toolUseId, url: launch.shared ? null : `/api/work-view/evidence/tool-use/${launch.toolUseId}` } : null;
 }
-function buildAgentView(state, records2, { now = Date.now(), workLimit = 240, activityLimit = 160, recentMs = 15 * 60 * 1e3, titleCache = {}, ledger = null } = {}) {
+function buildAgentView(state, records2, { now = Date.now(), workLimit = 240, activityLimit = 160, recentMs = 15 * 60 * 1e3, titleCache = {}, ledger = null, onProductFile = null } = {}) {
   const { calls = [], observations = [], summaries = [], sessions = [], prompts = [], agentLaunches = [], agentToolActivity = [] } = records2;
   const launches = readAgentLaunches(agentLaunches);
   const lastToolEpochs = new Map(agentToolActivity.map((row) => [lifecycleKey(row.platform_source, row.content_session_id, row.agent_id), Number(row.last_epoch) || 0]));
@@ -6178,11 +6249,11 @@ function buildAgentView(state, records2, { now = Date.now(), workLimit = 240, ac
     const platform = session?.platform_source ?? null;
     const id = session ? agentKey(platform, session.id, agentId) : JSON.stringify([owner ? "owner" : "unassigned", PROJECT_KEY(project), owner, agentId]);
     if (!groups.has(id)) {
-      const platformLabel = PLATFORMS[platform] ?? compactText(platform, 48) ?? "Unassigned";
+      const label = platformLabel(platform);
       groups.set(id, {
         id,
         kind: session ? "session" : owner ? "recorded-owner" : "unassigned",
-        label: session ? platformLabel : owner ? compactText(owner, 70) : "Unassigned work",
+        label: session ? label : owner ? compactText(owner, 70) : "Unassigned work",
         platformSource: platform,
         agentId,
         agentType,
@@ -6379,7 +6450,7 @@ function buildAgentView(state, records2, { now = Date.now(), workLimit = 240, ac
     };
   }).sort((a, b) => String(b.presence.lastActivityAt ?? "").localeCompare(String(a.presence.lastActivityAt ?? "")));
   const recentActivity = activity.sort((a, b) => b.atEpoch - a.atEpoch).slice(0, activityLimit);
-  const requestProjection = buildHumanRequests({ agents, recentActivity }, records2, { titleCache, ledger });
+  const requestProjection = buildHumanRequests({ agents, recentActivity }, records2, { titleCache, ledger, onProductFile });
   const { focusAreas, focusAreaIdByAnchor } = buildFocusAreas(state);
   return {
     version: 1,
@@ -7103,56 +7174,177 @@ function redactSharedValue(value) {
 }
 
 // src/services/work-view/shared-record-store.mjs
+init_logger();
 var compareText = (a, b) => a === b ? 0 : a < b ? -1 : 1;
-function readSharedRecords(db, { deviceId, validateValue, rows: suppliedRows, includeHistory = false }) {
+var SHARED_ROW_COLUMNS = "id, list_name, fields, origin_device_id, origin_local_id, sync_rev";
+var INVALID_ROW = /* @__PURE__ */ Symbol("invalid shared row");
+var SKIPPED_ROW = /* @__PURE__ */ Symbol("not a shared row");
+var UNSUPPORTED_ROW = /* @__PURE__ */ Symbol("unsupported shared row");
+var committedRowSummaries = /* @__PURE__ */ new WeakMap();
+var SHARED_ROW_SUMMARY_BYTES = 604;
+var SHARED_ROW_CACHE_CEILING = 24424 + Math.floor(663 * 2 ** 20 / (3 * SHARED_ROW_SUMMARY_BYTES));
+function summariesFor(db, deviceId, validateValue) {
+  let byValidator = committedRowSummaries.get(db);
+  if (!byValidator) committedRowSummaries.set(db, byValidator = /* @__PURE__ */ new Map());
+  let byDevice = byValidator.get(validateValue ?? null);
+  if (!byDevice) byValidator.set(validateValue ?? null, byDevice = /* @__PURE__ */ new Map());
+  let summaries = byDevice.get(deviceId);
+  if (!summaries) byDevice.set(deviceId, summaries = { rows: /* @__PURE__ */ new Map(), values: /* @__PURE__ */ new Map(), ceilingReported: false });
+  return summaries;
+}
+var StaleRowSummaryError = class extends Error {
+  constructor(rowId) {
+    super("Shared My Work: a shared row changed while it was being read");
+    this.rowId = rowId;
+  }
+};
+function readSharedRecords(db, options) {
+  return readShared(db, options, !db.inTransaction);
+}
+function readShared(db, options, fillCacheFromOwnTransaction) {
+  if (options.rows) {
+    const context = { db, deviceId: options.deviceId, validateValue: options.validateValue, reread: (row) => row };
+    return foldSharedRows(options.rows.map((row) => summarizeRow(context, row, row)), context, options.includeHistory ?? false, /* @__PURE__ */ new Map());
+  }
+  try {
+    return scanShared(db, options, fillCacheFromOwnTransaction);
+  } catch (error) {
+    if (!(error instanceof StaleRowSummaryError)) throw error;
+    committedRowSummaries.delete(db);
+    logger.error("WORKER", "Shared My Work: a kept shared row summary no longer matches its row; cleared this connection's row cache and read again", { rowId: error.rowId });
+    return scanShared(db, options, fillCacheFromOwnTransaction);
+  }
+}
+function scanShared(db, { deviceId, validateValue, includeHistory = false }, fillCacheFromOwnTransaction) {
+  const read = () => {
+    let scan, byId;
+    try {
+      scan = db.prepare(`SELECT id, origin_device_id, sync_rev FROM work_state_entries WHERE ${sharedWorkListSql("list_name")}`);
+      byId = db.prepare(`SELECT ${SHARED_ROW_COLUMNS} FROM work_state_entries WHERE id = ?`);
+    } catch (error) {
+      scan?.finalize();
+      if (/no such (table|column)/i.test(String(error.message))) return emptySharedState(includeHistory);
+      throw error;
+    }
+    try {
+      const summaries = summariesFor(db, deviceId, validateValue);
+      const context = { db, deviceId, validateValue, reread: (id) => byId.get(id) };
+      const seen = /* @__PURE__ */ new Map();
+      const items = [];
+      for (const head of scan.iterate()) {
+        const stamp2 = `${head.origin_device_id ?? ""}\0${head.sync_rev ?? ""}`;
+        let summary = summaries.rows.get(head.id);
+        if (summary?.stamp !== stamp2) {
+          const row = byId.get(head.id);
+          summary = { stamp: stamp2, item: row ? summarizeRow(context, row, head.id) : SKIPPED_ROW };
+        }
+        seen.set(head.id, summary);
+        items.push(summary.item);
+      }
+      const values2 = /* @__PURE__ */ new Map();
+      const state = foldSharedRows(items, context, includeHistory, values2, summaries.values);
+      if (fillCacheFromOwnTransaction) {
+        summaries.rows = seen;
+        summaries.values = values2;
+        if (seen.size > SHARED_ROW_CACHE_CEILING && !summaries.ceilingReported) {
+          summaries.ceilingReported = true;
+          logger.error("WORKER", "Shared My Work history is past the size the cloud viewer machine was sized for; nothing was dropped, but resize from a new measurement or compact superseded history", {
+            rows: seen.size,
+            ceiling: SHARED_ROW_CACHE_CEILING,
+            bytesPerRow: SHARED_ROW_SUMMARY_BYTES
+          });
+        }
+      }
+      return state;
+    } finally {
+      scan.finalize();
+      byId.finalize();
+    }
+  };
+  return db.inTransaction ? read() : db.transaction(read)();
+}
+function emptySharedState(includeHistory) {
+  return {
+    records: /* @__PURE__ */ new Map(),
+    heads: /* @__PURE__ */ new Map(),
+    ...includeHistory ? { history: /* @__PURE__ */ new Map() } : {},
+    revision: sha256Base64Url("[]"),
+    diagnostics: { pending: 0, invalid: 0, unsupported: 0, conflicts: [] }
+  };
+}
+function parseRow(context, row) {
+  try {
+    return parseSharedRow(row, context.deviceId);
+  } catch {
+    context.redactionReceipts ??= readSharedRedactionReceipts(context.db);
+    const receipt = context.redactionReceipts.get(String(row.id));
+    if (!receipt) return INVALID_ROW;
+    try {
+      return parseSharedRow(row, context.deviceId, { redactionReceipt: receipt });
+    } catch {
+      return INVALID_ROW;
+    }
+  }
+}
+function summarizeRow(context, row, source) {
+  if (!isSharedWorkList(row.list_name)) return SKIPPED_ROW;
+  const parsed = parseRow(context, row);
+  if (parsed === INVALID_ROW) return INVALID_ROW;
+  if (!parsed) return SKIPPED_ROW;
+  if (parsed.unsupported) return UNSUPPORTED_ROW;
+  if (parsed.record === "entry") return entrySummary(parsed, source, context.validateValue);
+  if (parsed.record === "manifest") {
+    return {
+      record: "manifest",
+      batch: parsed.batch,
+      writer: parsed.writer,
+      part: parsed.part,
+      hash: parsed.hash,
+      refs: parsed.refs.map((ref) => canonicalJson(ref))
+    };
+  }
+  return { record: "commit", batch: parsed.batch, writer: parsed.writer, count: parsed.count, hash: parsed.hash, parts: parsed.parts };
+}
+function foldSharedRows(items, context, includeHistory, values2, previousValues = /* @__PURE__ */ new Map()) {
   const records2 = /* @__PURE__ */ new Map();
   const heads = /* @__PURE__ */ new Map();
   const history = includeHistory ? /* @__PURE__ */ new Map() : void 0;
   const diagnostics = { pending: 0, invalid: 0, unsupported: 0, conflicts: [] };
-  let rows;
-  try {
-    rows = suppliedRows ?? db.prepare("SELECT id, list_name, fields, origin_device_id, origin_local_id, sync_rev FROM work_state_entries WHERE list_name GLOB '__my_work_v[0-9]*:*'").all();
-  } catch (error) {
-    if (/no such (table|column)/i.test(String(error.message))) return { records: records2, heads, ...history ? { history } : {}, revision: sha256Base64Url("[]"), diagnostics };
-    throw error;
-  }
-  const batches = /* @__PURE__ */ new Map();
-  let redactionReceipts;
-  for (const row of rows) {
-    if (!isSharedWorkList(row.list_name)) continue;
-    let record;
-    try {
-      record = parseSharedRow(row, deviceId);
-    } catch {
-      redactionReceipts ??= readSharedRedactionReceipts(db);
-      const receipt = redactionReceipts.get(String(row.id));
-      if (!receipt) {
-        diagnostics.invalid++;
-        continue;
-      }
-      try {
-        record = parseSharedRow(row, deviceId, { redactionReceipt: receipt });
-      } catch {
-        diagnostics.invalid++;
-        continue;
+  const full = (entry) => {
+    let record = values2.get(entry) ?? previousValues.get(entry);
+    if (!record) {
+      const row = context.reread(entry.source);
+      record = row ? parseRow(context, row) : INVALID_ROW;
+      if (record === INVALID_ROW || record?.record !== "entry" || record.hash !== entry.hash || record.revision !== entry.revision || record.batch !== entry.batch || record.writer !== entry.writer || record.kind !== entry.kind || record.key !== entry.key) {
+        throw new StaleRowSummaryError(entry.source);
       }
     }
-    if (!record) continue;
-    if (record.unsupported) {
+    values2.set(entry, record);
+    return record;
+  };
+  const batches = /* @__PURE__ */ new Map();
+  for (const item of items) {
+    if (item === SKIPPED_ROW) continue;
+    if (item === INVALID_ROW) {
+      diagnostics.invalid++;
+      continue;
+    }
+    if (item === UNSUPPORTED_ROW) {
       diagnostics.unsupported++;
       continue;
     }
-    const id = canonicalJson([record.writer, record.batch]);
+    const id = canonicalJson([item.writer, item.batch]);
     let batch = batches.get(id);
     if (!batch) {
       batch = { entries: /* @__PURE__ */ new Map(), manifests: /* @__PURE__ */ new Map(), commits: /* @__PURE__ */ new Map(), invalid: false };
       batches.set(id, batch);
     }
-    const map = record.record === "entry" ? batch.entries : record.record === "manifest" ? batch.manifests : batch.commits;
-    const key = record.record === "entry" ? sharedRecordKey(record.kind, record.key) : record.record === "manifest" ? record.part : record.hash;
+    const map = item.record === "entry" ? batch.entries : item.record === "manifest" ? batch.manifests : batch.commits;
+    const key = item.record === "entry" ? sharedRecordKey(item.kind, item.key) : item.record === "manifest" ? item.part : item.hash;
     const previous = map.get(key);
-    if (previous && canonicalJson(previous) !== canonicalJson(record)) batch.invalid = true;
-    map.set(key, record);
+    const comparable = (record) => canonicalJson(record.record === "entry" ? full(record) : record);
+    if (previous && comparable(previous) !== comparable(item)) batch.invalid = true;
+    map.set(key, item);
   }
   const candidates = /* @__PURE__ */ new Map();
   for (const batch of batches.values()) {
@@ -7166,7 +7358,7 @@ function readSharedRecords(db, { deviceId, validateValue, rows: suppliedRows, in
       continue;
     }
     const entries = [];
-    let incomplete = false, invalid = false;
+    let incomplete = false, invalid = false, byRef;
     for (let index = 0; index < commit.parts.length; index++) {
       const manifest = batch.manifests.get(index);
       if (!manifest) {
@@ -7178,13 +7370,12 @@ function readSharedRecords(db, { deviceId, validateValue, rows: suppliedRows, in
         break;
       }
       for (const ref of manifest.refs) {
-        const entry = batch.entries.get(sharedRecordKey(ref.kind, ref.key));
+        byRef ??= new Map([...batch.entries.values()].map((entry2) => [entry2.ref, entry2]));
+        const entry = byRef.get(ref);
         if (!entry) {
-          incomplete = true;
-          break;
-        }
-        if (canonicalJson(sharedEntryRef(entry)) !== canonicalJson(ref)) {
-          invalid = true;
+          const { kind, key } = JSON.parse(ref);
+          if (batch.entries.has(sharedRecordKey(kind, key))) invalid = true;
+          else incomplete = true;
           break;
         }
         entries.push(entry);
@@ -7202,17 +7393,9 @@ function readSharedRecords(db, { deviceId, validateValue, rows: suppliedRows, in
       diagnostics.invalid++;
       continue;
     }
-    if (validateValue) {
-      let valid = true;
-      try {
-        valid = entries.every((entry) => validateValue(entry.kind, entry.key, entry.value, entry.deleted, entry.writer) === true);
-      } catch {
-        valid = false;
-      }
-      if (!valid) {
-        diagnostics.invalid++;
-        continue;
-      }
+    if (context.validateValue && !entries.every((entry) => entry.valid)) {
+      diagnostics.invalid++;
+      continue;
     }
     for (const entry of entries) {
       const identity = sharedRecordKey(entry.kind, entry.key);
@@ -7224,18 +7407,22 @@ function readSharedRecords(db, { deviceId, validateValue, rows: suppliedRows, in
     entries.sort((a, b) => compareCanonicalDecimals(a.revision, b.revision) || compareText(a.writer, b.writer) || compareText(a.batch, b.batch));
     const latest = entries.at(-1);
     const sameRevision = entries.filter((entry) => entry.revision === latest.revision);
-    const recordOf = (entry) => ({
-      kind: entry.kind,
-      key: entry.key,
-      value: entry.value,
-      deleted: entry.deleted,
-      revision: entry.revision,
-      writer: entry.writer,
-      hash: entry.hash,
-      batchId: entry.batch,
-      base: entry.base,
-      valueHash: sharedValueHash(entry.kind, entry.key, entry.value, entry.deleted)
-    });
+    const recordOf = (summary) => {
+      const entry = full(summary);
+      return {
+        kind: entry.kind,
+        key: entry.key,
+        value: entry.value,
+        deleted: entry.deleted,
+        revision: entry.revision,
+        writer: entry.writer,
+        hash: entry.hash,
+        batchId: entry.batch,
+        base: entry.base,
+        valueHash: sharedValueHash(entry.kind, entry.key, entry.value, entry.deleted)
+      };
+    };
+    const current = recordOf(latest);
     heads.set(identity, sameRevision.map(recordOf));
     if (history && latest.kind === "group") history.set(identity, entries.map(recordOf));
     if (new Set(sameRevision.map((entry) => entry.hash)).size > 1) {
@@ -7246,18 +7433,7 @@ function readSharedRecords(db, { deviceId, validateValue, rows: suppliedRows, in
         writers: [...new Set(sameRevision.map((entry) => entry.writer))].sort()
       });
     }
-    records2.set(identity, {
-      kind: latest.kind,
-      key: latest.key,
-      value: latest.value,
-      deleted: latest.deleted,
-      revision: latest.revision,
-      writer: latest.writer,
-      hash: latest.hash,
-      valueHash: sharedValueHash(latest.kind, latest.key, latest.value, latest.deleted),
-      batchId: latest.batch,
-      base: latest.base
-    });
+    records2.set(identity, current);
   }
   diagnostics.conflicts.sort((a, b) => compareText(sharedRecordKey(a.kind, a.key), sharedRecordKey(b.kind, b.key)));
   const revision = sha256Base64Url(canonicalJson([...records2].sort(([a], [b]) => compareText(a, b)).map(([key, record]) => [
@@ -7270,13 +7446,81 @@ function readSharedRecords(db, { deviceId, validateValue, rows: suppliedRows, in
   ])));
   return { records: records2, heads, ...history ? { history } : {}, revision, diagnostics };
 }
-function publishSharedRecords(db, { deviceId, project, updates, now = Date.now(), validateValue }) {
+function entrySummary(entry, source, validateValue) {
+  let valid = true;
+  if (validateValue) {
+    try {
+      valid = validateValue(entry.kind, entry.key, entry.value, entry.deleted, entry.writer) === true;
+    } catch {
+      valid = false;
+    }
+  }
+  return {
+    record: "entry",
+    kind: entry.kind,
+    key: entry.key,
+    revision: entry.revision,
+    writer: entry.writer,
+    batch: entry.batch,
+    hash: entry.hash,
+    ref: canonicalJson(sharedEntryRef(entry)),
+    valid,
+    source
+  };
+}
+var REVISION_LOW_DIGITS = 10;
+function workStateRowsRevision(db, { where = "1", syncRev = true } = {}) {
+  const revisionSums = syncRev ? `, CAST(SUM(CAST(substr(sync_rev, -${REVISION_LOW_DIGITS}) AS INTEGER)) AS TEXT) AS low,
+       CAST(SUM(CASE WHEN length(sync_rev) > ${REVISION_LOW_DIGITS}
+         THEN CAST(substr(sync_rev, 1, length(sync_rev) - ${REVISION_LOW_DIGITS}) AS INTEGER) ELSE 0 END) AS TEXT) AS high` : "";
+  const statement = db.prepare(`SELECT COUNT(*) AS count, MAX(id) AS id${revisionSums} FROM work_state_entries WHERE ${where}`);
+  try {
+    const row = statement.get();
+    return `${row.count}:${row.id ?? 0}:${row.high ?? 0}:${row.low ?? 0}`;
+  } finally {
+    statement.finalize();
+  }
+}
+var sharedRecordReaders = /* @__PURE__ */ new WeakMap();
+function createSharedRecordReader(db, options) {
+  let kept = null;
+  const revisionOf = () => {
+    try {
+      return workStateRowsRevision(db, { where: sharedWorkListSql("list_name") });
+    } catch (error) {
+      if (/no such (table|column)/i.test(String(error.message))) return null;
+      throw error;
+    }
+  };
+  const reader = () => {
+    if (db.inTransaction) {
+      const revision = revisionOf();
+      return kept && revision !== null && revision === kept.revision ? kept.state : readSharedRecords(db, options);
+    }
+    return db.transaction(() => {
+      const revision = revisionOf();
+      if (kept && revision !== null && revision === kept.revision) return kept.state;
+      const state = readShared(db, options, true);
+      kept = revision === null ? null : { revision, state };
+      return state;
+    })();
+  };
+  sharedRecordReaders.set(reader, { db, deviceId: options.deviceId, validateValue: options.validateValue ?? null });
+  return reader;
+}
+function publishSharedRecords(db, { deviceId, project, updates, now = Date.now(), validateValue, reader }) {
   sharedWriter(deviceId);
+  if (reader !== void 0) {
+    const reads = sharedRecordReaders.get(reader);
+    if (!reads || reads.db !== db || reads.deviceId !== deviceId || reads.validateValue !== (validateValue ?? null)) {
+      throw new TypeError("Shared My Work: the reader reads another database, device or validator");
+    }
+  }
   if (typeof project !== "string" || !project.trim() || project.length > 1024) throw new TypeError("Shared My Work: invalid project");
   if (!Array.isArray(updates) || updates.length > SHARED_WORK_MAX_UPDATES) throw new RangeError("Shared My Work: too many updates");
   if (!Number.isSafeInteger(now) || now < 0 || !Number.isFinite(new Date(now).getTime())) throw new TypeError("Shared My Work: invalid timestamp");
   return db.transaction(() => {
-    const state = readSharedRecords(db, { deviceId, validateValue });
+    const state = reader ? reader() : readSharedRecords(db, { deviceId, validateValue });
     const batchId = randomUUID2();
     const entries = [], seen = /* @__PURE__ */ new Set();
     for (const update of updates) {
@@ -7372,8 +7616,11 @@ var SharedLedgerAdapter = class {
   pendingMaterialization() {
     return this.db.prepare("SELECT COUNT(*) AS count FROM my_work_file_state WHERE pending_json IS NOT NULL").get().count;
   }
+  sharedReader() {
+    return this.readShared ??= createSharedRecordReader(this.db, { deviceId: this.deviceId, validateValue: isSharedProjectionValue });
+  }
   shared() {
-    return readSharedRecords(this.db, { deviceId: this.deviceId, validateValue: isSharedProjectionValue });
+    return this.sharedReader()();
   }
   tombstoneKeys(name, shared) {
     const kinds = fileKinds(name);
@@ -7504,7 +7751,7 @@ var SharedLedgerAdapter = class {
         const existing = shared.records.get(key);
         if (!Object.hasOwn(prior.bases, key) && existing && sharedValueHash(change.kind, change.key, change.value, change.deleted) === (existing.valueHash ?? existing.hash)) change.expectedHash = existing.hash;
       }
-      const result = publishSharedRecords(this.db, { deviceId: this.deviceId, project: this.project, updates: changes, validateValue: isSharedProjectionValue });
+      const result = publishSharedRecords(this.db, { deviceId: this.deviceId, project: this.project, updates: changes, validateValue: isSharedProjectionValue, reader: this.sharedReader() });
       this.remember(name, value, updates, this.shared(), true, value === null);
       if (result.changed) changed = { rules: changes.some((change) => change.kind === "story") };
     })();
@@ -7610,11 +7857,40 @@ var SharedLedgerAdapter = class {
     }
     const safe = updates;
     for (let offset = 0; offset < safe.length; offset += 512) {
-      changed += publishSharedRecords(this.db, { deviceId: this.deviceId, project: this.project, updates: safe.slice(offset, offset + 512), validateValue: isSharedProjectionValue }).changed;
+      changed += publishSharedRecords(this.db, { deviceId: this.deviceId, project: this.project, updates: safe.slice(offset, offset + 512), validateValue: isSharedProjectionValue, reader: this.sharedReader() }).changed;
     }
     if (changed) this.notify({ rules: safe.some((update) => update.kind === "story") });
     if (changed) this.lastSignature = null;
     return changed;
+  }
+  /**
+   * Whether this database holds a row the activity capture could publish for. With no ledger and no copy entries,
+   * buildSharedProjectionUpdates publishes provenance only for a session with a tool call, a deliverable, or an
+   * observation or prompt this device wrote (tool_uses and deliverables are never synced, so any row there is
+   * local; a pulled observation or prompt carries another device's origin). A replica that only pulls has none of
+   * them: on the cloud viewer's account, 0 of 163,082 observations and 0 of 5,598 prompts. Local rows are counted
+   * as all rows minus rows with an origin, because both counts use indexes and an IS NULL filter scans the table.
+   */
+  ownsActivity() {
+    const count2 = (sql, params = []) => {
+      try {
+        return this.db.prepare(sql).get(...params).count;
+      } catch (error) {
+        if (/no such table/i.test(String(error.message))) return 0;
+        throw error;
+      }
+    };
+    if (count2("SELECT COUNT(*) AS count FROM (SELECT 1 FROM tool_uses LIMIT 1)") || count2("SELECT COUNT(*) AS count FROM (SELECT 1 FROM deliverables LIMIT 1)")) return true;
+    return ["observations", "user_prompts"].some((table) => {
+      const total = count2(`SELECT COUNT(*) AS count FROM ${table}`);
+      if (!total) return false;
+      try {
+        return total > count2(`SELECT COUNT(*) AS count FROM ${table} WHERE origin_device_id IS NOT NULL`) || count2(`SELECT COUNT(*) AS count FROM (SELECT 1 FROM ${table} WHERE origin_device_id = ? LIMIT 1)`, [this.deviceId]) > 0;
+      } catch (error) {
+        if (/no such column/i.test(String(error.message))) return true;
+        throw error;
+      }
+    });
   }
   reconcile({ captureActivity = true } = {}) {
     const dataVersion = this.db.prepare("PRAGMA data_version").get();
@@ -7644,6 +7920,7 @@ var SharedLedgerAdapter = class {
     }
     const shared = this.shared();
     let projectionSuperseded = false;
+    let activityPublishFailed = false;
     let ledger = this.localLedger();
     const applied = applySharedProjection(this.db, shared, { ledger, deviceId: this.deviceId });
     ledger = applied.ledger;
@@ -7689,8 +7966,12 @@ var SharedLedgerAdapter = class {
         this.errors.push({ file: "human-copy.json", message: String(error.message) });
       }
     }
-    if (captureActivity && (activity !== this.activity || copyHash !== this.copyHash)) {
-      const entries = this.db.prepare("SELECT id, project, list_name, fields, created_at_epoch, origin_device_id, origin_local_id FROM work_state_entries").all();
+    if (captureActivity && (activity !== this.activity || copyHash !== this.copyHash) && !Object.keys(copies).length && !this.ownsActivity()) {
+      this.activity = activity;
+      this.copyHash = copyHash;
+    } else if (captureActivity && (activity !== this.activity || copyHash !== this.copyHash)) {
+      const entries = this.db.prepare(`SELECT id, project, list_name, fields, created_at_epoch, origin_device_id, origin_local_id
+        FROM work_state_entries WHERE NOT ${sharedWorkListSql("list_name")}`).all();
       const state = reduceWorkState(entries, { localDeviceId: this.deviceId });
       let records2 = readAgentRecords(this.db, { workState: state, ledger });
       records2 = applySharedProjection(this.db, shared, { ledger, records: records2, deviceId: this.deviceId }).records;
@@ -7699,9 +7980,12 @@ var SharedLedgerAdapter = class {
         this.publish(buildSharedProjectionUpdates(this.db, { ledger: null, records: records2, view, deviceId: this.deviceId, copyEntries: copies }));
       } catch (error) {
         this.errors.push({ file: "activity", message: String(error.message) });
+        activityPublishFailed = String(error?.code ?? "").startsWith("SQLITE_BUSY");
       }
-      this.activity = activity;
-      this.copyHash = copyHash;
+      if (!activityPublishFailed) {
+        this.activity = activity;
+        this.copyHash = copyHash;
+      }
     }
     const final = this.shared();
     if (final.revision !== this.sharedRevision) {
@@ -7711,7 +7995,7 @@ var SharedLedgerAdapter = class {
       this.storyHash = storyHash;
       this.sharedRevision = final.revision;
     }
-    this.lastSignature = projectionSuperseded ? null : this.signature(captureActivity, dataVersion);
+    this.lastSignature = projectionSuperseded || activityPublishFailed ? null : this.signature(captureActivity, dataVersion);
     const diagnostics = applySharedProjection(this.db, final, { ledger, deviceId: this.deviceId }).diagnostics;
     this.lastDiagnostic = { ...diagnostics, files: this.errors };
     return this.lastDiagnostic;
