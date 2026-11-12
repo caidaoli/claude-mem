@@ -9,6 +9,7 @@ export type HumanCopyQuery = (messages: Array<{ role: 'system' | 'user' | 'assis
 export function humanCopyProvider(query: HumanCopyQuery, language?: string): HumanCopyProvider;
 export function chatCompletionsHumanCopyProvider(options: { url: string; apiKey: string; model: string; fallbackModels?: string[]; sendReasoningOff?: boolean; fetchImpl?: typeof fetch }): HumanCopyProvider;
 export function fitGeneratedCopy(output: unknown): unknown;
+export const MAX_OUTPUT_REJECTION_ATTEMPTS: number;
 export class HumanCopyWorker {
   revision: number;
   provider: HumanCopyProvider | null | undefined;
