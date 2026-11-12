@@ -14,12 +14,12 @@
  * install that routed away from that account does not even open it.
  */
 
-import { resolveSelectedApiProvider, type ApiProviderId } from '../../agent-runner/api-agent.js';
+import { resolveSelectedApiProvider } from '../../agent-runner/api-agent.js';
 import { SettingsDefaultsManager } from '../../../shared/SettingsDefaultsManager.js';
 import { paths } from '../../../shared/paths.js';
 import { logger } from '../../../utils/logger.js';
 import { AppError } from '../../server/ErrorHandler.js';
-import { ApiCorpusAgent, isApiSessionId } from './ApiCorpusAgent.js';
+import { ApiCorpusAgent, isApiSessionId, type CorpusProviderId, type CustomCorpusProvider } from './ApiCorpusAgent.js';
 import type { CorpusStore } from './CorpusStore.js';
 import type { CorpusFile, KnowledgeAgentCallOptions, QueryResult } from './types.js';
 
@@ -39,7 +39,7 @@ export interface CorpusAgent {
 
 /**
  * The values `CLAUDE_MEM_CORPUS_AGENT` accepts: '' is the Claude Agent SDK,
- * 'api' the selected openrouter / openai-compatible provider. The settings
+ * 'api' the selected openrouter / openai-compatible / custom provider. The settings
  * route and the factory below both check against this one list.
  */
 export const CORPUS_AGENT_CHOICES = ['', 'api'] as const;
@@ -63,32 +63,36 @@ export interface ProviderCorpusAgent extends CorpusAgent {
  * running another one would spend an account they did not choose.
  *
  * `settingsPath` is the settings file read; it defaults to the one the
- * worker uses.
+ * worker uses. `custom` is the worker's Custom provider; without it a custom
+ * selection is not an API endpoint here.
  */
 export async function createCorpusAgent(
   corpusStore: CorpusStore,
   settingsPath?: string,
+  custom?: CustomCorpusProvider,
 ): Promise<ProviderCorpusAgent> {
-  const apiAgents = new Map<ApiProviderId, ApiCorpusAgent>();
+  const apiAgents = new Map<CorpusProviderId, ApiCorpusAgent>();
   let claudeAgent: Promise<CorpusAgent> | null = null;
 
   const select = async (): Promise<CorpusAgent> => {
-    const wanted = String(SettingsDefaultsManager.loadFromFile(settingsPath ?? paths.settings()).CLAUDE_MEM_CORPUS_AGENT ?? '').trim().toLowerCase();
+    const settings = SettingsDefaultsManager.loadFromFile(settingsPath ?? paths.settings());
+    const wanted = String(settings.CLAUDE_MEM_CORPUS_AGENT ?? '').trim().toLowerCase();
     // The settings route only saves '' or 'api', but the file can be edited by hand. A value this
     // code does not know must not fall through to the Claude Agent SDK: that is the account an
     // owner who wrote something here was trying to leave.
     if (!(CORPUS_AGENT_CHOICES as readonly string[]).includes(wanted)) {
       throw new AppError(
-        `CLAUDE_MEM_CORPUS_AGENT is ${JSON.stringify(wanted.slice(0, MAX_ECHOED_SETTING_CHARS))}; it must be empty (Claude Agent SDK) or ${CORPUS_AGENT_CHOICES.filter(Boolean).map(choice => JSON.stringify(choice)).join(', ')} (the selected openrouter / openai-compatible provider).`,
+        `CLAUDE_MEM_CORPUS_AGENT is ${JSON.stringify(wanted.slice(0, MAX_ECHOED_SETTING_CHARS))}; it must be empty (Claude Agent SDK) or ${CORPUS_AGENT_CHOICES.filter(Boolean).map(choice => JSON.stringify(choice)).join(', ')} (the selected openrouter / openai-compatible / custom provider).`,
         400,
         'CORPUS_AGENT_UNAVAILABLE',
       );
     }
     if (wanted === 'api') {
-      const provider = resolveSelectedApiProvider(settingsPath);
+      const provider: CorpusProviderId | null = resolveSelectedApiProvider(settingsPath)
+        ?? (custom && String(settings.CLAUDE_MEM_PROVIDER ?? '').trim() === 'custom' ? 'custom' : null);
       if (!provider) {
         throw new AppError(
-          'CLAUDE_MEM_CORPUS_AGENT is "api", but CLAUDE_MEM_PROVIDER is not openrouter or openai-compatible. Select one of them, or empty the setting to use the Claude Agent SDK.',
+          'CLAUDE_MEM_CORPUS_AGENT is "api", but CLAUDE_MEM_PROVIDER is not openrouter, openai-compatible or custom. Select one of them, or empty the setting to use the Claude Agent SDK.',
           400,
           'CORPUS_AGENT_UNAVAILABLE',
         );
@@ -96,7 +100,7 @@ export async function createCorpusAgent(
       let agent = apiAgents.get(provider);
       if (!agent) {
         logger.info('WORKER', `Corpus agent runs on the selected provider (${provider}) because CLAUDE_MEM_CORPUS_AGENT=api`);
-        agent = new ApiCorpusAgent(corpusStore, provider, settingsPath);
+        agent = new ApiCorpusAgent(corpusStore, provider, settingsPath, custom);
         apiAgents.set(provider, agent);
       }
       return agent;

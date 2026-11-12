@@ -161,7 +161,7 @@ import { SSEBroadcaster } from './worker/SSEBroadcaster.js';
 import { MemoryFeedInvalidation } from './worker/MemoryFeedInvalidation.js';
 import { ClaudeProvider, classifyClaudeError } from './worker/ClaudeProvider.js';
 import type { WorkerRef } from './worker/agents/types.js';
-import { CustomAgent } from './worker/CustomAgent.js';
+import { CustomAgent, isCustomAvailable } from './worker/CustomAgent.js';
 import { GeminiProvider, classifyGeminiError } from './worker/GeminiProvider.js';
 import { OpenRouterProvider, classifyOpenRouterError } from './worker/OpenRouterProvider.js';
 import { OpenAICompatProvider } from './worker/OpenAICompatProvider.js';
@@ -1315,7 +1315,10 @@ export class WorkerService implements WorkerRef {
       // The corpus agent is the Claude Agent SDK unless CLAUDE_MEM_CORPUS_AGENT
       // is "api". The setting is read on every call, so this one instance
       // serves a change without a restart (see knowledge/CorpusAgent.ts).
-      const corpusAgent = await createCorpusAgent(this.corpusStore);
+      const corpusAgent = await createCorpusAgent(this.corpusStore, undefined, {
+        isConfigured: () => isCustomAvailable(),
+        ask: (prompt, systemPrompt, abortSignal) => this.customAgent.askCorpus(prompt, systemPrompt, abortSignal),
+      });
       this.corpusRoutes = new CorpusRoutes(this.corpusStore, corpusBuilder, corpusAgent);
       this.server.registerRoutes(this.corpusRoutes);
       logger.info('WORKER', 'CorpusRoutes registered');

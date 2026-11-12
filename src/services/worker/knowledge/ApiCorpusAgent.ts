@@ -29,9 +29,34 @@ import {
 } from '../../agent-runner/api-agent.js';
 import { logger } from '../../../utils/logger.js';
 import { AppError } from '../../server/ErrorHandler.js';
+import { ClassifiedProviderError } from '../provider-errors.js';
 import { CorpusRenderer } from './CorpusRenderer.js';
 import type { CorpusStore } from './CorpusStore.js';
 import type { CorpusFile, CorpusObservation, KnowledgeAgentCallOptions, QueryResult } from './types.js';
+
+/** The providers a corpus answers on: an API target, or Custom over its own protocols and key pool. */
+export type CorpusProviderId = ApiProviderId | 'custom';
+
+/** One corpus question: the prompt, the system message, and the caller's abort signal. */
+type CorpusAsk = (prompt: string, systemPrompt: string, abortSignal?: AbortSignal) => Promise<string>;
+
+/**
+ * The Custom provider as a corpus answerer, handed in by the worker
+ * (CustomAgent), so this module does not load the observer provider itself.
+ */
+export interface CustomCorpusProvider {
+  /** Whether an endpoint, a model and (for a hosted endpoint) a key are configured. Makes no request. */
+  isConfigured(): boolean;
+  ask: CorpusAsk;
+}
+
+/** The HTTP status a Custom refusal stands for: Custom classifies a refusal by kind, not by status. */
+const CUSTOM_REFUSAL_STATUS: Partial<Record<string, number>> = {
+  auth_invalid: 401,
+  setup_required: 401,
+  quota_exhausted: 429,
+  rate_limit: 429,
+};
 
 /** The prefix every synthetic corpus session id carries. */
 const API_SESSION_PREFIX = 'api:';
@@ -218,7 +243,7 @@ function selectObservations(
  * with, and a query against it reports "not primed" instead of answering from
  * a corpus version the reader never saw.
  */
-export function apiCorpusSessionId(provider: ApiProviderId, corpus: CorpusFile): string {
+export function apiCorpusSessionId(provider: CorpusProviderId, corpus: CorpusFile): string {
   const digest = createHash('sha256')
     .update(`${corpus.name}|${corpus.updated_at}`)
     .digest('hex')
@@ -231,8 +256,10 @@ export class ApiCorpusAgent {
 
   constructor(
     private readonly corpusStore: CorpusStore,
-    private readonly provider: ApiProviderId,
+    private readonly provider: CorpusProviderId,
     private readonly settingsPath?: string,
+    /** Required when `provider` is 'custom'; createCorpusAgent selects Custom only with it. */
+    private readonly custom?: CustomCorpusProvider,
   ) {}
 
   /**
@@ -244,7 +271,7 @@ export class ApiCorpusAgent {
    * shows up on the first query, not here.
    */
   async prime(corpus: CorpusFile, callOptions: KnowledgeAgentCallOptions = {}): Promise<string> {
-    this.requireTarget();
+    this.requireAsk();
 
     // A prime the caller abandoned is not a prime: nothing is written.
     callOptions.abortController?.signal.throwIfAborted();
@@ -258,7 +285,7 @@ export class ApiCorpusAgent {
 
   async query(corpus: CorpusFile, question: string, callOptions: KnowledgeAgentCallOptions = {}): Promise<QueryResult> {
     const sessionId = this.requireSessionId(corpus);
-    const target = this.requireTarget();
+    const ask = this.requireAsk();
 
     // A corpus with no observations has nothing to send: answer here, not with a paid call
     // whose only possible reply is "the corpus does not hold the answer".
@@ -300,10 +327,7 @@ export class ApiCorpusAgent {
 
     let answer: string;
     try {
-      answer = await askApiTarget(target, prompt, {
-        systemPrompt: this.systemPrompt(corpus),
-        abortSignal: callOptions.abortController?.signal,
-      });
+      answer = await ask(prompt, this.systemPrompt(corpus), callOptions.abortController?.signal);
     } catch (error) {
       throw this.providerError('query', error);
     }
@@ -339,11 +363,22 @@ export class ApiCorpusAgent {
   }
 
   /**
-   * The endpoint, key and model of the selected provider. A provider that is
+   * How the selected provider answers one question. A provider that is
    * selected but has no key is still the provider: the work fails there with
    * that provider's own complaint, never on another account.
    */
-  private requireTarget(): ApiTarget {
+  private requireAsk(): CorpusAsk {
+    if (this.provider === 'custom') {
+      const custom = this.custom!;
+      if (!custom.isConfigured()) {
+        throw new AppError(
+          'The selected provider cannot answer for this corpus: CLAUDE_MEM_PROVIDER is custom, but its endpoint, model or API key is not configured.',
+          401,
+          'PROVIDER_NOT_AUTHENTICATED',
+        );
+      }
+      return custom.ask;
+    }
     const resolution = resolveApiTarget(this.settingsPath);
     if (!resolution.target) {
       throw new AppError(
@@ -352,7 +387,8 @@ export class ApiCorpusAgent {
         'PROVIDER_NOT_AUTHENTICATED',
       );
     }
-    return resolution.target;
+    const target: ApiTarget = resolution.target;
+    return (prompt, systemPrompt, abortSignal) => askApiTarget(target, prompt, { systemPrompt, abortSignal });
   }
 
   /**
@@ -362,15 +398,18 @@ export class ApiCorpusAgent {
    * another provider.
    */
   private providerError(action: 'query', error: unknown): Error {
-    if (error instanceof ApiProviderError) {
-      if (error.status === 401 || error.status === 403) {
-        return new AppError(`Corpus ${action} failed: ${error.message}`, 401, 'PROVIDER_NOT_AUTHENTICATED');
+    const status = error instanceof ApiProviderError ? error.status
+      : error instanceof ClassifiedProviderError ? CUSTOM_REFUSAL_STATUS[error.kind] : undefined;
+    if (status !== undefined) {
+      const message = `Corpus ${action} failed: ${(error as Error).message}`;
+      if (status === 401 || status === 403) {
+        return new AppError(message, 401, 'PROVIDER_NOT_AUTHENTICATED');
       }
-      if (error.status === 402) {
-        return new AppError(`Corpus ${action} failed: ${error.message}`, 402, 'PROVIDER_NO_CREDIT');
+      if (status === 402) {
+        return new AppError(message, 402, 'PROVIDER_NO_CREDIT');
       }
-      if (error.status === 429) {
-        return new AppError(`Corpus ${action} failed: ${error.message}`, 429, 'PROVIDER_QUOTA_EXHAUSTED');
+      if (status === 429) {
+        return new AppError(message, 429, 'PROVIDER_QUOTA_EXHAUSTED');
       }
     }
     return error instanceof Error ? error : new Error(String(error));

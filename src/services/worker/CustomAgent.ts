@@ -98,8 +98,13 @@ export interface CustomAgentConfig {
 const LITERAL_CHINESE = 'Write the Chinese characters themselves; never write them as \\uXXXX escape sequences.';
 const CUSTOM_OBSERVATION_LANGUAGE = `LANGUAGE REQUIREMENTS: Please write the observation data in 中文. ${LITERAL_CHINESE}`;
 const CUSTOM_SUMMARY_LANGUAGE = `LANGUAGE REQUIREMENTS: Please write ALL summary content (request, investigated, learned, completed, next_steps, notes) in 中文. ${LITERAL_CHINESE}`;
-/** Per-attempt deadline for one My Work refresh step: a whole-ledger answer can take minutes. The worker checks every 10 minutes. */
-const WORK_VIEW_REFRESH_TIMEOUT_MS = 10 * 60_000;
+/** Per-attempt deadline for one standalone answer (a My Work refresh step, a corpus question): a whole-ledger answer can take minutes. */
+const STANDALONE_ANSWER_TIMEOUT_MS = 10 * 60_000;
+/** Finish reasons (OpenAI/Codex and Gemini spellings) of an answer the endpoint cut short or filtered. */
+const INCOMPLETE_FINISH_REASONS = new Set([
+  'length', 'content_filter', 'incomplete',
+  'MAX_TOKENS', 'SAFETY', 'RECITATION', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII',
+]);
 
 function withCustomLanguage(mode: ModeConfig): ModeConfig {
   const setLanguage = (text: string, requirement: string) =>
@@ -834,19 +839,31 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
    * refresh parses. Careful steps ask for `$TIER:summary`, resolved like session summaries; the rest use the Custom model. */
   async askRefresh(prompt: string, models: StepModels): Promise<string> {
     const config = this.getConfig();
-    if (!config.apiKey && this.requiresApiKey(config)) throw this.missingApiKeyError();
     const model = models.custom?.model === '$TIER:summary'
       ? resolveSummaryTierModel(config.model, SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH))
       : config.model;
     // One cache key for every refresh request: the steps share the inlined skill as a prefix, and a retry repeats its first ask.
     const sessionId = anonymousSessionId('work-view-refresh');
-    // One long background answer: the observer's output cap and first-token/total timeouts do not apply, only its own deadline.
+    return this.askStandalone(prompt, { ...config, model }, 'the My Work refresh', undefined,
+      { kind: 'work_view_refresh', sessionId, contentSessionId: `work-view-refresh-${sessionId}` });
+  }
+
+  /** One knowledge-corpus question (CLAUDE_MEM_CORPUS_AGENT=api), answered in plain text on the Custom model. */
+  async askCorpus(prompt: string, systemPrompt: string, signal?: AbortSignal): Promise<string> {
+    return this.askStandalone(prompt, { ...this.getConfig(), systemPrompt, plainText: true }, 'the corpus question', signal);
+  }
+
+  /** One long standalone answer: the observer's output cap and first-token/total timeouts do not apply, only its own deadline. */
+  private async askStandalone(prompt: string, config: CustomAgentConfig, purpose: string, signal?: AbortSignal, label?: ObserverRequestLabel): Promise<string> {
+    if (!config.apiKey && this.requiresApiKey(config)) throw this.missingApiKeyError();
     const result = await this.query(
-      [{ role: 'user', content: prompt }], { ...config, model, uncappedOutput: true, firstTokenTimeoutSeconds: 0, totalTimeoutSeconds: 0 },
-      undefined, WORK_VIEW_REFRESH_TIMEOUT_MS, undefined,
-      { kind: 'work_view_refresh', sessionId, contentSessionId: `work-view-refresh-${sessionId}` },
+      [{ role: 'user', content: prompt }], { ...config, uncappedOutput: true, firstTokenTimeoutSeconds: 0, totalTimeoutSeconds: 0 },
+      signal, STANDALONE_ANSWER_TIMEOUT_MS, undefined, label,
     );
-    if (!result.content?.trim()) throw new Error(`${this.providerName} returned no text for the My Work refresh (finish reason: ${result.finishReason ?? 'unknown'})`);
+    if (!result.content?.trim()) throw new Error(`${this.providerName} returned no text for ${purpose} (finish reason: ${result.finishReason ?? 'unknown'})`);
+    if (result.finishReason && INCOMPLETE_FINISH_REASONS.has(result.finishReason)) {
+      throw new Error(`${this.providerName} cut ${purpose} short (finish reason: ${result.finishReason}); the answer is incomplete.`);
+    }
     return result.content;
   }
 

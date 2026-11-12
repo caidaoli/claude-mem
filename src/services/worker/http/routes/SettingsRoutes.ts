@@ -724,7 +724,7 @@ export class SettingsRoutes extends BaseRouteHandler {
     }
     if (settings.CLAUDE_MEM_CORPUS_AGENT !== undefined
       && !(CORPUS_AGENT_CHOICES as readonly string[]).includes(settings.CLAUDE_MEM_CORPUS_AGENT)) {
-      return { valid: false, error: `CLAUDE_MEM_CORPUS_AGENT must be empty (Claude Agent SDK) or ${CORPUS_AGENT_CHOICES.filter(Boolean).map(choice => JSON.stringify(choice)).join(', ')} (the selected openrouter / openai-compatible provider)` };
+      return { valid: false, error: `CLAUDE_MEM_CORPUS_AGENT must be empty (Claude Agent SDK) or ${CORPUS_AGENT_CHOICES.filter(Boolean).map(choice => JSON.stringify(choice)).join(', ')} (the selected openrouter / openai-compatible / custom provider)` };
     }
     if (settings.CLAUDE_MEM_WORK_VIEW_COPY_PROVIDER !== undefined
       && !['', 'openrouter', 'openai-compatible', 'custom', 'off'].includes(settings.CLAUDE_MEM_WORK_VIEW_COPY_PROVIDER)) {

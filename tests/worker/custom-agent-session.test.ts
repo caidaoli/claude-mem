@@ -14,6 +14,10 @@ import { PaidSendBudget } from '../../src/services/worker/paid-send-budget.js';
 import { ClassifiedProviderError } from '../../src/services/worker/provider-errors.js';
 import type { DatabaseManager } from '../../src/services/worker/DatabaseManager.js';
 import type { SessionManager } from '../../src/services/worker/SessionManager.js';
+import { createCorpusAgent } from '../../src/services/worker/knowledge/CorpusAgent.js';
+import type { CorpusStore } from '../../src/services/worker/knowledge/CorpusStore.js';
+import type { CorpusFile } from '../../src/services/worker/knowledge/types.js';
+import { AppError } from '../../src/services/server/ErrorHandler.js';
 
 const mockMode = {
   name: 'code',
@@ -692,6 +696,81 @@ describe('CustomAgent session behavior', () => {
   it('fails a My Work refresh step when the provider returns no text', async () => {
     replies.push(chat(''));
     await expect(fixture().agent.askRefresh('group these', { custom: {} })).rejects.toThrow('no text for the My Work refresh');
+  });
+
+  describe('answers knowledge-corpus questions when CLAUDE_MEM_CORPUS_AGENT=api', () => {
+    const corpus = (): CorpusFile => ({
+      version: 1, name: 'alpha', description: '', created_at: '2026-11-12T00:00:00.000Z', updated_at: '2026-11-12T00:00:00.000Z',
+      filter: {}, stats: { observation_count: 1, token_estimate: 10, date_range: { earliest: '', latest: '' }, type_breakdown: {} },
+      system_prompt: 'Answer from the corpus only.', session_id: null,
+      observations: [{ id: 7, type: 'decision', title: 'Corpus runs on Custom', subtitle: null, narrative: null, facts: [], concepts: [],
+        files_read: [], files_modified: [], project: 'proj', created_at: '2026-11-12T00:00:00.000Z', created_at_epoch: 1 }],
+    });
+    const corpusAgent = (agent?: CustomAgent) => createCorpusAgent({ write: () => {} } as unknown as CorpusStore, 'settings.json',
+      agent && { isConfigured: () => isCustomAvailable(), ask: (prompt, system, signal) => agent.askCorpus(prompt, system, signal) });
+    const failure = (promise: Promise<unknown>) => promise.then(() => { throw new Error('expected a failure'); }, (error: unknown) => error as AppError);
+
+    beforeEach(() => {
+      settings.CLAUDE_MEM_PROVIDER = 'custom';
+      settings.CLAUDE_MEM_CORPUS_AGENT = 'api';
+    });
+
+    for (const protocol of ['openai', 'gemini', 'codex'] as const) it(`primes without a request and answers in plain text over ${protocol}`, async () => {
+      settings.CLAUDE_MEM_CUSTOM_PROTOCOL = protocol;
+      replies.push(protocol === 'openai' ? chat('from #7') : protocol === 'gemini' ? gemini('from #7') : codex('from #7'));
+      const agent = await corpusAgent(fixture().agent);
+      const file = corpus();
+      file.session_id = await agent.prime(file);
+      expect(requests).toHaveLength(0);
+      const result = await agent.query(file, 'Where does the corpus run?');
+      expect(result.answer).toBe('from #7');
+      expect(result.observations_sent).toBe(1);
+      expect(requests).toHaveLength(1);
+      const body = requests[0].body;
+      expect(JSON.stringify(body)).toContain('Answer from the corpus only.');
+      expect(JSON.stringify(body)).toContain('Where does the corpus run?');
+      // A corpus answer is prose, never the observer's JSON format.
+      expect(body.response_format).toBeUndefined();
+      expect(body.text?.format).toBeUndefined();
+      expect(body.generationConfig?.responseMimeType).toBeUndefined();
+    });
+
+    it('reports an endpoint refusal as the provider refusal, without moving to Claude', async () => {
+      replies.push(new Response(JSON.stringify({ error: { message: 'invalid api key' } }), { status: 401 }));
+      const agent = await corpusAgent(fixture().agent);
+      const file = corpus();
+      file.session_id = await agent.prime(file);
+      const error = await failure(agent.query(file, 'Where does the corpus run?'));
+      expect(error).toBeInstanceOf(AppError);
+      expect(error.statusCode).toBe(401);
+      expect(error.code).toBe('PROVIDER_NOT_AUTHENTICATED');
+    });
+
+    it('refuses to prime an unconfigured Custom endpoint without a request', async () => {
+      settings.CLAUDE_MEM_CUSTOM_API_URL = '';
+      const error = await failure((await corpusAgent(fixture().agent)).prime(corpus()));
+      expect(error.statusCode).toBe(401);
+      expect(error.code).toBe('PROVIDER_NOT_AUTHENTICATED');
+      expect(requests).toHaveLength(0);
+    });
+
+    it('does not treat custom as an API provider when the worker did not hand Custom in', async () => {
+      const error = await failure((await corpusAgent()).prime(corpus()));
+      expect(error.statusCode).toBe(400);
+      expect(error.code).toBe('CORPUS_AGENT_UNAVAILABLE');
+    });
+  });
+
+  for (const [protocol, reason, reply] of [
+    ['openai', 'content_filter', () => new Response(JSON.stringify({ choices: [{ message: { content: 'partial' }, finish_reason: 'content_filter' }] }))],
+    ['openai', 'length', () => new Response(JSON.stringify({ choices: [{ message: { content: 'partial' }, finish_reason: 'length' }] }))],
+    ['gemini', 'SAFETY', () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: 'partial' }] }, finishReason: 'SAFETY' }] }))],
+    ['codex', 'content_filter', () => new Response(JSON.stringify({ status: 'incomplete', incomplete_details: { reason: 'content_filter' },
+      output: [{ content: [{ type: 'output_text', text: 'partial' }] }] }))],
+  ] as const) it(`rejects a ${protocol} My Work refresh answer cut short by ${reason}`, async () => {
+    settings.CLAUDE_MEM_CUSTOM_PROTOCOL = protocol;
+    replies.push(reply());
+    await expect(fixture().agent.askRefresh('group these', { custom: {} })).rejects.toThrow(`finish reason: ${reason}`);
   });
 
   for (const protocol of ['openai', 'gemini', 'codex'] as const) it(`waits past the observer's ${protocol} timeouts for a long My Work refresh answer`, async () => {
