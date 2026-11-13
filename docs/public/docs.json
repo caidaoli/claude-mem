@@ -135,12 +135,14 @@
           "langgraph-integration",
           "llamaindex-integration",
           "microsoft-agent-framework",
+          "n8n",
           "openai-agents-integration",
           "pipecat",
           "pydantic-ai-integration",
           "smolagents-integration",
           "strands-agents-integration",
-          "vercel-ai-sdk"
+          "vercel-ai-sdk",
+          "vercel-chat"
         ]
       },
       {
