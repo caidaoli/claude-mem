@@ -988,6 +988,26 @@ describe('npx doctor observerProviderCheck (#5359)', () => {
       detail: 'openai-compatible (llama3 via http://localhost:11434/v1)',
     },
     {
+      name: 'validates custom provider configurations: noEndpoint',
+      input: { provider: 'custom', custom: { hasEndpoint: false, hasKey: false, requiresKey: false, endpointUrl: '', model: 'gpt-4o' } }, status: 'warn',
+      fragments: ['CLAUDE_MEM_CUSTOM_API_URL'],
+    },
+    {
+      name: 'validates custom provider configurations: missingKey',
+      input: { provider: 'custom', custom: { hasEndpoint: true, hasKey: false, requiresKey: true, endpointUrl: 'https://custom.example.com', model: 'gpt-4o' } }, status: 'warn',
+      fragments: ['CLAUDE_MEM_CUSTOM_API_KEY'],
+    },
+    {
+      name: 'validates custom provider configurations: validRemote',
+      input: { provider: 'custom', custom: { hasEndpoint: true, hasKey: true, requiresKey: true, endpointUrl: 'https://custom.example.com', model: 'gpt-4o' } }, status: 'ok',
+      detail: 'custom (gpt-4o via https://custom.example.com)',
+    },
+    {
+      name: 'validates custom provider configurations: validLocalNoKey',
+      input: { provider: 'custom', custom: { hasEndpoint: true, hasKey: false, requiresKey: false, endpointUrl: 'http://localhost:11434', model: 'llama3' } }, status: 'ok',
+      detail: 'custom (llama3 via http://localhost:11434)',
+    },
+    {
       name: 'warns when provider value is unrecognized: unknown',
       input: { provider: 'unsupported-llm' }, status: 'warn',
       fragments: ['Unknown provider "unsupported-llm"'],

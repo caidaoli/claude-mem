@@ -104,6 +104,21 @@ describe('npx claude-mem update keeps the configured provider', () => {
     expect(readFileSync(USER_SETTINGS_PATH, 'utf-8')).toBe(before);
   });
 
+  it('keeps custom and leaves its settings untouched', async () => {
+    const before = writeSettings({
+      ...ACCOUNT_SETTINGS,
+      CLAUDE_MEM_PROVIDER: 'custom',
+      CLAUDE_MEM_CUSTOM_API_URL: 'https://custom.example.com',
+      CLAUDE_MEM_CUSTOM_API_KEY: 'custom-key',
+    });
+
+    const { provider, options } = await runUpdateProviderStep();
+
+    expect(provider).toBe('custom');
+    expect(options.providerSource).toBe('persisted');
+    expect(readFileSync(USER_SETTINGS_PATH, 'utf-8')).toBe(before);
+  });
+
   it('keeps a gateway account untouched', async () => {
     const before = writeSettings({ ...ACCOUNT_SETTINGS, CLAUDE_MEM_PROVIDER: 'openrouter' });
 

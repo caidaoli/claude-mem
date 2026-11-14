@@ -914,6 +914,16 @@ export interface ObserverProviderCheckOptions {
   hasOpenRouterKey?: boolean;
   hasGeminiKey?: boolean;
   openaiCompat?: OpenAICompatCheckStatus;
+  custom?: CustomCheckStatus;
+}
+
+/** The fork's Custom provider; its model falls back to a default, so only the endpoint and key can be missing. */
+export interface CustomCheckStatus {
+  hasEndpoint: boolean;
+  hasKey: boolean;
+  requiresKey: boolean;
+  endpointUrl: string;
+  model: string;
 }
 
 /**
@@ -1072,6 +1082,32 @@ export function observerProviderCheck(options: ObserverProviderCheckOptions): Ch
     };
   }
 
+  if (provider === 'custom') {
+    const custom = options.custom;
+    if (!custom?.hasEndpoint) {
+      return {
+        name,
+        status: 'warn',
+        detail: 'custom configured, but no endpoint URL is set (set CLAUDE_MEM_CUSTOM_API_URL in settings.json)',
+        required: false,
+      };
+    }
+    if (custom.requiresKey && !custom.hasKey) {
+      return {
+        name,
+        status: 'warn',
+        detail: 'custom configured, but required API key is missing (set CLAUDE_MEM_CUSTOM_API_KEY in settings.json or CUSTOM_API_KEY in .env)',
+        required: false,
+      };
+    }
+    return {
+      name,
+      status: 'ok',
+      detail: `custom (${custom.model} via ${custom.endpointUrl})`,
+      required: false,
+    };
+  }
+
   if (provider === 'host') {
     return {
       name,
@@ -1084,7 +1120,7 @@ export function observerProviderCheck(options: ObserverProviderCheckOptions): Ch
   return {
     name,
     status: 'warn',
-    detail: `Unknown provider "${provider}". Supported providers: claude, codex, openrouter, gemini, openai-compatible, host`,
+    detail: `Unknown provider "${provider}". Supported providers: claude, codex, openrouter, gemini, openai-compatible, custom, host`,
     required: false,
   };
 }
@@ -1232,6 +1268,12 @@ export async function runDoctorCommand(): Promise<void> {
     doctorSettings.CLAUDE_MEM_OPENAI_COMPAT_API_KEYS || getCredential('OPENAI_COMPAT_API_KEYS') || '',
   );
 
+  const customUrl = (doctorSettings.CLAUDE_MEM_CUSTOM_API_URL ?? '').trim();
+  const customKeys = buildKeyPool(
+    doctorSettings.CLAUDE_MEM_CUSTOM_API_KEY || getCredential('CUSTOM_API_KEY') || '',
+    doctorSettings.CLAUDE_MEM_CUSTOM_API_KEYS || getCredential('CUSTOM_API_KEYS') || '',
+  );
+
   checks.push(observerProviderCheck({
     provider: doctorSettings.CLAUDE_MEM_PROVIDER,
     claudeDetected: Boolean(detectedClaudeCode),
@@ -1250,6 +1292,13 @@ export async function runDoctorCommand(): Promise<void> {
       requiresKey: compatRequiresApiKey,
       endpointUrl: compatBaseUrl,
       model: compatModel,
+    },
+    custom: {
+      hasEndpoint: Boolean(customUrl),
+      hasKey: customKeys.length > 0,
+      requiresKey: !isLocalEndpointUrl(customUrl),
+      endpointUrl: customUrl,
+      model: (doctorSettings.CLAUDE_MEM_CUSTOM_MODEL || 'gpt-4o').trim(),
     },
   }));
 

@@ -302,19 +302,19 @@ describe('CustomAgent session behavior', () => {
     settings.CLAUDE_MEM_CUSTOM_API_URL = 'https://hosted.example.com';
     expect(isCustomAvailable()).toBe(false);
   });
-  it('keeps the original Session_id and prompt_cache_key across requests', async () => {
+  it('keeps the original Session-id and prompt_cache_key across requests', async () => {
     const f = fixture([toolMessage, { ...toolMessage, _persistentId: 102 }]);
     await f.agent.startSession(f.session);
-    expect(requests.map(request => request.headers.Session_id)).toEqual(['content-1', 'content-1']);
+    expect(requests.map(request => request.headers['Session-id'])).toEqual(['content-1', 'content-1']);
     expect(requests.map(request => request.body.prompt_cache_key)).toEqual(['content-1', 'content-1']);
   });
   it('generates a request session id when contentSessionId is blank', async () => {
     const f = fixture([toolMessage, { ...toolMessage, _persistentId: 102 }]);
     f.session.contentSessionId = ' ';
     await f.agent.startSession(f.session);
-    expect(requests[0].headers.Session_id).toMatch(/^custom-/);
-    expect(requests[0].body.prompt_cache_key).toBe(requests[0].headers.Session_id);
-    expect(requests[1].headers.Session_id).toBe(requests[0].headers.Session_id);
+    expect(requests[0].headers['Session-id']).toMatch(/^custom-/);
+    expect(requests[0].body.prompt_cache_key).toBe(requests[0].headers['Session-id']);
+    expect(requests[1].headers['Session-id']).toBe(requests[0].headers['Session-id']);
   });
   for (const [model, expected] of [['gpt-4o', { reasoning_effort: 'low' }], ['mimo-v2', { thinking: { type: 'disabled' } }],
     ['gemini-3.5-flash', { thinkingConfig: { thinkingLevel: 'low' } }], ['claude-proxy', {}]] as const) {
@@ -371,7 +371,7 @@ describe('CustomAgent session behavior', () => {
       expect(f.session.cumulativeInputTokens).toBe(7);
     expect(f.session.cumulativeOutputTokens).toBe(5);
       expect(f.storeObservations).toHaveBeenCalledTimes(1);
-      expect(requests[0].headers.Session_id).toBe('content-1');
+      expect(requests[0].headers['Session-id']).toBe('content-1');
       if (protocol === 'gemini') {
         expect(requests[0].url).toContain('/v1beta/models/gemini-3.5-flash:generateContent');
         expect(requests[0].body.generationConfig).toMatchObject({ thinkingConfig: { thinkingLevel: 'low' }, maxOutputTokens: 8192, responseMimeType: 'application/json' });
@@ -563,7 +563,7 @@ describe('CustomAgent session behavior', () => {
     expect(messages[0].content).toContain('中文');
     expect(messages[0].content).toContain('JSON');
     expect(JSON.parse(messages[1].content)).toEqual(input);
-    expect(headers.Session_id).toBeTruthy();
+    expect(headers['Session-id']).toBeTruthy();
     expect(f.storeObservations).not.toHaveBeenCalled();
     expect(f.updateMemorySessionId).not.toHaveBeenCalled();
     expect(f.confirm).not.toHaveBeenCalled();
@@ -577,9 +577,9 @@ describe('CustomAgent session behavior', () => {
     const f = fixture();
     expect((await f.agent.generateHumanCopy(input)).usage).toEqual({ total_tokens: 12 });
     expect((await f.agent.generateHumanCopy(input)).usage).toBeNull();
-    expect(requests[1].headers.Session_id).toBe(requests[0].headers.Session_id);
-    expect(requests[0].body.prompt_cache_key).toBe(requests[0].headers.Session_id);
-    expect(requests[1].body.prompt_cache_key).toBe(requests[0].headers.Session_id);
+    expect(requests[1].headers['Session-id']).toBe(requests[0].headers['Session-id']);
+    expect(requests[0].body.prompt_cache_key).toBe(requests[0].headers['Session-id']);
+    expect(requests[1].body.prompt_cache_key).toBe(requests[0].headers['Session-id']);
     expect(f.storeObservations).not.toHaveBeenCalled();
   });
 
@@ -682,7 +682,7 @@ describe('CustomAgent session behavior', () => {
     const modelOf = (request: typeof requests[number]) => protocol === 'gemini' ? request.url.match(/\/models\/([^:]+):/)?.[1] : request.body.model;
     expect(requests.map(modelOf)).toEqual(['gpt-4o', 'custom-summary-model']);
     // Every refresh request shares one cache key, whatever its prompt.
-    expect(requests[1].headers.Session_id).toBe(requests[0].headers.Session_id);
+    expect(requests[1].headers['Session-id']).toBe(requests[0].headers['Session-id']);
     for (const { body } of requests) {
       expect(body.max_tokens).toBeUndefined();
       expect(body.max_completion_tokens).toBeUndefined();
@@ -696,6 +696,32 @@ describe('CustomAgent session behavior', () => {
   it('fails a My Work refresh step when the provider returns no text', async () => {
     replies.push(chat(''));
     await expect(fixture().agent.askRefresh('group these', { custom: {} })).rejects.toThrow('no text for the My Work refresh');
+  });
+
+  describe('My Work refresh answer schema', () => {
+    const schema = { type: 'object', properties: { groups: { type: 'array' } }, required: ['groups'] };
+    const refused = (message: string) => new Response(JSON.stringify({ error: { message } }), { status: 400 });
+
+    it('sends the schema as json_schema', async () => {
+      replies.push(chat('{"groups":[]}'));
+      expect(await fixture().agent.askRefresh('group these', { custom: {} }, schema)).toBe('{"groups":[]}');
+      expect(requests[0].body.response_format).toEqual({ type: 'json_schema', json_schema: { name: 'answer', schema, strict: false } });
+    });
+
+    it('resends as json_object when the endpoint refuses json_schema', async () => {
+      replies.push(refused("'response_format' of type 'json_schema' is not supported with this model"), chat('{"groups":[]}'));
+      expect(await fixture().agent.askRefresh('group these', { custom: {} }, schema)).toBe('{"groups":[]}');
+      expect(requests.map(request => request.body.response_format)).toEqual([
+        { type: 'json_schema', json_schema: { name: 'answer', schema, strict: false } },
+        { type: 'json_object' },
+      ]);
+    });
+
+    it('does not resend a refusal about something else', async () => {
+      replies.push(refused('unknown model parameter: top_k'));
+      await expect(fixture().agent.askRefresh('group these', { custom: {} }, schema)).rejects.toBeInstanceOf(ClassifiedProviderError);
+      expect(requests).toHaveLength(1);
+    });
   });
 
   describe('answers knowledge-corpus questions when CLAUDE_MEM_CORPUS_AGENT=api', () => {

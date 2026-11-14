@@ -146,14 +146,14 @@ export interface ApiAskOptions {
  * a context-length or content refusal would fail identically, and the second
  * request would spend provider credit for nothing.
  */
-function isUnsupportedAnswerFormat(text: string): boolean {
+export function isUnsupportedAnswerFormat(text: string): boolean {
   return /response[_\s-]?format|json[_\s-]?schema|json[_\s-]?object|structured[_\s-]?output|guided[_\s-]?(json|decoding)/i.test(text);
 }
 
 /** The answer formats to try, in order. The schema one is strictest. */
 type AnswerFormat = 'json_schema' | 'json_object';
 
-function answerFormatBodies(format: AnswerFormat, schema?: Record<string, unknown>): Record<string, unknown> {
+export function answerFormatBodies(format: AnswerFormat, schema?: Record<string, unknown>): Record<string, unknown> {
   if (format === 'json_object') return { response_format: { type: 'json_object' } };
   return { response_format: { type: 'json_schema', json_schema: { name: 'answer', schema, strict: false } } };
 }

@@ -13,7 +13,8 @@ import type { ModeConfig } from '../domain/types.js';
 import type { WorkerRef } from './agents/index.js';
 import { OpenAICompatibleProvider, anonymousSessionId, assistantText, type ObserverRequestLabel, type ProviderQueryResult } from './OpenAICompatibleProvider.js';
 import { resolveSummaryTierModel } from './model-aliases.js';
-import type { StepModels } from '../agent-runner/run.js';
+import type { AnswerSchema, StepModels } from '../agent-runner/run.js';
+import { answerFormatBodies, isUnsupportedAnswerFormat } from '../agent-runner/api-agent.js';
 import { classifyGeminiError } from './GeminiProvider.js';
 import { classifyOpenAICompatError, isLocalEndpointUrl, stripLeadingThinkBlock } from './OpenAICompatProvider.js';
 import { ClassifiedProviderError, isClassified, rateLimitUntilNextKey } from './provider-errors.js';
@@ -80,6 +81,8 @@ export interface CustomAgentConfig {
   systemPrompt?: string;
   /** Send no output cap, so the model answers at its own length (My Work's automatic refresh). */
   uncappedOutput?: boolean;
+  /** JSON Schema for a My Work refresh answer; the openai protocol sends it as `json_schema`. */
+  answerSchema?: AnswerSchema;
   reasoning?: string;
   model: string;
   protocol: CustomProtocol;
@@ -633,7 +636,7 @@ function buildBearerJsonHeaders(apiKey: string, sessionId?: string): Record<stri
   };
 
   if (sessionId && sessionId.trim()) {
-    headers.Session_id = sessionId.trim();
+    headers['Session-id'] = sessionId.trim();
   }
 
   return headers;
@@ -646,7 +649,7 @@ function buildGeminiJsonHeaders(apiKey: string, sessionId?: string): Record<stri
   };
 
   if (sessionId && sessionId.trim()) {
-    headers.Session_id = sessionId.trim();
+    headers['Session-id'] = sessionId.trim();
   }
 
   return headers;
@@ -837,14 +840,14 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
 
   /** One read-only question from My Work's automatic refresh (refresh-task.ts), answered as text the
    * refresh parses. Careful steps ask for `$TIER:summary`, resolved like session summaries; the rest use the Custom model. */
-  async askRefresh(prompt: string, models: StepModels): Promise<string> {
+  async askRefresh(prompt: string, models: StepModels, answerSchema?: AnswerSchema): Promise<string> {
     const config = this.getConfig();
     const model = models.custom?.model === '$TIER:summary'
       ? resolveSummaryTierModel(config.model, SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH))
       : config.model;
     // One cache key for every refresh request: the steps share the inlined skill as a prefix, and a retry repeats its first ask.
     const sessionId = anonymousSessionId('work-view-refresh');
-    return this.askStandalone(prompt, { ...config, model }, 'the My Work refresh', undefined,
+    return this.askStandalone(prompt, { ...config, model, answerSchema }, 'the My Work refresh', undefined,
       { kind: 'work_view_refresh', sessionId, contentSessionId: `work-view-refresh-${sessionId}` });
   }
 
@@ -1221,6 +1224,7 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
       const body = buildOpenAIJsonRequestBody(config.model, requestMessages, streamed, sessionId);
       delete body.max_tokens;
       if (plainText) delete body.response_format;
+      else if (config.answerSchema) Object.assign(body, answerFormatBodies('json_schema', config.answerSchema));
       if (!reasoningOff) {
         delete body.reasoning_effort;
         delete body.thinkingConfig;
@@ -1237,7 +1241,9 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
           return this.queryNative(url, body, config, key, attemptSignal, sessionId, clientAttemptId, carriesImages);
         }
 
-        const send = async (reasoning: boolean, requestBody: Record<string, unknown> = body) => {
+        // An endpoint that refuses `json_schema` gets `json_object` for the rest of this attempt.
+        let answerBody = body;
+        const send = async (reasoning: boolean, requestBody: Record<string, unknown> = answerBody) => {
           const exchange = await sendChatCompletion({
             url,
             headers: { ...buildBearerJsonHeaders(key, sessionId), 'x-client-request-id': clientAttemptId },
@@ -1278,6 +1284,10 @@ export class CustomAgent extends OpenAICompatibleProvider<CustomAgentConfig> {
             // Not remembered, so a model switch on the same URL keeps reasoning off.
             logger.warn('SDK', 'Custom/OpenAI endpoint refused to disable reasoning; resending once without the disable', { url });
             data = await send(false, withoutDisabledThinking);
+          } else if (config.answerSchema && !plainText && isUnsupportedAnswerFormat(detail)) {
+            logger.warn('SDK', 'Custom/OpenAI endpoint refused the json_schema answer format; resending as json_object', { url });
+            answerBody = { ...body, ...answerFormatBodies('json_object') };
+            data = await send(includeReasoning);
           } else {
             throw error;
           }

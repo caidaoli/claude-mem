@@ -87,7 +87,7 @@ export interface ObserverRequestLabel {
   kind: 'init' | 'observation' | 'summary' | 'field_compression' | 'telegram_wrapup' | 'human_copy' | 'work_view_refresh';
   /** anonymousSessionId() of the observed session. */
   sessionId: string;
-  /** Custom's existing Session_id wire contract; other providers use sessionId. */
+  /** Custom's existing Session-id wire contract; other providers use sessionId. */
   contentSessionId?: string;
   /**
    * session.observerGenerationId when the request belongs to an observer

@@ -1142,7 +1142,7 @@ export function mergeSettings(
   return true;
 }
 
-type ProviderId = 'claude' | 'codex' | 'gemini' | 'openrouter' | 'openai-compatible' | 'host';
+type ProviderId = 'claude' | 'codex' | 'gemini' | 'openrouter' | 'openai-compatible' | 'custom' | 'host';
 /**
  * What the installer prompt may offer. `cmem` is a prompt-only sentinel: picking
  * it configures the generic OpenAI-compatible path (base URL + model + key) and
@@ -1523,11 +1523,11 @@ export async function promptProvider(
     return 'openrouter';
   }
 
-  if (selectedProvider === 'openai-compatible') {
+  if (selectedProvider === 'openai-compatible' || selectedProvider === 'custom') {
     // Only a persisted configuration carries this provider, and it returned
     // above. The installer has no setup flow for it: the endpoint, model and
     // key are set in ~/.claude-mem/settings.json.
-    throw new Error('The openai-compatible provider is configured in ~/.claude-mem/settings.json, not by the installer.');
+    throw new Error(`The ${selectedProvider} provider is configured in ~/.claude-mem/settings.json, not by the installer.`);
   }
 
   const providerLabel = selectedProvider === 'gemini' ? 'Gemini' : 'OpenRouter';
@@ -2677,10 +2677,10 @@ export interface InstallOptions {
   ide?: string;
   dshProfile?: string;
   /**
-   * `openai-compatible` is never a flag value: it is only ever kept from
+   * `openai-compatible` and `custom` are never flag values: they are only ever kept from
    * settings.json by an update or non-interactive run (`providerSource: 'persisted'`).
    */
-  provider?: 'claude' | 'codex' | 'gemini' | 'openrouter' | 'openai-compatible' | 'host';
+  provider?: 'claude' | 'codex' | 'gemini' | 'openrouter' | 'openai-compatible' | 'custom' | 'host';
   /**
    * How `provider` was decided. `flag` for an explicit `--provider` (and the
    * grok-bot implicit cmem default set in index.ts), `default` when a fresh
@@ -2918,7 +2918,7 @@ function hasPersonalProviderKey(provider: 'gemini' | 'openrouter', persisted: Re
 
 function isPersistedProvider(value: unknown): value is ProviderId {
   return value === 'claude' || value === 'codex' || value === 'gemini'
-    || value === 'openrouter' || value === 'openai-compatible';
+    || value === 'openrouter' || value === 'openai-compatible' || value === 'custom';
 }
 
 /** Match the worker's credential lookup, including the saved CMEM gateway tuple lock. */
