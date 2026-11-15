@@ -5,6 +5,7 @@ import { setLocale, t, useLocale, type Locale } from '@/i18n'
 const LOCALE_OPTIONS: { value: Locale; label: string }[] = [
   { value: 'en', label: 'EN' },
   { value: 'zh-CN', label: '中文' },
+  { value: 'fr', label: 'Français' },
 ]
 
 /** Same choice as the memory viewer's switcher: both read and write claude-mem-locale. */

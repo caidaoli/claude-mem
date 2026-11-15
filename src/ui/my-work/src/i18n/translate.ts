@@ -2,6 +2,8 @@ import { APP_ZH_CN } from './zh-CN/app.ts'
 import { SETUP_ZH_CN } from './zh-CN/setup.ts'
 import { STEER_ZH_CN } from './zh-CN/steer.ts'
 import { WORK_ZH_CN } from './zh-CN/work.ts'
+import { myworkFr } from '../../../i18n/mywork-fr.ts'
+import { setupFr } from '../../../i18n/setup-fr.ts'
 
 /**
  * Fork localization. Source text stays English and doubles as the key, so
@@ -16,12 +18,14 @@ import { getLocale } from '../../../i18n/state.ts'
 export { getLocale, switchLocale, subscribeLocale, type Locale } from '../../../i18n/state.ts'
 
 const ZH_CN: Readonly<Record<string, string>> = { ...APP_ZH_CN, ...WORK_ZH_CN, ...STEER_ZH_CN, ...SETUP_ZH_CN }
+const FR: Readonly<Record<string, string>> = { ...myworkFr, ...setupFr }
 
 /** Translates English source text; `{name}` placeholders are filled from vars after translation. */
 export function t(text: string, vars?: Readonly<Record<string, string | number>>): string {
-  const template = getLocale() === 'zh-CN' ? ZH_CN[text] ?? text : text
+  const locale = getLocale()
+  const template = (locale === 'zh-CN' ? ZH_CN[text] : locale === 'fr' ? FR[text] : undefined) ?? text
   return vars ? template.replace(/\{(\w+)\}/g, (match, name: string) => (name in vars ? String(vars[name]) : match)) : template
 }
 
 /** The Intl locale for dates and numbers shown in the chosen language. */
-export const intlLocale = (): string => (getLocale() === 'zh-CN' ? 'zh-CN' : 'en-US')
+export const intlLocale = (): string => (getLocale() === 'en' ? 'en-US' : getLocale())

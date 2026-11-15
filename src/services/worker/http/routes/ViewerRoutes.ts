@@ -319,10 +319,7 @@ export class ViewerRoutes extends BaseRouteHandler {
     res.send(RESTART_PAGE_HTML);
   });
 
-  /**
-   * SSE stream endpoint. Keep the long-lived connection outside wrapHandler.
-   */
-  private handleSSEStream(req: Request, res: Response): void {
+  private handleSSEStream = this.wrapHandler((req: Request, res: Response): void => {
     try {
       this.dbManager.getSessionStore();
     } catch (initError: unknown) {
@@ -333,47 +330,35 @@ export class ViewerRoutes extends BaseRouteHandler {
       return;
     }
 
-    // Disable timeouts for SSE (long-lived connection)
-    req.setTimeout(0);
-    res.setTimeout(0);
-
-    // Setup SSE headers
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
-    res.flushHeaders(); // Send headers immediately
 
     this.sseBroadcaster.addClient(res);
 
-    // Handle client disconnect
-    req.on('close', () => {
-      this.sseBroadcaster.removeClient(res);
+    const projectCatalog = this.dbManager.getSessionStore().getProjectCatalog();
+    this.sseBroadcaster.sendToClient(res, {
+      type: 'initial_load',
+      projects: projectCatalog.projects,
+      sources: projectCatalog.sources,
+      projectsBySource: projectCatalog.projectsBySource,
+      timestamp: Date.now()
     });
 
     void (async () => {
       try {
-        const projectCatalog = this.dbManager.getSessionStore().getProjectCatalog();
-        this.sseBroadcaster.broadcast({
-          type: 'initial_load',
-          projects: projectCatalog.projects,
-          sources: projectCatalog.sources,
-          projectsBySource: projectCatalog.projectsBySource,
-          timestamp: Date.now()
-        });
-
         const isProcessing = await this.sessionManager.isAnySessionProcessing();
         const queueDepth = await this.sessionManager.getTotalActiveWork();
-        this.sseBroadcaster.broadcast({
+        this.sseBroadcaster.sendToClient(res, {
           type: 'processing_status',
           isProcessing,
           queueDepth
         });
       } catch (error) {
-        logger.warn('VIEWER', 'Error sending initial SSE events', {
+        logger.warn('HTTP', 'Failed to broadcast initial processing status', {
           error: error instanceof Error ? error.message : String(error),
         });
       }
     })();
-  }
+  });
 }

@@ -278,6 +278,7 @@ export default function SetupPage({ onComplete }: { onComplete: () => void }) {
           >
             <option value="en">English</option>
             <option value="zh-CN">简体中文</option>
+            <option value="fr">Français</option>
           </select>
         </div>
       </header>

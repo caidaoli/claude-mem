@@ -1,12 +1,14 @@
 import React, { createContext, useContext, useSyncExternalStore } from 'react';
 import { en, TranslationKeys } from './locales/en';
 import { zhCN } from './locales/zh-CN';
+import { fr } from './locales/fr';
 
 import { getLocale, setLocale, subscribeLocale, type Locale } from '../../i18n/core';
 export type { Locale } from '../../i18n/core';
 const LOCALES: Record<Locale, TranslationKeys> = {
   'en': en,
   'zh-CN': zhCN,
+  fr,
 };
 
 interface I18nContextValue {

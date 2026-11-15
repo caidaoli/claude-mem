@@ -1,8 +1,8 @@
-# UI language: English and Simplified Chinese
+# UI languages
 
 The classic memory viewer (`/viewer`), My Work, first-run setup, and Observation
-TV support English and Simplified Chinese. Use the **Language** menu in the
-viewer header, My Work header, or setup header to select **简体中文**.
+TV support English, Simplified Chinese and French. Use the **Language** menu in the
+viewer header, My Work header, or setup header to select **简体中文** or **Français**.
 
 The saved choice takes precedence; otherwise Chinese browser locales use Simplified Chinese
 and other locales use English. The choice is saved under `claude-mem-locale` in browser local storage and
@@ -16,8 +16,8 @@ Application navigation, headings, controls, state labels, prompts, confirmation
 dialogs, accessibility labels, settings descriptions and known UI error envelopes.
 Recorded requests, memory titles, narratives, quotes, file paths, model identifiers,
 commands, product names and opaque server error details remain verbatim.
-The display language does not change the language of generated memories. Configure
-`CLAUDE_MEM_MODE=code--zh` or `code--ko` separately when Chinese or Korean observations are wanted.
+The display language does not change the language of generated memories. The fork's
+Custom provider keeps generated memories in Chinese independently of this choice.
 
 ## Development
 
@@ -28,6 +28,9 @@ The display language does not change the language of generated memories. Configu
   `src/ui/my-work/src/i18n/zh-CN/`; `useLocale()` subscribes memoized components.
 - `UiMessage` keeps application-owned templates separate from opaque server errors
   and user text, so changing language does not alter stored evidence or repeat requests.
+- French uses upstream's English-keyed `src/ui/i18n/*-fr.ts` catalogs. The viewer
+  adapts these to its typed message tree; fork-only phrases without a French entry
+  remain in English. My Work and setup use the same source-text lookup as Chinese.
 - Values are substituted once, preserving dollar signs and placeholder-like text.
 
 Run `npm run typecheck` at the repository root, then `npm run build` and `npm test`

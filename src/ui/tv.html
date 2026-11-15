@@ -175,13 +175,14 @@
   const tvText = {
     en: { title: 'claude-mem · Observation TV', idle: 'waiting for observations', dot: 'stream status', pip: 'PiP', fs: 'Full screen', now: 'just now', min: 'm ago', hr: 'h ago', day: 'd ago' },
     'zh-CN': { title: 'claude-mem · 观察电视墙', idle: '等待观察记录', dot: '实时流状态', pip: '画中画', fs: '全屏', now: '刚刚', min: ' 分钟前', hr: ' 小时前', day: ' 天前' },
+    fr: { title: 'claude-mem · Observation TV', idle: 'En attente d’observations', dot: 'État du flux', pip: 'Image dans l’image', fs: 'Plein écran', now: 'À l’instant', min: ' min', hr: ' h', day: ' j' },
   };
   let labels = tvText.en;
   function applyLanguage() {
     let lang = navigator.languages.some(language => language.toLowerCase().startsWith('zh')) ? 'zh-CN' : 'en';
     try {
       const stored = localStorage.getItem(languageKey);
-      if (stored === 'en' || stored === 'zh-CN') lang = stored;
+      if (Object.hasOwn(tvText, stored)) lang = stored;
     } catch {
       // Privacy settings can deny storage; TV playback must still start.
     }

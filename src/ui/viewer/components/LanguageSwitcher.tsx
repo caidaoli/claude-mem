@@ -4,6 +4,7 @@ import { useI18n, Locale } from '../i18n';
 const LOCALE_OPTIONS: { value: Locale; label: string }[] = [
   { value: 'en', label: 'EN' },
   { value: 'zh-CN', label: '中文' },
+  { value: 'fr', label: 'Français' },
 ];
 
 export function LanguageSwitcher() {

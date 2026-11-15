@@ -9,6 +9,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { t, useLocale } from '@/i18n'
 import { cn } from '@/lib/utils'
+import { displayTime } from '@/lib/display-time'
 import { Req } from '@/spec/req'
 import { isSampleHref, measuredEstimate, SAMPLE_DEVICES, OTHER_FOCUS_AREA_ID, type Device, type LiveState, type Request, type Run, type SkillRun } from '@/data'
 import { agentById, deviceById, useConnection, useStore, useWorkModel, useWorkspace } from '@/store'
@@ -134,6 +135,11 @@ export function reviewCoverage(request: Request) {
 export function ProgressMeter({ request, compact = false }: { request: Request; compact?: boolean }) {
   const { progress } = request
   const estimate = measuredEstimate(request)
+  const translatedEstimate = estimate
+    ? (estimate.startsWith('at this pace, about ')
+      ? t('at this pace, about {day}', { day: displayTime(estimate.slice('at this pace, about '.length)) })
+      : estimate)
+    : null
   return (
     <Req ids={['R5.9', 'R5.6', 'R5.11']}>
       <div className="space-y-1.5">
@@ -146,7 +152,7 @@ export function ProgressMeter({ request, compact = false }: { request: Request; 
         })} />
         <div className="flex flex-wrap justify-between gap-x-2 text-xs text-muted-foreground">
           <span>{progress.completedAt ? t('Completed {at}', { at: progress.completedAt }) : progress.readings ? <><span className="font-medium text-foreground/80 tabular-nums">{progress.percent}%</span>{compact ? '' : ` · ${reviewCoverage(request)}`}</> : t('Not reviewed yet')}</span>
-          {!compact && estimate && <span>{estimate}</span>}
+          {!compact && translatedEstimate && <span>{translatedEstimate}</span>}
         </div>
       </div>
     </Req>
