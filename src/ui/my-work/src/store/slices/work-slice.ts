@@ -2,6 +2,7 @@
 // here; live requests change only through their data source, never in the browser.
 import { t } from '../../i18n/translate.ts'
 import { SAMPLE_REQUESTS, SaveRefusedError, assertConsistentRequest, type Request } from '../../data.ts'
+import { canContinueConversations } from '../../live/conversation-continuation.ts'
 import { freshlyUpdatedRequestIds, mergeRecentChanges, requestChanges } from '../../live/update-queue.ts'
 import type { WorkDataSource, WorkModel } from '../../live/work-data-source.ts'
 import type { SliceCreator } from '../create-store.ts'
@@ -165,6 +166,11 @@ export const createWorkSlice: SliceCreator<WorkSlice> = (set, get) => {
     loadRulesInClaudeCode: async () => { await saving('load the rules from', (to) => to.loadRulesInClaudeCode(), (model) => model) },
 
     refreshWork: () => activeSource('start a refresh on').refreshWork(),
+
+    conversationContinuationSource: () => {
+      const continueFrom = activeSource('continue a conversation from')
+      return canContinueConversations(continueFrom) ? continueFrom : null
+    },
 
     updateSampleRequest: (id, change) => {
       const load = get().work.load

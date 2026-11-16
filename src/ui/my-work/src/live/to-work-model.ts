@@ -241,6 +241,8 @@ function toRequest(raw: WorkViewHumanRequest, agents: WorkViewAgent[], now: numb
         at: key === raw.id && raw.original.atEpoch ? formatDateTime(raw.original.atEpoch) : 'Time not recorded',
         ...(key === raw.id && raw.original.atEpoch ? { atEpoch: raw.original.atEpoch } : {}),
         title: session?.sessionTitle ?? `Conversation ${sessionId.slice(0, 8)}`,
+        platform,
+        conversationSessionId: sessionId,
       }
     }),
     prompts: [raw.original, ...raw.scopeUpdates]
