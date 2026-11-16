@@ -323,7 +323,7 @@ describe('refresh task', () => {
     expect(JSON.stringify(task)).not.toMatch(/bypass|dangerous/i);
   });
 
-  for (const backend of ['gemini', 'custom'] as const) it(`every backend (${backend}): review retry bounds oversized output and retries invalid story JSON`, async () => {
+  for (const backend of ['gemini', 'custom', 'api'] as const) it(`every backend (${backend}): review retry bounds oversized output and retries invalid story JSON`, async () => {
     const dir = mkdtempSync(join(tmpdir(), 'auto-refresh-inline-'));
     try {
       const database = fixtureDatabase();
@@ -354,7 +354,7 @@ describe('refresh task', () => {
         if (prompt.includes("Do only section 2")) {
           const supplied = prompt.split(`--- ${file} ---\n`)[1];
           expect(supplied).toBeDefined();
-          const [show] = JSON.parse(supplied);
+          const [show] = JSON.parse(supplied.split('\n\nYour previous answer was refused')[0]);
           // The model repeats the same over-limit summary after the strict first pass rejects it.
           if (reviewAnswers++ === 0) return JSON.stringify({ reviews: [oversizedReview(show)] });
           expect(prompt).toMatch(/refused for these groups/);
@@ -371,6 +371,9 @@ describe('refresh task', () => {
       const groupingInput = /```json\n([\s\S]*?)\n```/.exec(prompts[0])![1];
       expect(prompts[0].split(groupingInput)).toHaveLength(2);
       // A retry repeats the whole first ask (inline files included) and only then gives the refusal.
+      const [reviewPrompt, reviewRetry] = prompts.filter(prompt => prompt.includes('Do only section 2'));
+      expect(reviewRetry.startsWith(reviewPrompt)).toBe(true);
+      expect(reviewRetry.slice(reviewPrompt.length)).toStartWith('\n\nYour previous answer was refused for these groups:');
       const [story, storyRetry] = prompts.filter(prompt => prompt.includes('Do only section 4'));
       expect(story).toContain('supplied inline');
       expect(storyRetry.startsWith(story)).toBe(true);
@@ -416,7 +419,7 @@ describe('refresh task', () => {
       if (prompt.includes('Do only section 1')) return JSON.stringify({ groups: [{ title: 'Release cards', conversations: [key('a')] }] });
       if (prompt.includes('Do only section 2')) {
         const file = /is in (.+?\.json)/.exec(prompt)?.[1];
-        const [show] = JSON.parse(prompt.split(`--- ${file} ---\n`)[1]);
+        const [show] = JSON.parse(prompt.split(`--- ${file} ---\n`)[1].split('\n\nYour previous answer was refused')[0]);
         return JSON.stringify({ reviews: [answerReview(show, reviewAttempts++)] });
       }
       if (prompt.includes('Do only section 3')) return everyRequestInOther(prompt);
@@ -759,7 +762,30 @@ describe('story repair', () => {
 });
 
 describe('review repair', () => {
-  it.each(['narrative', 'summary'])('returns the rejected review so an oversized %s can be corrected without repeating accepted groups', async (field) => {
+  it('identical inline inputs produce identical questions across refresh runs', async () => {
+    const runs: string[][] = [];
+    for (let run = 0; run < 2; run++) {
+      const dir = mkdtempSync(join(tmpdir(), 'auto-refresh-prefix-'));
+      const database = fixtureDatabase();
+      try {
+        const prompts: string[] = [];
+        const task = buildRefreshTask({ localDeviceId: () => '', needs: { due: 0, ungrouped: 1, goalsStale: false, unplaced: 0, needed: true }, reason: 'scheduled', dataDir: dir, ledgerDir: dir, pluginRoot: PLUGIN_ROOT, openDatabase: handle(database), now: () => NOW, saveFocus: focusWriter(database).save });
+        const ask = async (prompt: string) => {
+          prompts.push(prompt);
+          if (!prompt.includes('Do only section 2')) return defaultAnswer(prompt);
+          const file = /is in (.+?\.json)/.exec(prompt)![1];
+          const shows = JSON.parse(prompt.split(`--- ${file} ---\n`)[1]);
+          return JSON.stringify({ reviews: shows.map((show: any) => ({ groupId: show.groupId, state: 'in-progress', percent: 10, summary: 'Started.', reviewBasis: show.reviewBasis })) });
+        };
+        expect(await task.run(ask, 'custom')).toBe('1 new conversations grouped, 1 requests reviewed, 1 requests placed, story written.');
+        runs.push(prompts);
+      } finally { database.close(); rmSync(dir, { recursive: true, force: true }); }
+    }
+    expect(runs[0]).toHaveLength(5);
+    expect(runs[1]).toEqual(runs[0]);
+  });
+
+  for (const backend of ['claude-code', 'custom'] as const) it.each(['narrative', 'summary'])('returns the rejected review so an oversized %s can be corrected without repeating accepted groups', async (field) => {
     const dir = mkdtempSync(join(tmpdir(), 'auto-refresh-review-repair-'));
     const database = fixtureDatabase();
     try {
@@ -774,7 +800,10 @@ describe('review repair', () => {
       const ask = async (prompt: string) => {
         if (prompt.includes('Do only section 4')) return JSON.stringify({ narrative: 'Work continues.' });
         if (prompt.includes('Do only section 3')) return everyRequestInOther(prompt);
-        const shows = JSON.parse(readFileSync(/is in (.+?\.json)/.exec(prompt)![1], 'utf8'));
+        const file = /is in (.+?\.json)/.exec(prompt)![1];
+        const shows = JSON.parse(backend === 'custom'
+          ? prompt.split(`--- ${file} ---\n`)[1].split('\n\nYour previous answer was refused')[0]
+          : readFileSync(file, 'utf8'));
         attempts++;
         if (attempts === 1) {
           expect(shows).toHaveLength(2);
@@ -787,7 +816,7 @@ describe('review repair', () => {
         expect(prompt).not.toContain('Already accepted review.');
         return JSON.stringify({ reviews: [{ ...rejectedReview, [field]: 'Evidence preserved in a shorter review.' }] });
       };
-      expect(await refresh.run(ask, 'claude-code')).toBe('2 requests reviewed, 2 requests placed, story written.');
+      expect(await refresh.run(ask, backend)).toBe('2 requests reviewed, 2 requests placed, story written.');
       expect(attempts).toBe(2);
       const progress = readLedger(dir).progress;
       expect(progress[rejectedReview.groupId][field]).toBe('Evidence preserved in a shorter review.');

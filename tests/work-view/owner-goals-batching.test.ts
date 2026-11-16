@@ -55,15 +55,20 @@ function harness(initial: OwnerPrompt[], afterWrite?: NonNullable<Parameters<typ
   };
 }
 
+function suppliedFile(question: string, path: string): string {
+  if (!question.includes('The following input files are supplied inline; no file tools are available:')) return readFileSync(path, 'utf8');
+  return question.split(`--- ${path} ---\n`)[1].split(/\n\n--- [^\n]+ ---\n|\n\nYour previous answer was refused/)[0];
+}
+
 function batchInput(question: string, single = false) {
-  const match = single ? /Step 1 is done: the owner's prompts are in (.+?owner-prompts\.md)\./.exec(question)
+  const match = single ? /Step 1 is done: the owner's prompts are in (.*?owner-prompts\.md)\./.exec(question)
     : /The next prompts, oldest first, are in (.+?\.json)\./.exec(question);
   if (!match) throw new Error('The model received the whole window instead of a bounded batch.');
-  const markdown = readFileSync(match[1], 'utf8');
+  const markdown = suppliedFile(question, match[1]);
   const entries = [...markdown.matchAll(/^## (\d{4}-\d{2}-\d{2} \d{2}:\d{2}) · [^\n]+\nsession [^\n]+\n\nTURN: ([^\n]+)/gm)]
     .map(match => ({ at: match[1], quote: 'TURN: ' + match[2], turn: match[2] }));
   const previous = /The checked cumulative goals are in (.+?\.json)\./.exec(question);
-  return { markdown, entries, previous: previous ? JSON.parse(readFileSync(previous[1], 'utf8')) : null };
+  return { markdown, entries, previous: previous ? JSON.parse(suppliedFile(question, previous[1])) : null };
 }
 
 /** A deterministic model answer; quote checking and every save below use the real Python script and HTTP. */
@@ -449,9 +454,9 @@ describe('initial owner-goals batches', () => {
       const questions: string[] = [];
       const result = await run(fixture, async question => {
         questions.push(question);
-        const path = /are in (\S+new-owner-prompts\.md)\./.exec(question)?.[1];
+        const path = /are in (\S*new-owner-prompts\.md)\./.exec(question)?.[1];
         if (!path) throw new Error('Expected the incremental update question, not another first map.');
-        const at = /^## (\d{4}-\d{2}-\d{2} \d{2}:\d{2}) · /m.exec(readFileSync(path, 'utf8'))![1];
+        const at = /^## (\d{4}-\d{2}-\d{2} \d{2}:\d{2}) · /m.exec(suppliedFile(question, path))![1];
         const evidence = [{ at, quote: 'TURN: later' }];
         return JSON.stringify({ window_days: 31, human_summary: 'Ship the follow-up.', focus_areas: [], rules: [],
           asks: [{ title: 'Ship the follow-up', focus_area: null, rank: 1, latest_at: at, times_asked: 1, evidence }] });

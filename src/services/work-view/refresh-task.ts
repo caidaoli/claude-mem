@@ -346,21 +346,24 @@ export function buildRefreshTask(options: RefreshTaskOptions): AgentTask & { ste
     let answerWasRefused = false;
     const refused = (error: Error) => { answerWasRefused = true; return Object.assign(error, { answerRefused: true }); };
     const stepModels = resolveStepModels(dataDir);
-    const inlineEvidence = new Map<string, string>();
+    const inlineEvidence = new Map<string, { name: string; contents: string }>();
     // Count the files an agent must read when budgeting goals input, including tool-capable agents.
     // Only Gemini, Custom and the API agent actually receive these contents inlined in the question below.
     if (needs.goalsStale) {
       for (const name of ['owner-prompts.md', 'new-owner-prompts.md']) {
         const path = join(goalsFolder, name);
-        if (existsSync(path)) inlineEvidence.set(path, readFileSync(path, 'utf8'));
+        if (existsSync(path)) inlineEvidence.set(path, { name, contents: readFileSync(path, 'utf8') });
       }
     }
     let questionByteLimit: number | null = null;
     const expandedQuestion = (prompt: string): string => {
+      const referenced = [...inlineEvidence].filter(([path]) => prompt.includes(path));
+      // 内联请求不暴露随机运行目录；有文件工具的代理仍使用真实路径。
+      const question = inline ? referenced.reduce((text, [path, { name }]) => text.replaceAll(path, name), prompt) : prompt;
       // Grouping and focus already carry their input inline: name the file, do not send it twice.
-      const supplied = [...inlineEvidence].filter(([path, contents]) => prompt.includes(path) && !(contents && prompt.includes(contents)));
-      return supplied.length ? prompt + '\n\nThe following input files are supplied inline; no file tools are available:\n'
-        + supplied.map(([path, contents]) => '--- ' + path + ' ---\n' + contents).join('\n\n') : prompt;
+      const supplied = referenced.filter(([, { contents }]) => !(contents && prompt.includes(contents)));
+      return supplied.length ? question + '\n\nThe following input files are supplied inline; no file tools are available:\n'
+        + supplied.map(([path, { name, contents }]) => '--- ' + (inline ? name : path) + ' ---\n' + contents).join('\n\n') : question;
     };
     /** A retry's refusal goes after the inline files, so the retry starts with the whole first ask (prompt caching). */
     const ask = (prompt: string, models: StepModels, schema?: AnswerSchema, refusal = '') => {
@@ -375,7 +378,7 @@ export function buildRefreshTask(options: RefreshTaskOptions): AgentTask & { ste
       const path = join(runDir, `${++fileNumber}-${name}.json`);
       const contents = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
       writeFileSync(path, contents, { mode: 0o600 });
-      inlineEvidence.set(path, contents);
+      inlineEvidence.set(path, { name: `${name}.json`, contents });
       return path;
     };
     const localDeviceId = options.localDeviceId();
@@ -564,7 +567,7 @@ export function buildRefreshTask(options: RefreshTaskOptions): AgentTask & { ste
               const batch = nextOwnerGoalsBatch(exported.sections, processed, available);
               const contents = renderOwnerGoalsBatch(batch);
               writeFileSync(batchPath, contents, { mode: 0o600 });
-              inlineEvidence.set(batchPath, contents);
+              inlineEvidence.set(batchPath, { name: 'owner-prompts-batch.json', contents });
               questionByteLimit = OWNER_GOALS_QUESTION_BYTES;
               try {
                 await step('goals', question, async answer => {
@@ -716,8 +719,8 @@ export function buildRefreshTask(options: RefreshTaskOptions): AgentTask & { ste
             requestProgress, '---', readOnly,
             `Do only section 2's review for the groups whose \`show\` output is in ${writeInput('show', shows)}: decide each one from the evidence as the reviewer task describes (amend the previous review for a group in "amend" mode). Reply with only {"reviews": [<one record-progress input per group, with reviewBasis copied verbatim from its show output>]}.`,
             rule,
-            refusals.length ? `Your previous answer was refused for these groups:\n${refusals.join('\n')}\nFix them and answer again for those groups only. Here are the rejected reviews to correct, preserving their evidence and reviewBasis:\n${JSON.stringify(rejectedReviews)}` : '',
-          ].filter(Boolean).join('\n\n'), stepModels.review);
+          ].filter(Boolean).join('\n\n'), stepModels.review, undefined,
+            refusals.length ? `Your previous answer was refused for these groups:\n${refusals.join('\n')}\nFix them and answer again for those groups only. Here are the rejected reviews to correct, preserving their evidence and reviewBasis:\n${JSON.stringify(rejectedReviews)}` : '');
           let reviews: Array<{ groupId?: string }> = [];
           try { const answer = parseAgentJson(text); reviews = Array.isArray(answer.reviews) ? answer.reviews : []; }
           catch { /* Every group in this batch is refused below as "no review was given". */ }
