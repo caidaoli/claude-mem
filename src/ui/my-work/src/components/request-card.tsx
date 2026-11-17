@@ -2,6 +2,7 @@ import { displayTime } from '@/lib/display-time'
 import { useEffect, useState } from 'react'
 import { CheckIcon } from 'lucide-react'
 import { useReducedMotion } from 'motion/react'
+import { interpolate, useI18n } from '@/lib/i18n'
 import { Shimmer } from '@/components/ai-elements/shimmer'
 import { Terminal, TerminalContent } from '@/components/ai-elements/terminal'
 import { EncryptedText } from '@/components/aceternity/encrypted-text'
@@ -11,7 +12,6 @@ import { SaveButton } from '@/components/save-button'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { t } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { isCardDeliverable } from '@/lib/deliverables'
 import { PRODUCT_ICON } from '@/lib/product-icons'
@@ -59,8 +59,9 @@ function useAgentViewTransform(request: Request) {
 }
 
 function ActivitySpinner({ word, settled }: { word: string; settled: boolean }) {
+  const { t } = useI18n()
   const { mode } = useWorkspace()
-  const label = t(settled ? 'Just updated' : mode === 'web' && word !== 'Translating' ? 'Working' : word)
+  const label = settled ? t('Just updated') : mode === 'web' && word !== 'Translating' ? t('Working') : word === 'Translating' ? t('Translating') : word
   return (
     <Req ids={['D5']}>
       <Tooltip>
@@ -79,6 +80,7 @@ function ActivitySpinner({ word, settled }: { word: string; settled: boolean }) 
 
 /** After ship (decision 4): the open Docs, Promo and Other follow-ups, each one actionable. Nothing renders when none are open. */
 export function OpenFollowUps({ request, limit }: { request: Request; limit?: number }) {
+  const { t } = useI18n()
   const open = request.followUps.filter((followUp) => !followUp.done)
   if (request.state !== 'shipped' || open.length === 0) return null
   const inStore = requestById(request.id) !== null
@@ -86,16 +88,16 @@ export function OpenFollowUps({ request, limit }: { request: Request; limit?: nu
   const finish = (text: string) => useStore.getState().updateSampleRequest(request.id, (current) => {
     const followUps = current.followUps.map((followUp) => followUp.text === text ? { ...followUp, done: true } : followUp)
     const stillOpen = followUps.find((followUp) => !followUp.done)
-    return { ...current, followUps, next: stillOpen ? { who: 'human', text: stillOpen.text } : { who: 'bot', text: 'Nothing left after ship' } }
+    return { ...current, followUps, next: stillOpen ? { who: 'human', text: stillOpen.text } : { who: 'bot', text: t('Nothing left after ship') } }
   })
   return (
     <Req ids={['R5.7']}>
       <div className="space-y-1">
-        <p className="section-label">{t('Open after ship · {count}', { count: open.length })}</p>
+        <p className="section-label">{interpolate(t('Open after ship · {count}'), { count: open.length })}</p>
         <ul className="divide-y divide-border/70">
           {open.slice(0, limit).map((followUp) => (
             <li key={followUp.text} className="flex min-h-11 items-center gap-2 text-sm md:min-h-9">
-              <span className="w-12 shrink-0 text-[11px] font-medium text-muted-foreground uppercase">{t(followUp.tag)}</span>
+              <span className="w-12 shrink-0 text-[11px] font-medium text-muted-foreground uppercase">{followUp.tag}</span>
               <span className="min-w-0 flex-1 truncate">{followUp.text}</span>
               {inStore && <SaveButton className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'h-11 shrink-0 text-xs md:h-7')} onClick={() => finish(followUp.text)}><CheckIcon />{t('Done')}</SaveButton>}
             </li>
@@ -116,6 +118,7 @@ const CARD_DELIVERABLES = 3
  * commits and branches.
  */
 export function Deliverables({ request, onOpen }: { request: Request; onOpen: () => void }) {
+  const { t } = useI18n()
   const products = request.workProduct.filter(isCardDeliverable)
   const count = request.detailLoaded === false ? request.detailCounts?.workProduct ?? products.length : products.length
   if (count === 0) return null
@@ -124,7 +127,7 @@ export function Deliverables({ request, onOpen }: { request: Request; onOpen: ()
   return (
     <Req ids={['R5.12', 'R5.10']}>
       <div className="space-y-1">
-        <p className="section-label">{t('Deliverables · {count}', { count })}</p>
+        <p className="section-label">{interpolate(t('Deliverables · {count}'), { count })}</p>
         <ul className="flex flex-wrap gap-1.5">
           {shown.map((product, index) => {
             const Icon = PRODUCT_ICON[product.kind]
@@ -139,7 +142,7 @@ export function Deliverables({ request, onOpen }: { request: Request; onOpen: ()
           })}
           {hidden > 0 && (
             <li>
-              <Button variant="ghost" size="sm" className="h-8 px-2 text-xs" onClick={onOpen} aria-label={t('Open the request to see {count} more deliverables', { count: hidden })}>{t('+{count} more', { count: hidden })}</Button>
+              <Button variant="ghost" size="sm" className="h-8 px-2 text-xs" onClick={onOpen} aria-label={interpolate(t('Open the request to see {count} more deliverables'), { count: hidden })}>{interpolate(t('+{count} more'), { count: hidden })}</Button>
             </li>
           )}
         </ul>
@@ -149,6 +152,7 @@ export function Deliverables({ request, onOpen }: { request: Request; onOpen: ()
 }
 
 export function RequestCard({ request, onOpen, onOpenFocus }: { request: Request; onOpen: () => void; onOpenFocus: (focusAreaId: string) => void }) {
+  const { t } = useI18n()
   const { team } = useWorkspace()
   const { phase, text, word } = useAgentViewTransform(request)
   // The spinner means an agent is on it: an idle card still waiting on its title (or one whose title writer
@@ -171,7 +175,7 @@ export function RequestCard({ request, onOpen, onOpenFocus }: { request: Request
             {/* Where it belongs, up front beside who is on it. */}
             <FocusAreaChip focusAreaId={request.focusAreaId} onOpen={onOpenFocus} />
             <Req ids={['R5.2', 'R9.3']}>
-              <span className={cn('truncate text-xs text-muted-foreground', !team && 'sr-only')}>{t('asked by {name}', { name: t(request.askedBy) })}</span>
+              <span className={cn('truncate text-xs text-muted-foreground', !team && 'sr-only')}>{interpolate(t('asked by {askedBy}'), { askedBy: request.askedBy })}</span>
             </Req>
           </div>
           <div className="flex items-center gap-1.5">
@@ -213,7 +217,7 @@ export function RequestCard({ request, onOpen, onOpenFocus }: { request: Request
           <Deliverables request={request} onOpen={onOpen} />
 
           {/* The request's images: its first few, with "+N" opening the drawer that holds every one. */}
-          {request.media && <ObsMediaStrip media={{ version: 1, attachments: request.media.preview }} total={request.media.count} title={text?.title ?? t('Untitled request')} onMore={onOpen} />}
+          {request.media && <ObsMediaStrip media={{ version: 1, attachments: request.media.preview }} total={request.media.count} title={text?.title ?? 'Untitled request'} onMore={onOpen} />}
 
           <OpenFollowUps request={request} limit={3} />
 
@@ -231,7 +235,7 @@ export function RequestCard({ request, onOpen, onOpenFocus }: { request: Request
               </Req>
             </div>
           </div>
-        </CardContent>
+                </CardContent>
       </Card>
       </div>
     </Req>

@@ -7,8 +7,7 @@ import { normalizeRequestStatus, presentStatus, STALE_AFTER_MS, type NormalizedS
 import type { MappedWorkModel, RequestReadError } from './work-data-source.ts'
 import type { OwnerRule, RuleQuote, RuleRecord } from '../data-rules.ts'
 import type { AutoRefresh, BuildStory } from './work-data-source.ts'
-import { formatCompletionEstimate, measuredCompletionAt } from './measured-estimate.ts'
-import { getLocale, intlLocale, t } from '../i18n/translate.ts'
+import { measuredEstimate } from './measured-estimate.ts'
 import { repeatsOwnerWords } from './prompt-echo.ts'
 import { SOLO_REQUESTER } from './work-view-overview.ts'
 import type { WorkViewAgent, WorkViewBuildStory, WorkViewGoalItem, WorkViewGoalList, WorkViewHumanRequest, WorkViewProgress, WorkViewRefresh, WorkViewRule, WorkViewSnapshot, WorkViewWorkProduct } from './work-view-api-types.ts'
@@ -16,9 +15,17 @@ import type { WorkViewAgent, WorkViewBuildStory, WorkViewGoalItem, WorkViewGoalL
 export const THIS_COMPUTER: Device = { id: 'this-computer', name: 'This computer', syncedMinutesAgo: 0, online: true }
 /** Stands in when a request names no agent the snapshot knows: the card then names the machine (§13.2). */
 const UNRECORDED_AGENT: Agent = { id: 'agent-not-recorded', tool: 'other', name: 'Agent not recorded', role: 'Recorded work', deviceId: THIS_COMPUTER.id }
-const NEXT_STEP_NOT_RECORDED = 'Next step not recorded'
-/** A request is built from its prompts; until an agent records work it has only asks. */
-const NO_WORK_YET = 'No agent work recorded yet'
+/**
+ * The English filler written in place of a next step when none is recorded, here and by older workers. Its one
+ * definition: the UI (components/bits.tsx) and the shared page (to-shared-focus.ts) import it, and the UI treats it as
+ * a missing step (decision G3). Phase 3 of the pro-max-v16 plan stops writing it.
+ */
+export const NEXT_STEP_NOT_RECORDED = 'Next step not recorded'
+/**
+ * The English filler written in place of a next step when a request has only asks (no agent has recorded work yet).
+ * Like NEXT_STEP_NOT_RECORDED it is not a step: setup's Reveal imports it and leaves the line out (decision G3).
+ */
+export const NO_WORK_YET = 'No agent work recorded yet'
 const KNOWN_TOOLS: AgentTool[] = ['claude', 'codex', 'gemini']
 const PLATFORM_LABEL: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini' }
 const EVIDENCE_URL = /^\/api\/work-view\/evidence\/(work-state|observation|prompt|summary|session)\/\d+$/
@@ -60,12 +67,12 @@ function cleanText(value: unknown, max = 150): string {
 }
 
 const lowercaseMeridiem = (text: string) => text.replace(/\s?(AM|PM)$/, (_, meridiem: string) => ` ${meridiem.toLowerCase()}`)
-/** "Oct 20, 1:16 pm", like the fixtures ("10月20日 13:16" in Chinese). */
-export const formatDateTime = (epoch: number) => lowercaseMeridiem(new Date(epoch).toLocaleString(intlLocale(), { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))
+/** "Oct 20, 1:16 pm", like the fixtures. */
+const formatDateTime = (epoch: number) => lowercaseMeridiem(new Date(epoch).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))
 /** "1:56 pm" today, "Oct 19" before. */
-export function formatRecordTime(epoch: number, now: number) {
+function formatRecordTime(epoch: number, now: number) {
   const sameDay = new Date(epoch).toDateString() === new Date(now).toDateString()
-  return sameDay ? lowercaseMeridiem(new Date(epoch).toLocaleTimeString(intlLocale(), { hour: 'numeric', minute: '2-digit' })) : new Date(epoch).toLocaleDateString(intlLocale(), { month: 'short', day: 'numeric' })
+  return sameDay ? lowercaseMeridiem(new Date(epoch).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })) : new Date(epoch).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 /** "10-20 13:24", the prompt-quote stamp the fixtures use. */
 function formatPromptStamp(epoch: number) {
@@ -76,12 +83,12 @@ function formatPromptStamp(epoch: number) {
 /** How long a request has been going, as the card shows it. Exported so the card can keep an open request's time current. */
 export function formatDuration(milliseconds: number) {
   const minutes = Math.max(0, Math.floor(milliseconds / 60000))
-  if (minutes < 1) return t('Just started')
-  if (minutes < 60) return t('{count} min', { count: minutes })
+  if (minutes < 1) return 'Just started'
+  if (minutes < 60) return `${minutes} min`
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return t('{count} hr', { count: hours })
+  if (hours < 24) return `${hours} hr`
   const days = Math.floor(hours / 24)
-  return t(days === 1 ? '{count} day' : '{count} days', { count: days })
+  return `${days} day${days === 1 ? '' : 's'}`
 }
 
 const lastPathSegment = (path: string | null) => path?.split('/').filter(Boolean).at(-1) ?? null
@@ -102,7 +109,7 @@ export function toAgent(agent: WorkViewAgent): Agent {
     ...mapped,
     role: `Subagent · ${mapped.role}`,
     status: finished ? 'finished' : agent.presence?.status === 'recent' ? 'working' : 'quiet',
-    ...(Number.isFinite(finishedAt) ? { finishedAt: formatDateTime(finishedAt), finishedAtEpoch: finishedAt } : {}),
+    ...(Number.isFinite(finishedAt) ? { finishedAt: formatDateTime(finishedAt) } : {}),
     canMarkFinished: agent.canMarkFinished === true,
   }
 }
@@ -119,7 +126,7 @@ function storySteps(progress: WorkViewProgress, now: number): Request['story'] {
     .sort((a, b) => (Date.parse(a.at ?? '') || 0) - (Date.parse(b.at ?? '') || 0))
     .map((milestone) => {
       const at = Date.parse(milestone.at ?? '')
-      return { label: cleanText(milestone.text, 200), description: Number.isFinite(at) ? formatRecordTime(at, now) : 'Date not recorded', ...(Number.isFinite(at) ? { atEpoch: at } : {}), status: 'complete' as const }
+      return { label: cleanText(milestone.text, 200), description: Number.isFinite(at) ? formatRecordTime(at, now) : 'Date not recorded', status: 'complete' as const }
     })
     .filter((step) => step.label)
 }
@@ -173,20 +180,11 @@ function toRequest(raw: WorkViewHumanRequest, agents: WorkViewAgent[], now: numb
   // Checked requests use a fixed next step instead of this recorded text.
   const nextRepeatsPrompt = status !== 'checked' && repeatsOwnerWords(recordedNext, ownerWords)
 
-  const estimateAt = measuredCompletionAt(readings, status === 'shipped')
-  const displayTime = {
-    ...(completedEpoch ? { endedAt: completedEpoch } : {}),
-    ...(Number.isFinite(reviewedAt) ? { reviewedAt } : {}),
-    ...(status === 'shipped' && completedEpoch ? { completedAt: completedEpoch } : {}),
-    ...(raw.review?.checked && raw.review.checkedAtEpoch ? { checkedAt: raw.review.checkedAtEpoch } : {}),
-    ...(estimateAt !== null ? { estimateAt } : {}),
-  }
   return assertConsistentRequest({
     id: raw.id,
     contentFingerprint: raw.contentFingerprint,
     // Group reviews already contain display copy; their source is independent of the optional human-copy writer.
     title,
-    // Only an untitled request reads "Title unavailable": a group title stands even when the human-copy writer gave up.
     titleUnavailable: (!title && copy?.state === 'unavailable') || undefined,
     ...(titleRepeatsPrompt ? { titleRepeatsPrompt } : {}),
     summary,
@@ -200,7 +198,6 @@ function toRequest(raw: WorkViewHumanRequest, agents: WorkViewAgent[], now: numb
     startedAt: started ? formatDateTime(started) : 'Start not recorded',
     startedAtIso: started ? new Date(started).toISOString() : undefined,
     runningFor: started ? formatDuration((completedEpoch ?? now) - started) : 'Not recorded',
-    ...(Object.keys(displayTime).length ? { displayTime } : {}),
     // Counts up only while the request is open: not closed, and not completed by a recorded time or a lifecycle that
     // says complete (the projection's own rule, even when the lifecycle carries no time).
     runningLive: started && completedEpoch === null && status !== 'closed' && raw.lifecycle?.complete !== true ? true : undefined,
@@ -216,7 +213,7 @@ function toRequest(raw: WorkViewHumanRequest, agents: WorkViewAgent[], now: numb
       history: readingsStopShort || (review && readings.length === 0) ? undefined : readings.map((reading) => reading.percent),
       completedAt: status === 'shipped' && completedEpoch ? formatDateTime(completedEpoch) : undefined,
     },
-    estimate: estimateAt === null ? null : formatCompletionEstimate(estimateAt),
+    estimate: measuredEstimate(readings, status === 'shipped'),
     next: { who, text: nextTextFor(status, recordedNext) },
     // No agent activity yet: the card shows the human's own asks instead.
     terminal: raw.activity.length
@@ -230,7 +227,7 @@ function toRequest(raw: WorkViewHumanRequest, agents: WorkViewAgent[], now: numb
     granular: raw.activity.map((activity) => ({
       kind: activity.kind === 'observation' ? 'memory' as const : 'work' as const,
       text: cleanText(activity.detail ? `${activity.title}: ${activity.detail}` : activity.title, 200),
-      at: formatRecordTime(activity.atEpoch, now), atEpoch: activity.atEpoch,
+      at: formatRecordTime(activity.atEpoch, now),
       ...(activity.media ? { media: activity.media } : {}),
     })).filter((record) => record.text),
     conversations: raw.conversationKeys.map((key) => {
@@ -239,7 +236,6 @@ function toRequest(raw: WorkViewHumanRequest, agents: WorkViewAgent[], now: numb
       return {
         tool: PLATFORM_LABEL[platform] ?? 'Agent',
         at: key === raw.id && raw.original.atEpoch ? formatDateTime(raw.original.atEpoch) : 'Time not recorded',
-        ...(key === raw.id && raw.original.atEpoch ? { atEpoch: raw.original.atEpoch } : {}),
         title: session?.sessionTitle ?? `Conversation ${sessionId.slice(0, 8)}`,
         platform,
         conversationSessionId: sessionId,
@@ -272,10 +268,6 @@ const OWNER_GOALS_SKILL = 'owner-goals'
 const RECORDED_PROMPT_TIME = /^\d{4}-(\d{2}-\d{2})(?: (\d{2}:\d{2}))?$/
 const RECORDED_DAY = /^(\d{4})-(\d{2})-(\d{2})$/
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-/** "Oct 18", or "Oct 18, 2025" with a year ("2025年10月18日" in Chinese). */
-const dayText = (month: number, day: number, year?: number) => getLocale() === 'zh-CN'
-  ? `${year ? `${year}年` : ''}${month}月${day}日`
-  : `${MONTH_LABELS[month - 1]} ${day}${year ? `, ${year}` : ''}`
 
 /** `YYYY-MM-DD HH:MM` → the `MM-DD HH:MM` stamp goals use; a bare day → `MM-DD`; nothing recorded → ''. */
 function toGoalPromptStamp(recordedAt: string | null, whatIsDated: string): string {
@@ -308,18 +300,19 @@ function toGoalItem(item: WorkViewGoalItem): MinedGoalItem & { label: string } {
 }
 
 /** "Aug 18 – Sep 17" from an exclusive end day; the year is added when the month is not in `currentYear`. */
-export function periodLabel(periodStart: string, periodEndExclusive: string | null, currentYear: number): string {
+function periodLabel(periodStart: string, periodEndExclusive: string | null, currentYear: number): string {
   const start = RECORDED_DAY.exec(periodStart)
   if (!start) throw new Error(`A saved owner-goals month has an unreadable start day: ${periodStart}`)
-  const startYear = Number(start[1])
-  if (!periodEndExclusive) return t('From {day}', { day: dayText(Number(start[2]), Number(start[3]), startYear === currentYear ? undefined : startYear) })
+  const startText = `${MONTH_LABELS[Number(start[2]) - 1]} ${Number(start[3])}`
+  if (!periodEndExclusive) return Number(start[1]) === currentYear ? `From ${startText}` : `From ${startText}, ${start[1]}`
   if (!RECORDED_DAY.test(periodEndExclusive)) throw new Error(`A saved owner-goals month has an unreadable end day: ${periodEndExclusive}`)
   const lastDay = new Date(`${periodEndExclusive}T12:00:00Z`)
   lastDay.setUTCDate(lastDay.getUTCDate() - 1)
+  const endText = `${MONTH_LABELS[lastDay.getUTCMonth()]} ${lastDay.getUTCDate()}`
+  const startYear = Number(start[1])
   const endYear = lastDay.getUTCFullYear()
-  const startText = dayText(Number(start[2]), Number(start[3]), startYear === endYear ? undefined : startYear)
-  const endText = dayText(lastDay.getUTCMonth() + 1, lastDay.getUTCDate(), startYear === currentYear && endYear === currentYear ? undefined : endYear)
-  return `${startText} – ${endText}`
+  if (startYear === currentYear && endYear === currentYear) return `${startText} – ${endText}`
+  return startYear === endYear ? `${startText} – ${endText}, ${endYear}` : `${startText}, ${startYear} – ${endText}, ${endYear}`
 }
 
 function toPastPeriod(list: WorkViewGoalList, currentYear: number): PastPeriod {
@@ -327,7 +320,6 @@ function toPastPeriod(list: WorkViewGoalList, currentYear: number): PastPeriod {
   return {
     id: list.listName,
     label: periodLabel(periodStart, list.periodEnd, currentYear),
-    displayPeriod: { start: periodStart, end: list.periodEnd, year: currentYear },
     promptCount: requireRecordedCount(list.sourcePromptCount, `The prompt count for ${list.listName}`),
     headline: list.summary ?? 'No summary recorded for this month.',
     areas: list.areas.map(toGoalItem).map((goal) => ({ title: goal.title, label: goal.label, timesAsked: goal.timesAsked, quote: goal.quotes[0] ?? null })),
@@ -335,10 +327,10 @@ function toPastPeriod(list: WorkViewGoalList, currentYear: number): PastPeriod {
 }
 
 /** "Oct 18": the day as the run wrote it (its own timezone), not converted to the viewer's. */
-export function recordedDayLabel(generatedAt: string): string {
+function recordedDayLabel(generatedAt: string): string {
   const day = RECORDED_DAY.exec(generatedAt.slice(0, 10))
   if (!day) throw new Error(`The ${OWNER_GOALS_SKILL} run has no readable day in generated_at (${generatedAt})`)
-  return dayText(Number(day[2]), Number(day[3]))
+  return `${MONTH_LABELS[Number(day[2]) - 1]} ${Number(day[3])}`
 }
 
 function generatedAtEpoch(list: WorkViewGoalList): number {
@@ -359,8 +351,7 @@ function toGoalsModel(goals: WorkViewGoalList | null | undefined, goalHistory: W
     const windowDays = requireRecordedCount(goals.windowDays, `The ${OWNER_GOALS_SKILL} window`)
     const generatedYear = new Date(generatedAt).getFullYear()
     const currentPeriod: CurrentPeriod = {
-      label: goals.periodStart ? periodLabel(goals.periodStart, goals.periodEnd, generatedYear) : t('{days} days to {day}', { days: windowDays, day: recordedDayLabel(goals.generatedAt!) }),
-      displayPeriod: { start: goals.periodStart, end: goals.periodEnd, generatedAt: goals.generatedAt! },
+      label: goals.periodStart ? periodLabel(goals.periodStart, goals.periodEnd, generatedYear) : `${windowDays} days to ${recordedDayLabel(goals.generatedAt!)}`,
       windowDays,
       promptCount: requireRecordedCount(goals.sourcePromptCount, `The ${OWNER_GOALS_SKILL} prompt count`),
     }
@@ -370,7 +361,7 @@ function toGoalsModel(goals: WorkViewGoalList | null | undefined, goalHistory: W
       currentPeriod,
       pastPeriods: (goalHistory ?? []).map((list) => toPastPeriod(list, generatedYear)),
       goalsReadError: null,
-      goalsRun: { label: OWNER_GOALS_SKILL, lastRunAt: formatDateTime(generatedAt), lastRunAtEpoch: generatedAt, deviceName: THIS_COMPUTER.name.toLowerCase() },
+      goalsRun: { label: OWNER_GOALS_SKILL, lastRunAt: formatDateTime(generatedAt), deviceName: THIS_COMPUTER.name.toLowerCase() },
     }
   } catch (error) {
     return { ...NO_GOALS, goalsReadError: error instanceof Error ? error.message : String(error) }
@@ -390,13 +381,13 @@ function toOwnerRule(rule: WorkViewRule, now: number): OwnerRule {
   const latest = Date.parse(rule.latestAt ?? '')
   const quotes = rule.quotes.map((quote): RuleQuote => {
     const at = Date.parse(quote.at ?? '')
-    return { at: Number.isFinite(at) ? formatDateTime(at) : 'Time not recorded', ...(Number.isFinite(at) ? { atEpoch: at } : {}), quote: quote.quote, kind: QUOTE_KINDS.includes(quote.kind as RuleQuote['kind']) ? quote.kind as RuleQuote['kind'] : 'directive', where: 'prompt' }
+    return { at: Number.isFinite(at) ? formatDateTime(at) : 'Time not recorded', quote: quote.quote, kind: QUOTE_KINDS.includes(quote.kind as RuleQuote['kind']) ? quote.kind as RuleQuote['kind'] : 'directive', where: 'prompt' }
   })
   const savedAt = Date.parse(rule.savedAt ?? '')
   const records: RuleRecord[] = [
-    ...quotes.map((quote) => ({ kind: 'Prompt' as const, label: `Your prompt: “${cleanText(quote.quote, 60)}”`, at: quote.at, ...(quote.atEpoch !== undefined ? { atEpoch: quote.atEpoch } : {}) })),
-    ...(source === 'request-progress' ? [{ kind: 'Review' as const, label: 'request-progress · build story', at: Number.isFinite(latest) ? formatDateTime(latest) : 'Time not recorded', ...(Number.isFinite(latest) ? { atEpoch: latest } : {}) }] : []),
-    ...(Number.isFinite(savedAt) ? [{ kind: 'Instructions' as const, label: source === 'you' ? 'Written in My Rules on this computer' : 'Saved in My Rules on this computer', at: formatDateTime(savedAt), atEpoch: savedAt }] : []),
+    ...quotes.map((quote) => ({ kind: 'Prompt' as const, label: `Your prompt: “${cleanText(quote.quote, 60)}”`, at: quote.at })),
+    ...(source === 'request-progress' ? [{ kind: 'Review' as const, label: 'request-progress · build story', at: Number.isFinite(latest) ? formatDateTime(latest) : 'Time not recorded' }] : []),
+    ...(Number.isFinite(savedAt) ? [{ kind: 'Instructions' as const, label: source === 'you' ? 'Written in My Rules on this computer' : 'Saved in My Rules on this computer', at: formatDateTime(savedAt) }] : []),
   ]
   const replacedAt = Date.parse(rule.replacedAt ?? '')
   return {
@@ -409,12 +400,11 @@ function toOwnerRule(rule: WorkViewRule, now: number): OwnerRule {
     quotesOmitted: rule.quotesOmitted ?? 0,
     timesSeen: rule.timesSeen,
     latestAt: Number.isFinite(latest) ? formatRecordTime(latest, now) : 'not recorded',
-    ...(Number.isFinite(latest) ? { latestAtEpoch: latest } : {}),
     // Only orders rules by strength; an unrecorded date counts as a year old rather than as recent.
     latestDaysAgo: Number.isFinite(latest) ? Math.max(0, (now - latest) / DAY_MS) : 365,
     source,
     status: rule.status,
-    replacedBy: rule.replacedBy ? { ruleId: rule.replacedBy, at: Number.isFinite(replacedAt) ? formatRecordTime(replacedAt, now) : 'a date not recorded', ...(Number.isFinite(replacedAt) ? { atEpoch: replacedAt } : {}) } : undefined,
+    replacedBy: rule.replacedBy ? { ruleId: rule.replacedBy, at: Number.isFinite(replacedAt) ? formatRecordTime(replacedAt, now) : 'a date not recorded' } : undefined,
     records,
   }
 }
@@ -425,7 +415,7 @@ type MappedRules = Pick<MappedWorkModel, 'rules' | 'ruleScopes' | 'rulesLearning
 function toRulesModel(snapshot: Pick<WorkViewSnapshot, 'rules' | 'ruleScopes' | 'rulesLearning' | 'rulesFile'>, now: number): MappedRules {
   const learning = snapshot.rulesLearning ?? null
   const writtenAt = Date.parse(learning?.writtenAt ?? '')
-  const progressRun = Number.isFinite(writtenAt) ? { label: REQUEST_PROGRESS_SKILL, lastRunAt: formatDateTime(writtenAt), lastRunAtEpoch: writtenAt, deviceName: THIS_COMPUTER.name.toLowerCase() } : null
+  const progressRun = Number.isFinite(writtenAt) ? { label: REQUEST_PROGRESS_SKILL, lastRunAt: formatDateTime(writtenAt), deviceName: THIS_COMPUTER.name.toLowerCase() } : null
   const base = {
     ruleScopes: snapshot.ruleScopes ?? [],
     rulesLearning: learning ? { preferencesFound: learning.preferencesFound, newSuggestions: learning.newSuggestions, reviewsRead: learning.reviewsRead } : null,
@@ -446,7 +436,7 @@ function toRulesModel(snapshot: Pick<WorkViewSnapshot, 'rules' | 'ruleScopes' | 
 function toAutoRefresh(raw: WorkViewRefresh | null): AutoRefresh | null {
   if (!raw) return null
   const finished = Date.parse(raw.finishedAt ?? '')
-  return { state: raw.state, finishedAt: Number.isFinite(finished) ? formatDateTime(finished) : null, ...(Number.isFinite(finished) ? { finishedAtEpoch: finished } : {}), error: raw.state === 'failed' || raw.state === 'waiting-for-agent' ? raw.error?.trim() || null : null }
+  return { state: raw.state, finishedAt: Number.isFinite(finished) ? formatDateTime(finished) : null, error: raw.state === 'failed' || raw.state === 'waiting-for-agent' ? raw.error?.trim() || null : null }
 }
 
 /** The build story request-progress wrote: its first paragraph is My Work's recap. No story, no recap. */
@@ -457,7 +447,7 @@ function toBuildStory(story: WorkViewBuildStory | null, now: number): BuildStory
   if (!recap) return null
   const paragraphs = blocks.map((block) => block.replace(/^#+\s*/, ''))
   const writtenAt = Date.parse(story?.writtenAt ?? '')
-  return { recap, paragraphs, writtenAt: Number.isFinite(writtenAt) ? formatRecordTime(writtenAt, now) : null, ...(Number.isFinite(writtenAt) ? { writtenAtEpoch: writtenAt } : {}) }
+  return { recap, paragraphs, writtenAt: Number.isFinite(writtenAt) ? formatRecordTime(writtenAt, now) : null }
 }
 
 export function toWorkModel(snapshot: WorkViewSnapshot, now: number): MappedWorkModel {
@@ -486,7 +476,6 @@ export function toWorkModel(snapshot: WorkViewSnapshot, now: number): MappedWork
   if (requests.some((request) => request.agentId === UNRECORDED_AGENT.id)) agents.push(UNRECORDED_AGENT)
   return {
     sourceKind: 'local',
-    displayAt: now,
     requests,
     requestReadErrors,
     agents,

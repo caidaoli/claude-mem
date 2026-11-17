@@ -10,18 +10,16 @@ import { getConnectionStatus, type ConnectionStatus } from './connection-status.
 import { browserHostname, browserVisibility, isServedFromCloud, type PageVisibility } from './served-from.ts'
 import { conflictReason, readReviewResponse, readSaveReceipt, type ReviewResult } from './review-response.ts'
 import { toWorkModel } from './to-work-model.ts'
-import { getLocale, subscribeLocale, t } from '../i18n/translate.ts'
 import type { ConversationContinuationEvent, MappedWorkModel, RuleSaveResult, WorkDataSource, WorkModel } from './work-data-source.ts'
 import { applySseFrame } from './parse-sse-frame.ts'
 import {
   conversationRouteFailureSentence, readConversationContinuationAnswer, readConversationContinuationNotice, readConversationExchangeAnswer,
   readOpenedInAppAnswer, unreachableWorkerSentence, unreadableAnswerSentence,
 } from './conversation-continuation.ts'
-import { SaveRefusedError } from '../data.ts'
+import { RefreshNotStartedError, SaveRefusedError } from '../data.ts'
 import type { Request as WorkRequest } from '../data.ts'
 import type { WorkViewSnapshot, WorkViewSource } from './work-view-api-types.ts'
 import { expandWorkViewOverview, type WorkViewOverview, type WorkViewOverviewModel, type WorkViewRequestDetail } from './work-view-overview.ts'
-import { localizeRequest, localizeWorkModel } from './localize-work-model.ts'
 import { mergeRequestDetail } from './request-detail-state.ts'
 import { isSyncStatus, type SyncStatusForDisplay } from '../../../viewer/utils/sync-presentation.ts'
 import { startViewerActivity, type ViewerActivityOptions } from '../../../viewer/utils/viewer-activity.ts'
@@ -134,9 +132,8 @@ export function createLocalSource(options: LocalSourceOptions = {}): WorkDataSou
     getConnectionStatus({ ...connectionEvidence, now: performance.now(), wallNow: Date.now(), where: SOURCE_KIND })
 
   const withConnection = (mapped: MappedWorkModel): WorkModel => {
-    const model: WorkModel = { ...localizeWorkModel(mapped), sourceKind: SOURCE_KIND, connection: currentConnectionStatus() }
-    // Localized labels also depend on the language and the display clock, which the content signature omits.
-    modelSignatures.set(model, `${getLocale()}:${mapped.displayAt ?? ''}:${modelSignature(mapped)}`)
+    const model: WorkModel = { ...mapped, sourceKind: SOURCE_KIND, connection: currentConnectionStatus() }
+    modelSignatures.set(model, modelSignature(mapped))
     return model
   }
 
@@ -329,11 +326,11 @@ export function createLocalSource(options: LocalSourceOptions = {}): WorkDataSou
     | 'subscribeToConversationContinuations' | 'openConversationInApp'> = SOURCE_KIND !== 'local' ? {} : {
     loadConversationContinuation: (platform, conversationSessionId) => callConversationRoute(
       `${WORK_VIEW_CONVERSATION_CONTINUATION_URL}?${new URLSearchParams({ platform, conversationSessionId })}`,
-      { cache: 'no-store' }, t('read this conversation'), readConversationContinuationAnswer),
+      { cache: 'no-store' }, 'read this conversation', readConversationContinuationAnswer),
     continueConversation: (platform, conversationSessionId, ownerMessage) => callConversationRoute(WORK_VIEW_CONTINUE_CONVERSATION_URL,
-      postToConversationRoute({ platform, conversationSessionId, ownerMessage }), t('send your message'), readConversationExchangeAnswer),
+      postToConversationRoute({ platform, conversationSessionId, ownerMessage }), 'send your message', readConversationExchangeAnswer),
     stopConversationContinuation: (platform, conversationSessionId) => callConversationRoute(WORK_VIEW_STOP_CONVERSATION_CONTINUATION_URL,
-      postToConversationRoute({ platform, conversationSessionId }), t('stop this turn'), readConversationExchangeAnswer),
+      postToConversationRoute({ platform, conversationSessionId }), 'stop this turn', readConversationExchangeAnswer),
     subscribeToConversationContinuations(listener) {
       // Wrapped, so one function subscribed twice is two subscriptions, and each unsubscribe ends only its own.
       const subscription = (event: ConversationContinuationEvent) => listener(event)
@@ -355,7 +352,7 @@ export function createLocalSource(options: LocalSourceOptions = {}): WorkDataSou
       pageUnload?.addEventListener('pagehide', stopTheOpenAsThePageGoes)
       try {
         return await callConversationRoute(WORK_VIEW_OPEN_CONVERSATION_IN_APP_URL, postToConversationRoute(clickedOpen),
-          t('open this conversation in its app'), readOpenedInAppAnswer)
+          'open this conversation in its app', readOpenedInAppAnswer)
       } finally {
         pageUnload?.removeEventListener('pagehide', stopTheOpenAsThePageGoes)
       }
@@ -401,7 +398,7 @@ export function createLocalSource(options: LocalSourceOptions = {}): WorkDataSou
       const summary = latestModel?.requests.find((request) => request.id === requestId)
       if (cached && cached.fingerprint === expectedFingerprint
         && (!latestModel || (summary?.detailRevision ?? summary?.contentFingerprint) === cached.fingerprint)) {
-        return localizeRequest(summary ? mergeRequestDetail(summary, cached.request) : cached.request, latestModel?.displayAt)
+        return summary ? mergeRequestDetail(summary, cached.request) : cached.request
       }
       let fingerprint = expectedFingerprint
       for (let attempt = 0; attempt < 2; attempt++) {
@@ -419,7 +416,7 @@ export function createLocalSource(options: LocalSourceOptions = {}): WorkDataSou
           // Only the selected read may update the feed, and only if no newer model arrived in flight.
           if (!superseded) publishModel?.(model)
           const current = model.requests.find((request) => request.id === requestId)
-          if (!current) throw new Error(t('This request is no longer in your work.'))
+          if (!current) throw new Error('This request is no longer in your work.')
           fingerprint = current.detailRevision ?? current.contentFingerprint
           continue
         }
@@ -430,26 +427,26 @@ export function createLocalSource(options: LocalSourceOptions = {}): WorkDataSou
           publishModel?.(model)
           const current = model.requests.find((request) => request.id === requestId)
           if (current && current.detailLoaded !== false) return current
-          throw new Error(t('This request is no longer available. Refresh your work and try again.'))
+          throw new Error('This request is no longer available. Refresh your work and try again.')
         }
-        if (!response.ok) throw new Error(t('Request detail could not be loaded ({status}). Try again.', { status: response.status }))
+        if (!response.ok) throw new Error(`Request detail could not be loaded (${response.status}). Try again.`)
         const detail = body as WorkViewRequestDetail | null
         if (detail?.version !== 1 || detail.request?.id !== requestId || detail.request.detailLoaded === false) {
-          throw new Error(t('The worker returned unreadable request detail.'))
+          throw new Error('The worker returned unreadable request detail.')
         }
         const actualFingerprint = detail.request.detailRevision ?? detail.request.contentFingerprint ?? ''
         const current = latestModel?.requests.find((request) => request.id === requestId)
-        if (latestModel && !current) throw new Error(t('This request is no longer in your work.'))
+        if (latestModel && !current) throw new Error('This request is no longer in your work.')
         if ((fingerprint && actualFingerprint !== fingerprint) || (current && (current.detailRevision ?? current.contentFingerprint) !== actualFingerprint)) {
-          throw new Error(t('This request changed while its detail was loading. Try again.'))
+          throw new Error('This request changed while its detail was loading. Try again.')
         }
         assertCurrent()
         detailCache.delete(requestId)
         detailCache.set(requestId, { fingerprint: actualFingerprint, request: detail.request })
         while (detailCache.size > MAX_CACHED_DETAILS) detailCache.delete(detailCache.keys().next().value!)
-        return localizeRequest(current ? mergeRequestDetail(current, detail.request) : detail.request, latestModel?.displayAt)
+        return current ? mergeRequestDetail(current, detail.request) : detail.request
       }
-      throw new Error(t('This request changed while its detail was loading. Try again.'))
+      throw new Error('This request changed while its detail was loading. Try again.')
     },
 
     /**
@@ -500,9 +497,9 @@ export function createLocalSource(options: LocalSourceOptions = {}): WorkDataSou
     async refreshWork() {
       const response = await fetchImpl(WORK_VIEW_REFRESH_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
       if (!response.ok) {
-        let reason = `the worker answered ${response.status}`
-        try { const body = await response.json() as { error?: unknown }; if (typeof body.error === 'string') reason = body.error } catch { /* Keep the status as the reason. */ }
-        throw new Error(`Refresh could not start: ${reason}`)
+        let workerReason: string | null = null
+        try { const body = await response.json() as { error?: unknown }; if (typeof body.error === 'string') workerReason = body.error } catch { /* Keep the status as the reason. */ }
+        throw new RefreshNotStartedError(response.status, workerReason)
       }
       return await response.json() as { state: string }
     },
@@ -633,11 +630,6 @@ export function createLocalSource(options: LocalSourceOptions = {}): WorkDataSou
       const connectionTimer = setInterval(reportConnection, CONNECTION_TICK_MS)
       // Legacy snapshots contain epochs we can age locally. Compact streams already send minute remaps;
       // an HTTP fallback is only needed while the feed is unhealthy, at most once per cache window.
-      const stopLocale = subscribeLocale(() => {
-        if (latestSnapshot) sendIfChanged(withConnection(toWorkModel(latestSnapshot, Date.now())))
-        else if (latestModel) sendIfChanged(withConnection(latestModel))
-        reportConnection()
-      })
       const agingTimer = setInterval(() => {
         if (pageHidden()) return
         if (latestSnapshot) sendIfChanged(withConnection(toWorkModel(latestSnapshot, Date.now())))
@@ -653,7 +645,6 @@ export function createLocalSource(options: LocalSourceOptions = {}): WorkDataSou
         stream?.close()
         clearInterval(connectionTimer)
         clearInterval(agingTimer)
-        stopLocale()
         stopActivity()
         if (generation !== streamGeneration) return
         streamGeneration++

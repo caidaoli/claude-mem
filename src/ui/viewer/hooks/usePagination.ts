@@ -1,6 +1,5 @@
 import { useState, useCallback, useRef, useLayoutEffect } from 'react';
 import { Observation, Summary, UserPrompt } from '../types';
-import { en } from '../i18n/locales/en';
 import { UI } from '../constants/ui';
 import { API_ENDPOINTS } from '../constants/api';
 import { sessionKey, type SessionRef } from '../utils/sessions';
@@ -95,7 +94,7 @@ function usePaginationFor<TItem extends DataItem>(endpoint: string, dataType: Da
     let offsetCapReachedAt = stateRef.current.offsetCapReachedAt;
     try {
       for (;;) {
-        if (++pageCount > maxPages) throw new Error(en.feed.historyChanged);
+        if (++pageCount > maxPages) throw new Error('Memory changed too much while refreshing. Retry to refresh this view.');
         const params = new URLSearchParams({ offset: String(offset), limit: String(UI.PAGINATION_PAGE_SIZE) });
         if (currentFilter) params.append('project', currentFilter);
         if (currentSession) {
@@ -107,16 +106,15 @@ function usePaginationFor<TItem extends DataItem>(endpoint: string, dataType: Da
         if (!response.ok) {
           const rejected = await rejectedPageMessage(response);
           if (stale()) return [];
-          const pageFailed = en.feed.pageFailed.replace('{kind}', en.feed[dataType]);
           if (rejected !== null) {
             setCurrentState({ ...stateRef.current, hasMore: false });
-            throw new PageRejectedError(pageFailed.replace('{error}', () => rejected));
+            throw new PageRejectedError(`Failed to load ${dataType}: ${rejected}`);
           }
-          throw new Error(pageFailed.replace('{error}', () => response.statusText));
+          throw new Error(`Failed to load ${dataType}: ${response.statusText}`);
         }
         const data = await response.json() as { items: TItem[]; hasMore: boolean; offsetCapReached?: unknown; maxOffset?: unknown };
         if (stale()) return [];
-        if (!Array.isArray(data.items)) throw new Error(en.feed.pageFailed.replace('{kind}', en.feed[dataType]).replace('{error}', en.feed.invalidPage));
+        if (!Array.isArray(data.items)) throw new Error(`Failed to load ${dataType}: invalid page`);
         let reachedBoundary = false;
         let retained = 0;
         for (const row of data.items) {
@@ -144,7 +142,7 @@ function usePaginationFor<TItem extends DataItem>(endpoint: string, dataType: Da
       return rows;
     } catch (error) {
       if (stale() || (controller.signal.aborted && !timedOut)) return [];
-      if (timedOut) throw new Error(en.feed.loadTimedOut.replace('{kind}', en.feed[dataType]));
+      if (timedOut) throw new Error(`Loading ${dataType} timed out. Try again.`);
       throw error;
     } finally {
       clearTimeout(timeout);

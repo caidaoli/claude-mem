@@ -7,7 +7,7 @@ import metrics from '@/assets/focus/metrics.webp'
 import storytelling from '@/assets/focus/storytelling.webp'
 import momentum from '@/assets/focus/momentum.webp'
 import wellbeing from '@/assets/focus/wellbeing.webp'
-import { t } from '@/i18n'
+import { useI18n } from '@/lib/i18n'
 
 /** Bundled concept illustrations. A render/refresh never makes a paid image-generation request. */
 function artworkFor(area: FocusArea) {
@@ -25,6 +25,7 @@ function artworkFor(area: FocusArea) {
 }
 
 export function FocusArtwork({ area, priority = false }: { area: FocusArea; priority?: boolean }) {
+  const { t } = useI18n()
   return <figure className="focus-artwork">
     <img src={artworkFor(area)} alt="" width={1000} height={667} loading={priority ? 'eager' : 'lazy'} decoding="async" onError={(event) => { event.currentTarget.hidden = true }} />
     <figcaption>{t('Concept illustration')}</figcaption>

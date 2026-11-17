@@ -15,7 +15,6 @@ export interface Agent {
   id: string; tool: AgentTool; name: string; role: string; deviceId: string
   status?: 'working' | 'quiet' | 'finished'
   finishedAt?: string
-  finishedAtEpoch?: number
   /** A subagent with no recorded stop: the owner may record one. */
   canMarkFinished?: boolean
 }
@@ -55,8 +54,6 @@ export interface Request {
   /** Sortable start time. The List sorts on this, never on the display string. */
   startedAtIso?: string
   runningFor: string
-  /** Raw display facts survive compact transport so the browser can change locale. */
-  displayTime?: { endedAt?: number; reviewedAt?: number; completedAt?: number; checkedAt?: number; estimateAt?: number }
   /** Live records only: no completion is recorded, so `runningFor` counts up to now and the card keeps it ticking. */
   runningLive?: boolean
   stage: Stage
@@ -79,17 +76,17 @@ export interface Request {
   activityWord: string
   workstreams: { title: string; tasks: { name: string; done: boolean }[] }[]
   /** `media`: the record's image refs (ids and labels only); absent when it has none. */
-  granular: { kind: 'work' | 'memory'; text: string; at: string; atEpoch?: number; media?: WorkViewMediaManifest }[]
+  granular: { kind: 'work' | 'memory'; text: string; at: string; media?: WorkViewMediaManifest }[]
   /** `platform` and `conversationSessionId` come from the conversation key ["conversation", platform, session id]: the
    * platform it was recorded from (sdk_sessions.platform_source) and its session id, which a continued turn resumes. */
-  conversations: { tool: string; at: string; atEpoch?: number; title: string; platform: string; conversationSessionId: string }[]
+  conversations: { tool: string; at: string; title: string; platform: string; conversationSessionId: string }[]
   prompts: Quote[]
   /** `href` is a real published page, PR or commit; '#' means a sample link with nothing behind it; absent means a
    * recorded item with nothing to open, such as a commit whose remote is not GitHub (render with ProductLink). */
   /** `deliverable` marks a copy claude-mem keeps in the project's deliverables bucket: a file the agent made, kept after its source is gone. */
   workProduct: { kind: WorkProductKind; label: string; href?: string; deliverable?: boolean; availability?: 'origin-only' }[]
   followUps: { tag: 'Docs' | 'Promo' | 'Other'; text: string; done: boolean }[]
-  story: { label: string; description: string; atEpoch?: number; status: 'complete' | 'active' | 'pending' }[]
+  story: { label: string; description: string; status: 'complete' | 'active' | 'pending' }[]
   /** The last memory review's account of how the request went (request-progress). */
   storyNarrative?: string
   evidence: { title: string; href: string }[]
@@ -156,11 +153,10 @@ export interface FocusChange {
 }
 
 /** The current owner-goals run. */
-export interface CurrentPeriod { label: string; windowDays: number; promptCount: number; displayPeriod?: { start: string | null; end: string | null; generatedAt: string } }
+export interface CurrentPeriod { label: string; windowDays: number; promptCount: number }
 
 /** One saved past month (owner-goals/<start>), shown in Past focus. Its asks are archived with the month. */
 export interface PastPeriod {
-  displayPeriod?: { start: string; end: string | null; year: number }
   id: string
   label: string
   promptCount: number
@@ -170,7 +166,7 @@ export interface PastPeriod {
 }
 
 /** When and where a skill last ran. Real timestamps only; no cost (owner, Oct 20, 2026). */
-export interface SkillRun { label: string; lastRunAt: string; lastRunAtEpoch?: number; deviceName: string }
+export interface SkillRun { label: string; lastRunAt: string; deviceName: string }
 
 export interface Run { label: string; lastRunAt: string; deviceId: string; state: 'idle' | 'running' | 'queued'; progress?: number }
 
@@ -300,6 +296,21 @@ export const needsYou = (request: Request) => request.state === 'your-move' || r
 export class SaveRefusedError extends Error {
   readonly model: WorkModel
   constructor(message: string, model: WorkModel) { super(message); this.name = 'SaveRefusedError'; this.model = model }
+}
+
+/**
+ * The worker did not start a refresh. `workerReason` is the worker's own words when its answer carried any, else
+ * null; the screen words the rest in the person's language (ManualRefreshButton). The message stays English for logs.
+ */
+export class RefreshNotStartedError extends Error {
+  readonly status: number
+  readonly workerReason: string | null
+  constructor(status: number, workerReason: string | null) {
+    super(`Refresh could not start: ${workerReason ?? `the worker answered ${status}`}`)
+    this.name = 'RefreshNotStartedError'
+    this.status = status
+    this.workerReason = workerReason
+  }
 }
 
 /** The ship estimate only from measured pace: two or more readings, the latest moving forward (decision 3). */

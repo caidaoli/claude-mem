@@ -1,4 +1,5 @@
 import { displayTime } from '@/lib/display-time'
+import { interpolate, t, useI18n } from '@/lib/i18n'
 import { useEffect, useRef, useState } from 'react'
 import { CheckIcon, ChevronDownIcon, FileTextIcon, Undo2Icon } from 'lucide-react'
 import { ChainOfThought, ChainOfThoughtContent, ChainOfThoughtHeader, ChainOfThoughtStep } from '@/components/ai-elements/chain-of-thought'
@@ -16,15 +17,14 @@ import { OTHER_FOCUS_AREA_ID, type Request } from '@/data'
 import { useStore, useWorkModel, useWorkspace } from '@/store'
 import { isPlaceableFocusArea, resolveFocusAreaId } from '@/live/to-focus-model'
 import { CHANGED_WHILE_READING_MESSAGE, CHECK_UNDONE_MESSAGE, CHECKED_LOCALLY_MESSAGE, type ReviewResult } from '@/live/review-response'
-import { t } from '@/i18n'
 import { PRODUCT_ICON } from '@/lib/product-icons'
 import { cn } from '@/lib/utils'
 import { AgentIcon, FocusAreaChip, NextMove, ProductLink, ProgressMeter, StateBadge } from './bits'
 import { ConversationContinue } from './conversation-continue'
 import { FocusChangeBar, useFocusChanges } from './focus-changes'
 import { OpenFollowUps } from './request-card'
-import { localizeRequest } from '@/live/localize-work-model'
-import { mergeRequestDetail, requestDetailKey, requestDetailToShow, requestOnScreen } from '@/live/request-detail-state'
+import { mergeRequestDetail, requestDetailKey } from '@/live/request-detail-state'
+import { requestDetailToShow, requestOnScreen } from '@/live/request-detail-state'
 import { ObsMediaStrip } from './observation-media/ObsMedia'
 import { requestImages } from './observation-media/request-images'
 
@@ -85,15 +85,15 @@ function noticeFor(result: ReviewResult, checked: boolean, requestId: string, ex
       const shared = (result.save?.scope ?? review?.mode) === 'shared'
       const pending = result.save ? result.save.state === 'queued' : review?.pending
       if (shared && review?.conflict) return {
-        tone: 'problem', message: t('Your review decision was saved here, but your viewers still have conflicting decisions. Read this version and choose again.') + (pending ? t(' The saved decision is waiting to sync.') : ''),
+        tone: 'problem', message: `Your review decision was saved here, but your viewers still have conflicting decisions. Read this version and choose again.${pending ? ' The saved decision is waiting to sync.' : ''}`,
       }
       if (expectedFingerprint && latest?.contentFingerprint !== expectedFingerprint) return {
-        tone: 'problem', message: t('Your review decision was saved for the version you read. The current work changed; review it again.') + (shared && pending ? t(' The saved decision is waiting to sync.') : ''),
+        tone: 'problem', message: `Your review decision was saved for the version you read. The current work changed; review it again.${shared && pending ? ' The saved decision is waiting to sync.' : ''}`,
       }
       return { tone: 'saved', message: shared
-        ? t(checked ? 'Checked for this shared version.' : 'Check undone for this shared version.') + (pending ? ' ' + t('Saved here; waiting to sync to your other viewers.') : '')
+        ? `${checked ? 'Checked' : 'Check undone'} for this shared version.${pending ? ' Saved here; waiting to sync to your other viewers.' : ''}`
         : result.model.sourceKind === 'cloud'
-          ? t(checked ? 'Checked in your cloud viewer only. My Work sharing is off.' : 'Check undone in your cloud viewer only. My Work sharing is off.')
+          ? `${checked ? 'Checked' : 'Check undone'} in your cloud viewer only. My Work sharing is off.`
           : checked ? CHECKED_LOCALLY_MESSAGE : CHECK_UNDONE_MESSAGE }
     }
     case 'changed-while-reading': return { tone: 'problem', message: result.serverMessage ?? CHANGED_WHILE_READING_MESSAGE }
@@ -130,13 +130,13 @@ function CheckAction({ request }: { request: Request }) {
     <p role="status" className={cn('w-full text-xs', notice.tone === 'problem' ? 'font-medium text-foreground' : 'text-muted-foreground')}>{t(notice.message)}</p>
   )
   if (request.review?.available === false) return (
-    <p role="status" className="rounded-xl border p-4 text-sm text-muted-foreground">{t(request.review.message ?? 'This review is unavailable until the shared state is complete. Nothing was changed.')}</p>
+    <p role="status" className="rounded-xl border p-4 text-sm text-muted-foreground">{request.review.message ?? 'This review is unavailable until the shared state is complete. Nothing was changed.'}</p>
   )
   if (request.review?.conflict) return (
     <div className="flex flex-wrap items-center gap-3 rounded-xl border p-4 text-sm">
-      <p role="status" className="basis-full">{t(request.review.message ?? 'Your viewers recorded different review decisions. Read this version, then choose the decision to keep.')}</p>
-      {request.state === 'needs-check' && <SaveButton className={cn(buttonVariants(), 'h-11 md:h-9')} onClick={() => save(true)} disabled={saving}><CheckIcon />{t('Mark checked')}</SaveButton>}
-      <SaveButton className={cn(buttonVariants({ variant: 'ghost' }), 'h-11 md:h-9')} onClick={() => save(false)} disabled={saving}><Undo2Icon />{t('Keep unchecked')}</SaveButton>
+      <p role="status" className="basis-full">{request.review.message ?? 'Your viewers recorded different review decisions. Read this version, then choose the decision to keep.'}</p>
+      {request.state === 'needs-check' && <SaveButton className={cn(buttonVariants(), 'h-11 md:h-9')} onClick={() => save(true)} disabled={saving}><CheckIcon />Mark checked</SaveButton>}
+      <SaveButton className={cn(buttonVariants({ variant: 'ghost' }), 'h-11 md:h-9')} onClick={() => save(false)} disabled={saving}><Undo2Icon />Keep unchecked</SaveButton>
       {noticeLine}
     </div>
   )
@@ -144,8 +144,8 @@ function CheckAction({ request }: { request: Request }) {
     return (
       <Req ids={['R6.2', 'R13.7']}>
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-review-border bg-review p-4 text-sm text-review-foreground">
-          <span>{t('Done. Check it, then mark this version checked.')}</span>
-          <SaveButton className={cn(buttonVariants(), 'h-11 md:h-9')} onClick={() => save(true)} disabled={saving}><CheckIcon />{t('Mark checked')}</SaveButton>
+          <span>{t("Done. Check it, then mark this version checked.")}</span>
+          <SaveButton className={cn(buttonVariants(), 'h-11 md:h-9')} onClick={() => save(true)} disabled={saving}><CheckIcon />{t("Mark checked")}</SaveButton>
           {noticeLine}
         </div>
       </Req>
@@ -153,13 +153,13 @@ function CheckAction({ request }: { request: Request }) {
   }
   if (!request.checkedAt) return noticeLine
   const savedWhere = request.review?.mode === 'shared'
-    ? t(request.review.pending ? 'Saved here; waiting to sync to your other viewers.' : 'Saved as a shared review decision.')
-    : sourceKind === 'cloud' ? t('Saved in your cloud viewer only. My Work sharing is off.') : sourceKind !== 'sample' ? t('Saved on this machine only.') : mode === 'web' ? t('Saved from the web · syncing to {count} machines (demonstration)', { count: devices.length }) : t('Saved on this machine (demonstration)')
+    ? request.review.pending ? t('Saved here; waiting to sync to your other viewers.') : t('Saved as a shared review decision.')
+    : sourceKind === 'cloud' ? t('Saved in your cloud viewer only. My Work sharing is off.') : sourceKind !== 'sample' ? t('Saved on this machine only.') : mode === 'web' ? interpolate(t('Saved from the web · syncing to {count} machines (demonstration)'), { count: devices.length }) : t('Saved on this machine (demonstration)')
   return (
     <Req ids={['R6.2', 'R13.7']}>
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-surface p-4 text-sm">
-        <span role="status">{notice?.tone === 'saved' ? t(notice.message) : t('Checked {at}.', { at: request.checkedAt })} {t('Shipping is still your call.')} {notice?.tone !== 'saved' && <span className="text-muted-foreground">{savedWhere}</span>}</span>
-        <SaveButton className={cn(buttonVariants({ variant: 'ghost' }), 'h-11 md:h-9')} onClick={() => save(false)} disabled={saving}><Undo2Icon />{t('Undo')}</SaveButton>
+        <span role="status">{interpolate(t('{checked} Shipping is still your call. '), { checked: notice?.tone === 'saved' ? t(notice.message) : interpolate(t('Checked {checkedAt}.'), { checkedAt: request.checkedAt }) })}{notice?.tone !== 'saved' && <span className="text-muted-foreground">{savedWhere}</span>}</span>
+        <SaveButton className={cn(buttonVariants({ variant: 'ghost' }), 'h-11 md:h-9')} onClick={() => save(false)} disabled={saving}><Undo2Icon />{t("Undo")}</SaveButton>
         {notice?.tone === 'problem' && noticeLine}
       </div>
     </Req>
@@ -171,33 +171,33 @@ function SuggestionAction({ request }: { request: Request }) {
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState<CheckNotice | null>(null)
   const suggestion = request.suggestion
-  if (!suggestion) return notice ? <p role="status" className="text-sm text-muted-foreground">{t(notice.message)}</p> : null
+  if (!suggestion) return notice ? <p role="status" className="text-sm text-muted-foreground">{notice.message}</p> : null
   const save = async (action: 'join' | 'not-this') => {
     setSaving(true)
     try {
       const result = await useStore.getState().answerRequestSuggestion(suggestion, action)
       const shared = result.save?.scope === 'shared'
-      const localCopy = result.save?.localMaterialization === 'pending' ? t(" This viewer's local work copy is still updating.") : ''
+      const localCopy = result.save?.localMaterialization === 'pending' ? " This viewer's local work copy is still updating." : ''
       const conflict = result.model.requests.some((current) => current.suggestion?.conversationKey === suggestion.conversationKey && current.suggestion.sharedConflict)
       if (conflict) {
-        setNotice({ tone: 'problem', message: t('Your decision was saved here, but grouping decisions still conflict. Read this suggestion and choose again.') + (shared && result.save?.state === 'queued' ? t(' The saved decision is waiting to sync.') : '') + localCopy })
+        setNotice({ tone: 'problem', message: `Your decision was saved here, but grouping decisions still conflict. Read this suggestion and choose again.${shared && result.save?.state === 'queued' ? ' The saved decision is waiting to sync.' : ''}${localCopy}` })
         return
       }
-      setNotice({ tone: 'saved', message: t(action === 'join' ? 'Joined the request.' : 'Kept these requests separate.') + ' ' + t(shared
+      setNotice({ tone: 'saved', message: `${action === 'join' ? 'Joined the request.' : 'Kept these requests separate.'} ${shared
         ? result.save?.state === 'queued' ? 'Saved here; waiting to sync to your other viewers.' : 'Saved as a shared decision.'
-        : sourceKind === 'cloud' ? 'Saved in your cloud viewer only.' : 'Saved on this machine only.') + localCopy })
+        : sourceKind === 'cloud' ? 'Saved in your cloud viewer only.' : 'Saved on this machine only.'}${localCopy}` })
     } catch (error) { setNotice({ tone: 'problem', message: error instanceof Error ? error.message : String(error) }) }
     finally { setSaving(false) }
   }
   return <div className="space-y-2 rounded-xl border p-4 text-sm">
-    <p>{t(suggestion.sharedConflict ? 'Your viewers recorded different grouping decisions. Read this suggestion, then choose again to resolve them.' : 'This work may be part of another request.')}</p>
+    <p>{suggestion.sharedConflict ? 'Your viewers recorded different grouping decisions. Read this suggestion, then choose again to resolve them.' : 'This work may be part of another request.'}</p>
     <p className="font-medium">{suggestion.requestTitle}</p>
     {suggestion.evidence && <p className="text-muted-foreground">{suggestion.evidence}</p>}
     <div className="flex gap-2">
-      <SaveButton className={cn(buttonVariants(), 'h-11 md:h-9')} onClick={() => save('join')} disabled={saving}>{t('Join')}</SaveButton>
-      <SaveButton className={cn(buttonVariants({ variant: 'ghost' }), 'h-11 md:h-9')} onClick={() => save('not-this')} disabled={saving}>{t('Not this')}</SaveButton>
+      <SaveButton className={cn(buttonVariants(), 'h-11 md:h-9')} onClick={() => save('join')} disabled={saving}>Join</SaveButton>
+      <SaveButton className={cn(buttonVariants({ variant: 'ghost' }), 'h-11 md:h-9')} onClick={() => save('not-this')} disabled={saving}>Not this</SaveButton>
     </div>
-    {notice && <p role="status" className={notice.tone === 'problem' ? 'font-medium' : 'text-muted-foreground'}>{t(notice.message)}</p>}
+    {notice && <p role="status" className={notice.tone === 'problem' ? 'font-medium' : 'text-muted-foreground'}>{notice.message}</p>}
   </div>
 }
 
@@ -216,10 +216,10 @@ function MoveTo({ request }: { request: Request }) {
     <Req ids={['R16.6']}>
       <div className="space-y-1">
         <Select value="" onValueChange={move} disabled={changes.saving}>
-          <SelectTrigger aria-label={t('Move to another focus area')} size="sm" className="h-11 text-xs md:h-8"><SelectValue placeholder={changes.saving ? t('Moving…') : t('Move to…')} /></SelectTrigger>
+          <SelectTrigger aria-label={t("Move to another focus area")} size="sm" className="h-11 text-xs md:h-8"><SelectValue placeholder={changes.saving ? t("Moving…") : t("Move to…")} /></SelectTrigger>
           <SelectContent>
-            {targets.map((area) => <SelectItem key={area.id} value={area.id}>{area.name}{area.status === 'suggested' ? t(' · suggested') : ''}</SelectItem>)}
-            {current !== OTHER_FOCUS_AREA_ID && <SelectItem value={OTHER_FOCUS_AREA_ID}>{t('Other')}</SelectItem>}
+            {targets.map((area) => <SelectItem key={area.id} value={area.id}>{area.name}{area.status === 'suggested' ? t(" · suggested") : ''}</SelectItem>)}
+            {current !== OTHER_FOCUS_AREA_ID && <SelectItem value={OTHER_FOCUS_AREA_ID}>{t("Other")}</SelectItem>}
           </SelectContent>
         </Select>
         <FocusChangeBar changes={changes} />
@@ -230,8 +230,8 @@ function MoveTo({ request }: { request: Request }) {
 
 /** The request page (§3): whose move and what's next first, then outcome, then the layers underneath, collapsed. */
 export function RequestDetail({ request, onClose, onOpenFocus }: { request: Request | null; onClose: () => void; onOpenFocus: (focusAreaId: string) => void }) {
+  useI18n()
   const readDetail = useStore((state) => state.loadRequestDetail)
-  const { displayAt } = useWorkModel()
   const [retry, setRetry] = useState(0)
   const [detail, setDetail] = useState<{ key: string; request?: Request; error?: string } | null>(null)
   // The last read that brought a detail back. A newer version's read starts empty, so this one stays on screen
@@ -260,18 +260,18 @@ export function RequestDetail({ request, onClose, onOpenFocus }: { request: Requ
   if (!request) return null
   if (!needsDetail) return <LoadedRequestDetail request={request} onClose={onClose} onOpenFocus={onOpenFocus} />
   const current = detail?.key === key ? detail : null
-  if (current?.request) return <LoadedRequestDetail request={localizeRequest(mergeRequestDetail(request, current.request), displayAt)} onClose={onClose} onOpenFocus={onOpenFocus} />
+  if (current?.request) return <LoadedRequestDetail request={mergeRequestDetail(request, current.request)} onClose={onClose} onOpenFocus={onOpenFocus} />
   // A newer version of the same request is loading, or failed to load: the detail read before it stays, so the drawer
   // stays mounted as the owner left it. The same component in the same place, so React keeps it. Its review actions
   // act on that older version, the one on screen (requestOnScreen).
   const shown = requestDetailToShow(request.id, current, lastReadWithDetail)
-  if (shown) return <LoadedRequestDetail request={localizeRequest(requestOnScreen(request, shown.request), displayAt)} onClose={onClose} onOpenFocus={onOpenFocus}
+  if (shown) return <LoadedRequestDetail request={requestOnScreen(request, shown.request)} onClose={onClose} onOpenFocus={onOpenFocus}
     newerVersionReadFailure={shown.newerVersionReadFailure === undefined ? undefined : { message: shown.newerVersionReadFailure, tryAgain: () => setRetry((value) => value + 1) }} />
   return (
     <Sheet open onOpenChange={(open) => { if (!open) onClose() }}>
-      <SheetContent className="w-full gap-0 overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
-        <SheetHeader className="gap-3 border-b p-5 md:p-6">
-          <SheetTitle className="pr-8 text-xl leading-snug">{request.title ?? request.resolvesTo?.title ?? t('Untitled request')}</SheetTitle>
+      <SheetContent>
+        <SheetHeader className="gap-3 border-b p-5 pr-14 md:p-6 md:pr-14">
+          <SheetTitle className="text-xl leading-snug">{request.title ?? request.resolvesTo?.title ?? t('Untitled request')}</SheetTitle>
           <SheetDescription>{request.summary ?? request.resolvesTo?.summary ?? t('Request details')}</SheetDescription>
         </SheetHeader>
         <div className="space-y-3 p-5 md:p-6" aria-live="polite">
@@ -284,20 +284,29 @@ export function RequestDetail({ request, onClose, onOpenFocus }: { request: Requ
 
 /** `newerVersionReadFailure`: the detail shown is an older version of this request, because reading the newer one failed. */
 function LoadedRequestDetail({ request, newerVersionReadFailure, onClose, onOpenFocus }: { request: Request; newerVersionReadFailure?: { message: string; tryAgain: () => void }; onClose: () => void; onOpenFocus: (focusAreaId: string) => void }) {
-  const title = request.title ?? request.resolvesTo?.title ?? t('Untitled request')
+  useI18n()
+  const title = request.title ?? request.resolvesTo?.title ?? 'Untitled request'
   const recent = request.granular.slice(0, RECENT_RECORDS)
   const earlier = request.granular.slice(RECENT_RECORDS)
-  const conversationCount = request.conversations.length || 1
   const images = requestImages(request)
   return (
     <Sheet open onOpenChange={(open) => { if (!open) onClose() }}>
-      <SheetContent onEscapeKeyDown={keepDrawerOpenForGallery} className="w-full gap-0 overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
+      <SheetContent onEscapeKeyDown={keepDrawerOpenForGallery}>
         <Req ids={['R3.6', 'R3.2']}>
-          <SheetHeader className="gap-3 border-b p-5 md:p-6">
-            <div className="flex min-w-0 flex-wrap items-center gap-2 pr-10"><StateBadge state={request.state} /><AgentIcon agentId={request.agentId} withDevice /></div>
-            <SheetTitle className="text-xl leading-snug">{title}</SheetTitle>
-            <SheetDescription className="line-clamp-2">{request.summary ?? request.resolvesTo?.summary}</SheetDescription>
-            <NextMove next={request.next} className="text-[0.95rem]" />
+          {/* From md up the whole header stays put while the panel scrolls (D b17 M 352). On a phone only the title bar
+              and the close button stay; the state, summary and next step scroll with the rest, because the whole
+              header pinned took a large share of a 390×844 screen. `contents` there lets the title bar stick to the
+              panel itself, the scroll container; `shrink-0` keeps a long title whole inside it (a flex item with a
+              min-height would otherwise shrink to that height). */}
+          <SheetHeader className="max-md:contents md:gap-3 md:border-b md:p-6">
+            <div className="flex min-w-0 flex-wrap items-center gap-2 pr-10 max-md:pt-5 max-md:pr-14 max-md:pl-5"><StateBadge state={request.state} /><AgentIcon agentId={request.agentId} withDevice /></div>
+            <div data-slot="request-title-bar" className="max-md:sticky max-md:top-0 max-md:z-10 max-md:flex max-md:min-h-15 max-md:shrink-0 max-md:items-center max-md:bg-card max-md:py-2 max-md:pr-14 max-md:pl-5">
+              <SheetTitle className="text-xl leading-snug">{title}</SheetTitle>
+            </div>
+            <div className="space-y-3 max-md:border-b max-md:px-5 max-md:pt-1 max-md:pb-5">
+              <SheetDescription className="line-clamp-2">{request.summary ?? request.resolvesTo?.summary}</SheetDescription>
+              <NextMove next={request.next} className="text-[0.95rem]" />
+            </div>
           </SheetHeader>
         </Req>
 
@@ -318,15 +327,15 @@ function LoadedRequestDetail({ request, newerVersionReadFailure, onClose, onOpen
               <FocusAreaChip focusAreaId={request.focusAreaId} onOpen={onOpenFocus} />
               {/* Sample fixtures change in memory; live requests save as my-focus rows. */}
               <MoveTo request={request} />
-              <span>{t('Asked by {name} · started {at}', { name: t(request.askedBy), at: displayTime(request.startedAt) })} · {t(request.runningFor)} · {t(request.stage)}</span>
+              <span>{interpolate(t('Asked by {name} · started {time} · {duration} · {stage}'), { name: request.askedBy, time: displayTime(request.startedAt), duration: request.runningFor, stage: t(request.stage) })}</span>
             </div>
           </div>
 
           {images && <ObsMediaStrip media={images} title={title} />}
 
           <Req ids={['R5.10', 'R5.12']}>
-            <Section title={t('Deliverables')}>
-              {request.workProduct.length === 0 ? <p className="text-sm text-muted-foreground">{t('Nothing attached yet.')}</p> : (
+            <Section title={t("Deliverables")}>
+              {request.workProduct.length === 0 ? <p className="text-sm text-muted-foreground">{t("Nothing attached yet.")}</p> : (
                 <div className="-mx-3 flex flex-col">
                   {request.workProduct.map((product, index) => {
                     const Icon = PRODUCT_ICON[product.kind]
@@ -347,13 +356,13 @@ function LoadedRequestDetail({ request, newerVersionReadFailure, onClose, onOpen
 
           {request.workstreams.length > 0 && (
             <Req ids={['R3.4']}>
-              <Section title={t('Workstreams')}>
+              <Section title={t("Workstreams")}>
                 <div className="divide-y divide-border/70">
                   {request.workstreams.map((stream, index) => (
                     <Task key={`${index}-${stream.title}`} defaultOpen={false} className="py-0.5">
-                      <TaskTrigger title={`${t(stream.title)} · ${t('{done} of {total} done', { done: stream.tasks.filter((task) => task.done).length, total: stream.tasks.length })}`} />
+                      <TaskTrigger title={interpolate(t('{title} · {done} of {total} done'), { title: stream.title, done: stream.tasks.filter((task) => task.done).length, total: stream.tasks.length })} />
                       <TaskContent className="pb-3">
-                        {stream.tasks.map((task, index) => <TaskItem key={`${index}-${task.name}`} className={task.done ? 'line-through' : ''}>{t(task.name)}</TaskItem>)}
+                        {stream.tasks.map((task, index) => <TaskItem key={`${index}-${task.name}`} className={task.done ? 'line-through' : ''}>{task.name}</TaskItem>)}
                       </TaskContent>
                     </Task>
                   ))}
@@ -365,26 +374,24 @@ function LoadedRequestDetail({ request, newerVersionReadFailure, onClose, onOpen
           {(request.story.length > 0 || request.storyNarrative) && (
             <Req ids={['R7.2', 'R3.2']}>
               <ChainOfThought defaultOpen={false}>
-                <ChainOfThoughtHeader>{t('Build story')}</ChainOfThoughtHeader>
+                <ChainOfThoughtHeader>{t("Build story")}</ChainOfThoughtHeader>
                 <ChainOfThoughtContent>
                   {request.storyNarrative && <p className="text-sm text-muted-foreground">{request.storyNarrative}</p>}
-                  {request.story.map((step, index) => <ChainOfThoughtStep key={`${index}:${step.label}`} label={step.label} description={t(step.description)} status={step.status} />)}
+                  {request.story.map((step, index) => <ChainOfThoughtStep key={`${index}:${step.label}`} label={step.label} description={step.description} status={step.status} />)}
                 </ChainOfThoughtContent>
               </ChainOfThought>
             </Req>
           )}
 
           <Req ids={['R3.5']}>
-            <Section title={t('Latest records')}>
-              {recent.length === 0 ? <p className="text-sm text-muted-foreground">{t('No records yet.')}</p> : <Records records={recent} />}
-              {earlier.length > 0 && <Disclosure label={t(earlier.length === 1 ? '{count} earlier record' : '{count} earlier records', { count: earlier.length })}><Records records={earlier} /></Disclosure>}
+            <Section title={t("Latest records")}>
+              {recent.length === 0 ? <p className="text-sm text-muted-foreground">{t("No records yet.")}</p> : <Records records={recent} />}
+              {earlier.length > 0 && <Disclosure label={interpolate(t(earlier.length === 1 ? '{count} earlier record' : '{count} earlier records'), { count: earlier.length })}><Records records={earlier} /></Disclosure>}
             </Section>
           </Req>
 
           <Req ids={['R2.5', 'R2.2', 'R5.11']}>
-            <Disclosure label={`${t('Where this came from')} · ${request.evidence.length
-              ? t(conversationCount === 1 ? '{count} conversation, {sources} sources' : '{count} conversations, {sources} sources', { count: conversationCount, sources: request.evidence.length })
-              : t(conversationCount === 1 ? '{count} conversation' : '{count} conversations', { count: conversationCount })}`}>
+            <Disclosure label={`Where this came from · ${request.conversations.length || 1} conversation${request.conversations.length > 1 ? 's' : ''}${request.evidence.length ? `, ${request.evidence.length} sources` : ''}`}>
               <div className="space-y-2.5 pb-2">
                 {request.conversations.length === 0 && request.prompts.length === 0 && <p className="text-sm text-muted-foreground">{t("One conversation so far.")}</p>}
                 {request.conversations.map((conversation, index) => (

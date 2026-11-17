@@ -5,6 +5,7 @@ import { displayTime } from '@/lib/display-time'
 import { useState, type ReactNode } from 'react'
 import { ArrowDownIcon, ArrowUpIcon, CheckIcon, ChevronDownIcon, CircleDashedIcon, Link2Icon, MergeIcon, MoreHorizontalIcon, PencilIcon, XIcon } from 'lucide-react'
 import { useReducedMotion } from 'motion/react'
+import { interpolate, useI18n } from '@/lib/i18n'
 import { EncryptedText } from '@/components/aceternity/encrypted-text'
 import { InlineCitationQuote } from '@/components/ai-elements/inline-citation'
 import { Badge } from '@/components/ui/badge'
@@ -12,9 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Progress } from '@/components/ui/progress'
-import { t } from '@/i18n'
 import { cn } from '@/lib/utils'
-import { timesLabel } from '@/lib/words'
 import { Req } from '@/spec/req'
 import { type FocusArea, type FocusAsk, type LiveState, type Quote, type Request } from '@/data'
 import { useStore, useWorkModel } from '@/store'
@@ -25,7 +24,7 @@ import { AreaEditDialog, type AreaEdit, type FocusChanges } from './focus-change
 import { SharedMark, ShareFocusDialog } from './share-focus'
 import { canShareArea } from '@/live/to-shared-focus'
 
-const requestTitle = (request: Request) => request.title ?? t(request.titleUnavailable ? 'Title unavailable' : 'New request, title being written')
+const requestTitle = (request: Request, t?: (s: string) => string) => request.title ?? (t ? t('New request, title being written') : 'New request, title being written')
 const isReviewed = (request: Request) => request.progress.readings > 0
 
 /** Where an area stands, from the requests in it. The dot uses the same state tokens as My Work; the text stays plain. */
@@ -60,6 +59,7 @@ function statusOf(latestAt: string | null, requests: Request[]): AreaStatus {
  * The percentage always says how much of the area it covers, and names what it leaves out.
  */
 function Rollup({ status, requests, className }: { status: AreaStatus; requests: Request[]; className?: string }) {
+  const { t } = useI18n()
   const reviewed = requests.filter(isReviewed)
   const unreviewed = requests.filter((request) => !isReviewed(request))
   if (requests.length === 0) {
@@ -69,14 +69,12 @@ function Rollup({ status, requests, className }: { status: AreaStatus; requests:
   return (
     <Req ids={['R16.2', 'R5.11', 'R12.1']}>
       <div className={cn('space-y-1', className)}>
-        <Progress value={percent} className={cn('h-1.5 bg-muted', AREA_STATUS[status].meter)} aria-label={t('{percent}% from {reviewed} of {count} requests reviewed', { percent, reviewed: reviewed.length, count: requests.length })} />
+        <Progress value={percent} className={cn('h-1.5 bg-muted', AREA_STATUS[status].meter)} aria-label={interpolate(t('{percent}% from {reviewed} of {total} requests reviewed'), { percent, reviewed: reviewed.length, total: requests.length })} />
         <p className="text-xs text-muted-foreground">
-          {reviewed.length
-            ? <><span className="font-medium text-foreground tabular-nums">{percent}%</span> · {t(requests.length === 1 ? '{reviewed} of {count} request reviewed' : '{reviewed} of {count} requests reviewed', { reviewed: reviewed.length, count: requests.length })}</>
-            : t(requests.length === 1 ? 'Not reviewed yet · 0 of {count} request' : 'Not reviewed yet · 0 of {count} requests', { count: requests.length })}
+          {reviewed.length ? <><span className="font-medium text-foreground tabular-nums">{percent}%</span> · {interpolate(t('{reviewed} of {total} requests reviewed'), { reviewed: reviewed.length, total: requests.length })}</> : <>{interpolate(t('Not reviewed yet · 0 of {count} requests'), { count: requests.length })}</>}
         </p>
         {unreviewed.length > 0 && reviewed.length > 0 && (
-          <p className="truncate text-xs text-muted-foreground">{t('Not counted: {titles}', { titles: unreviewed.map(requestTitle).join(t(', ')) })}</p>
+          <p className="truncate text-xs text-muted-foreground">{interpolate(t('Not counted: {requests}'), { requests: unreviewed.map((r) => requestTitle(r, t)).join(', ') })}</p>
         )}
       </div>
     </Req>
@@ -100,11 +98,15 @@ export function Quotes({ quotes }: { quotes: Quote[] }) {
 
 /** Every quote is kept, behind one disclosure, so the requests come first (§3). */
 function WhyItsHere({ quotes }: { quotes: Quote[] }) {
+  const { t } = useI18n()
+  const label = quotes.length === 1
+    ? interpolate(t('Why it’s here · {count} quote'), { count: '1' })
+    : interpolate(t('Why it’s here · {count} quotes'), { count: quotes.length })
   return (
     <Req ids={['R16.2']}>
       <Collapsible>
         <CollapsibleTrigger className="group flex min-h-11 items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
-          <ChevronDownIcon className="size-4 transition-transform group-data-[state=open]:rotate-180" />{t(quotes.length === 1 ? 'Why it’s here · {count} quote' : 'Why it’s here · {count} quotes', { count: quotes.length })}
+          <ChevronDownIcon className="size-4 transition-transform group-data-[state=open]:rotate-180" />{label}
         </CollapsibleTrigger>
         <CollapsibleContent className="pt-1 pb-1"><Quotes quotes={quotes} /></CollapsibleContent>
       </Collapsible>
@@ -117,38 +119,43 @@ function WhyItsHere({ quotes }: { quotes: Quote[] }) {
 // Three asks keep the header under about a third of a 1000px window with the requests showing below it.
 const ASKS_SHOWN_FIRST = 3
 function NotStartedAsks({ asks }: { asks: FocusAsk[] }) {
+  const { t } = useI18n()
   const [showAll, setShowAll] = useState(false)
   if (asks.length === 0) return null
   const shown = showAll ? asks : asks.slice(0, ASKS_SHOWN_FIRST)
   return (
     <Req ids={['R16.2', 'R6.3', 'R12.2']}>
       <div className="space-y-1.5">
-        <h3 className="text-xs font-medium text-muted-foreground">{t('Not started · {count}', { count: asks.length })}</h3>
+        <h3 className="text-xs font-medium text-muted-foreground">{interpolate(t('Not started · {count}'), { count: asks.length })}</h3>
         {/* Dashed and unfilled: asked for, but nothing is working on it yet. The heading names the state once. */}
         <ul className="divide-y divide-dashed rounded-lg border border-dashed">
-          {shown.map((ask) => (
-            <li key={ask.id} className="px-3 py-2">
-              <Collapsible>
-                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                  <p className="flex min-w-0 flex-1 basis-64 items-start gap-2 text-sm leading-snug font-medium"><CircleDashedIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />{ask.title}</p>
-                  <p className="flex items-center gap-1.5 pl-5.5 text-xs text-muted-foreground sm:pl-0">
-                    {t('{times}, last {day}', { times: timesLabel(ask.timesAsked).replace(/^a/, 'A'), day: formatPromptDay(ask.latestAt) })}
-                    {ask.quotes.length > 0 && <>
-                      <span aria-hidden="true">·</span>
-                      <CollapsibleTrigger className="group inline-flex min-h-11 items-center gap-0.5 hover:text-foreground sm:min-h-0">
-                        {t(ask.quotes.length === 1 ? '{count} quote' : '{count} quotes', { count: ask.quotes.length })}<ChevronDownIcon className="size-3.5 transition-transform group-data-[state=open]:rotate-180" />
-                      </CollapsibleTrigger>
-                    </>}
-                  </p>
-                </div>
-                <CollapsibleContent className="pt-2 pb-1 pl-5.5"><Quotes quotes={ask.quotes} /></CollapsibleContent>
-              </Collapsible>
-            </li>
-          ))}
+          {shown.map((ask) => {
+            const times = ask.timesAsked === 1 ? t('asked once') : interpolate(t('asked {times}×'), { times: ask.timesAsked })
+            const quoteLabel = ask.quotes.length === 1 ? interpolate(t('{count} quote'), { count: '1' }) : interpolate(t('{count} quotes'), { count: ask.quotes.length })
+            return (
+              <li key={ask.id} className="px-3 py-2">
+                <Collapsible>
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <p className="flex min-w-0 flex-1 basis-64 items-start gap-2 text-sm leading-snug font-medium"><CircleDashedIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />{ask.title}</p>
+                    <p className="flex items-center gap-1.5 pl-5.5 text-xs text-muted-foreground sm:pl-0">
+                      {interpolate(t('{times}, last {date}'), { times, date: formatPromptDay(ask.latestAt) })}
+                      {ask.quotes.length > 0 && <>
+                        <span aria-hidden="true">·</span>
+                        <CollapsibleTrigger className="group inline-flex min-h-11 items-center gap-0.5 hover:text-foreground sm:min-h-0">
+                          {quoteLabel}<ChevronDownIcon className="size-3.5 transition-transform group-data-[state=open]:rotate-180" />
+                        </CollapsibleTrigger>
+                      </>}
+                    </p>
+                  </div>
+                  <CollapsibleContent className="pt-2 pb-1 pl-5.5"><Quotes quotes={ask.quotes} /></CollapsibleContent>
+                </Collapsible>
+              </li>
+            )
+          })}
         </ul>
         {asks.length > ASKS_SHOWN_FIRST && (
           <Button variant="ghost" size="sm" className="-ml-2 h-11 text-xs text-muted-foreground sm:h-8" onClick={() => setShowAll(!showAll)}>
-            {showAll ? t('Show fewer') : t('Show {count} more', { count: asks.length - ASKS_SHOWN_FIRST })}
+            {showAll ? t('Show fewer') : interpolate(t('Show {count} more'), { count: asks.length - ASKS_SHOWN_FIRST })}
           </Button>
         )}
       </div>
@@ -158,6 +165,7 @@ function NotStartedAsks({ asks }: { asks: FocusAsk[] }) {
 
 /** Rename, Edit goal, Merge into…, Move up / down (the owner's order), Done or back in focus, and Share…. */
 function AreaMenu({ area, changes, onEdit, onShare }: { area: FocusArea; changes: FocusChanges; onEdit: (edit: AreaEdit) => void; onShare: () => void }) {
+  const { t } = useI18n()
   const { focusAreas } = useWorkModel()
   // The owner's order covers kept areas only (the worker refuses anything else), all of them at once, as the rail shows them.
   const order = focusAreas.filter((entry) => entry.status === 'kept' && !entry.mergedInto).map((entry) => entry.id)
@@ -166,7 +174,7 @@ function AreaMenu({ area, changes, onEdit, onShare }: { area: FocusArea; changes
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="h-11 w-11 shrink-0 sm:h-8 sm:w-8" aria-label={t('Change {name}', { name: area.name })} disabled={changes.saving}><MoreHorizontalIcon /></Button>
+        <Button variant="ghost" size="sm" className="h-11 w-11 shrink-0 sm:h-8 sm:w-8" aria-label={interpolate(t('Change {name}'), { name: area.name })} disabled={changes.saving}><MoreHorizontalIcon /></Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuItem onSelect={() => onEdit({ kind: 'rename', area })}><PencilIcon />{t('Rename')}</DropdownMenuItem>
@@ -205,6 +213,7 @@ function AreaName({ name }: { name: string }) {
 
 /** One focus area, on top of its requests. `requests` are all of them, closed ones too, as the combined progress counts them. */
 export function FocusHeader({ area, requests, changes }: { area: FocusArea; requests: Request[]; changes: FocusChanges }) {
+  const { t } = useI18n()
   const [edit, setEdit] = useState<AreaEdit | null>(null)
   const [sharing, setSharing] = useState(false)
   const artwork = useStore((state) => state.view.focusArtwork)
@@ -227,21 +236,21 @@ export function FocusHeader({ area, requests, changes }: { area: FocusArea; requ
             </div>
             {area.goal ? <p className="text-[0.95rem] leading-snug">{area.goal}</p> : <p className="text-sm text-muted-foreground italic">{t('Write one sentence saying what this area is for (Edit goal).')}</p>}
             {/* The area's own evidence sits with its goal, so it can't be read as belonging to the asks below. */}
-            {area.quotes.length > 0 ? <WhyItsHere quotes={area.quotes} /> : area.evidence && <p className="text-xs text-muted-foreground">{t('Why it’s here: {evidence}', { evidence: area.evidence })}</p>}
+            {area.quotes.length > 0 ? <WhyItsHere quotes={area.quotes} /> : area.evidence && <p className="text-xs text-muted-foreground">{interpolate(t('Why it’s here: {evidence}'), { evidence: area.evidence })}</p>}
           </div>
           <AreaMenu area={area} changes={changes} onEdit={setEdit} onShare={() => setSharing(true)} />
         </div>
         </div>
-        {navWord && <p className="text-xs text-attention-foreground">{t('“{name}” reuses the page name “{word}”. Rename it so each word means one thing.', { name: area.name, word: navWord })}</p>}
+        {navWord && <p className="text-xs text-attention-foreground">{interpolate(t('“{name}” reuses the page name “{navWord}”. Rename it so each word means one thing.'), { name: area.name, navWord })}</p>}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
           <Rollup status={status} requests={requests} />
           <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
             <span className={cn('inline-flex items-center gap-1.5 font-medium', AREA_STATUS[status].text)}><span className={cn('size-1.5 rounded-full', AREA_STATUS[status].dot)} />{t(AREA_STATUS[status].label)}</span>
-            <span><span className="font-medium text-foreground tabular-nums">{shipped}</span> {t('shipped')}</span>
-            {area.timesAsked !== null && area.latestAt && <span>{t('{times}, last {day}', { times: timesLabel(area.timesAsked), day: formatPromptDay(area.latestAt) })}</span>}
+            <span>{interpolate(t('{count} shipped'), { count: shipped })}</span>
+            {area.timesAsked !== null && area.latestAt && <span>{interpolate(t('{times}, last {date}'), { times: area.timesAsked === 1 ? t('asked once') : interpolate(t('asked {times}×'), { times: area.timesAsked }), date: formatPromptDay(area.latestAt) })}</span>}
           </p>
         </div>
-        {shippedBefore && <p className="text-xs text-review-foreground">{t('You asked again on {day}, after the last ship on {shipped}. What shipped doesn’t cover it yet.', { day: formatPromptDay(area.latestAt!), shipped: shippedBefore })}</p>}
+        {shippedBefore && <p className="text-xs text-review-foreground">{interpolate(t('You asked again on {latestAt}, after the last ship on {shippedBefore}. What shipped doesn’t cover it yet.'), { latestAt: formatPromptDay(area.latestAt!), shippedBefore })}</p>}
         <NotStartedAsks asks={area.asks} />
         {area.status === 'suggested' && (
           <Req ids={['R16.4']}>
@@ -260,6 +269,7 @@ export function FocusHeader({ area, requests, changes }: { area: FocusArea; requ
 
 /** Other: the permanent bucket for requests that fit no area, and asks the run placed in none. */
 export function OtherHeader({ requests }: { requests: Request[] }) {
+  const { t } = useI18n()
   const { otherAsks } = useWorkModel()
   const shipped = requests.filter((request) => request.state === 'shipped').length
   return (
@@ -270,7 +280,7 @@ export function OtherHeader({ requests }: { requests: Request[] }) {
           <p className="text-sm text-muted-foreground">{t('Requests that fit none of your focus areas. A refresh suggests a new area when several of these turn out to be steps of something larger.')}</p>
         </div>
         <Rollup status={statusOf(null, requests)} requests={requests} />
-        <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground tabular-nums">{shipped}</span> {t('shipped')}</p>
+        <p className="text-xs text-muted-foreground">{interpolate(t('{count} shipped'), { count: shipped })}</p>
         <NotStartedAsks asks={otherAsks} />
       </HeaderFrame>
     </Req>

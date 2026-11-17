@@ -31,7 +31,6 @@
 // ============================================================
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { t } from '@/i18n';
 import { ChevronLeft, ChevronRight, Image as ImageIcon, X } from 'lucide-react';
 
 import { workerMediaSource } from './worker-media-source';
@@ -127,7 +126,7 @@ export function watchMediaStatus(
 export function MediaCountBadge({ media, count }: { media?: VMedia; count?: number }) {
   const total = count ?? media?.attachments.length ?? 0;
   if (!media || total === 0) return null;
-  const label = t(total === 1 ? '{count} image{overflow}' : '{count} images{overflow}', { count: total, overflow: media.overflow ? t(' (more on the source event)') : '' });
+  const label = `${total} image${total === 1 ? '' : 's'}${media.overflow ? ' (more on the source event)' : ''}`;
   return (
     <span className="obs-media-count" role="img" aria-label={label} title={label}>
       <ImageIcon size={11} strokeWidth={2} aria-hidden />
@@ -230,13 +229,13 @@ export function ObsMediaStrip({ media, title, total, onMore }: { media?: VMedia;
   };
 
   return (
-    <div className="obs-media" aria-label={t(count === 1 ? '{count} attached image' : '{count} attached images', { count })}  role="group">
+    <div className="obs-media" aria-label={`${count} attached image${count === 1 ? '' : 's'}`} role="group">
       <div className="obs-media-head">
         <span>
-          {t(count === 1 ? '{count} image' : '{count} images', { count })}
-          {media?.overflow ? t(' · more on the source event') : ''}
+          {count} image{count === 1 ? '' : 's'}
+          {media?.overflow ? ' · more on the source event' : ''}
         </span>
-        {uninspected > 0 && <span className="obs-media-tag">{t('{count} not inspected', { count: uninspected })}</span>}
+        {uninspected > 0 && <span className="obs-media-tag">{uninspected} not inspected</span>}
       </div>
       <div className="obs-media-strip">
         {visible.map((ref, index) => {
@@ -248,7 +247,7 @@ export function ObsMediaStrip({ media, title, total, onMore }: { media?: VMedia;
               className="obs-media-thumb"
               data-state={state}
               onClick={(event) => open(index, event.currentTarget)}
-              aria-label={t('Open image {index} of {count} ({label}): {state}, {inspection}', { index: index + 1, count, label: ref.label, state: t(STATE_COPY[state]), inspection: inspectionCopy(ref.inspection).toLowerCase() })}
+              aria-label={`Open image ${index + 1} of ${count} (${ref.label}): ${STATE_COPY[state]}, ${inspectionCopy(ref.inspection).toLowerCase()}`}
             >
               {state === 'ready' ? (
                 <img
@@ -260,9 +259,9 @@ export function ObsMediaStrip({ media, title, total, onMore }: { media?: VMedia;
                   onError={() => markThumbnailBroken(ref.id)}
                 />
               ) : (
-                <span className="obs-media-state">{t(STATE_COPY[state])}</span>
+                <span className="obs-media-state">{STATE_COPY[state]}</span>
               )}
-              {ref.inspection === 'uninspected' && <span className="obs-media-dot" aria-hidden title={t('Not inspected')} />}
+              {ref.inspection === 'uninspected' && <span className="obs-media-dot" aria-hidden title="Not inspected" />}
             </button>
           );
         })}
@@ -271,7 +270,7 @@ export function ObsMediaStrip({ media, title, total, onMore }: { media?: VMedia;
             type="button"
             className="obs-media-more"
             onClick={(event) => (partial ? onMore?.() : open(THUMBNAIL_LIMIT, event.currentTarget))}
-            aria-label={t(hidden === 1 ? 'Show {count} more image' : 'Show {count} more images', { count: hidden })}
+            aria-label={`Show ${hidden} more image${hidden === 1 ? '' : 's'}`}
           >
             +{hidden}
           </button>
@@ -378,15 +377,15 @@ function MediaGallery({
       >
         <header className="obs-media-galleryhead">
           <h2 id={headingId}>
-            {t('Image {index} of {count}', { index: index + 1, count: refs.length })} · <span>{ref.label}</span>
+            Image {index + 1} of {refs.length} · <span>{ref.label}</span>
           </h2>
-          <button ref={closeRef} type="button" className="obs-media-galleryclose" onClick={onClose} aria-label={t('Close image viewer (Escape)')}>
+          <button ref={closeRef} type="button" className="obs-media-galleryclose" onClick={onClose} aria-label="Close image viewer (Escape)">
             <X size={16} strokeWidth={2} aria-hidden />
           </button>
         </header>
         <div className="obs-media-galleryframe" data-state={state}>
           {refs.length > 1 && (
-            <button type="button" className="obs-media-gallerynav is-prev" onClick={() => onIndex((index - 1 + refs.length) % refs.length)} aria-label={t('Previous image')}>
+            <button type="button" className="obs-media-gallerynav is-prev" onClick={() => onIndex((index - 1 + refs.length) % refs.length)} aria-label="Previous image">
               <ChevronLeft size={18} strokeWidth={2} aria-hidden />
             </button>
           )}
@@ -394,7 +393,7 @@ function MediaGallery({
             <img key={`${ref.id}:${loadAttempt}`} src={source.imageUrl(ref.id)} alt={altText(ref, index, refs.length, title)} onError={() => onBroken(ref.id)} />
           ) : (
             <div className="obs-media-gallerystate">
-              <p role="status">{t(STATE_COPY[state])}{state === 'pending' ? t(' — the image is still being converted or downloaded.') : state === 'deleted' ? t(' — this image was deleted.') : state === 'rejected' ? t(' — the image could not be stored (unsupported, out of bounds, or conversion failed).') : state === 'failed' ? t(' — the image could not be loaded or verified.') : state === 'unavailable' ? t(' — image status could not be resolved.') : ''}</p>
+              <p role="status">{STATE_COPY[state]}{state === 'pending' ? ' — the image is still being converted or downloaded.' : state === 'deleted' ? ' — this image was deleted.' : state === 'rejected' ? ' — the image could not be stored (unsupported, out of bounds, or conversion failed).' : state === 'failed' ? ' — the image could not be loaded or verified.' : state === 'unavailable' ? ' — image status could not be resolved.' : ''}</p>
               {state === 'failed' && (
                 <button
                   type="button"
@@ -405,35 +404,35 @@ function MediaGallery({
                     onRetry(ref.id);
                   }}
                 >
-                  {t('Try again')}
+                  Try again
                 </button>
               )}
             </div>
           )}
           {refs.length > 1 && (
-            <button type="button" className="obs-media-gallerynav is-next" onClick={() => onIndex((index + 1) % refs.length)} aria-label={t('Next image')}>
+            <button type="button" className="obs-media-gallerynav is-next" onClick={() => onIndex((index + 1) % refs.length)} aria-label="Next image">
               <ChevronRight size={18} strokeWidth={2} aria-hidden />
             </button>
           )}
         </div>
         <dl className="obs-media-gallerydetails" id={detailsId}>
-          <div><dt>{t('State')}</dt><dd>{t(STATE_COPY[state])}</dd></div>
-          <div><dt>{t('Inspection')}</dt><dd>{inspectionCopy(ref.inspection)}</dd></div>
+          <div><dt>State</dt><dd>{STATE_COPY[state]}</dd></div>
+          <div><dt>Inspection</dt><dd>{inspectionCopy(ref.inspection)}</dd></div>
           {shownDetails?.value && (
             <>
-              <div><dt>{t('Recipe')}</dt><dd>{shownDetails.value.recipe}</dd></div>
-              <div><dt>{t('Encoder')}</dt><dd>{shownDetails.value.encoder}</dd></div>
+              <div><dt>Recipe</dt><dd>{shownDetails.value.recipe}</dd></div>
+              <div><dt>Encoder</dt><dd>{shownDetails.value.encoder}</dd></div>
               {shownDetails.value.viewer && (
-                <div><dt>{t('Retained')}</dt><dd>{shownDetails.value.viewer.width}×{shownDetails.value.viewer.height} WebP · {formatBytes(shownDetails.value.viewer.byteLength)}</dd></div>
+                <div><dt>Retained</dt><dd>{shownDetails.value.viewer.width}×{shownDetails.value.viewer.height} WebP · {formatBytes(shownDetails.value.viewer.byteLength)}</dd></div>
               )}
               {shownDetails.value.llm && (
-                <div><dt>{t('Model-size variant')}</dt><dd>{shownDetails.value.llm.width}×{shownDetails.value.llm.height} WebP · {formatBytes(shownDetails.value.llm.byteLength)}</dd></div>
+                <div><dt>Model-size variant</dt><dd>{shownDetails.value.llm.width}×{shownDetails.value.llm.height} WebP · {formatBytes(shownDetails.value.llm.byteLength)}</dd></div>
               )}
             </>
           )}
-          {shownDetails?.failed && <div><dt>{t('Details')}</dt><dd>{t('Unavailable')}</dd></div>}
+          {shownDetails?.failed && <div><dt>Details</dt><dd>Unavailable</dd></div>}
         </dl>
-        <p className="obs-media-galleryhint" aria-hidden>{t('Esc to close · ← → to browse')}</p>
+        <p className="obs-media-galleryhint" aria-hidden>Esc to close · ← → to browse</p>
       </div>
     </div>
   );

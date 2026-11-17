@@ -84,8 +84,8 @@ lock directory, and restart to finish applying the saved selection.
 | `CLAUDE_MEM_CONTEXT_MAIN_AGENT_ONLY` | `true`                   | Leave subagent observations out of SessionStart context so their step-logs don't crowd durable main-session memory out of the window. A subagent row carries both an agent id and an agent type; transcript-watch rows (e.g. Grok Bot seats) stay in. Applies in the server runtime too, where a row counts as a subagent row when the hook event it was generated from carried both. Search and the viewer still show everything. |
 | `CLAUDE_MEM_REINFORCE_ALPHA` | `0`                              | Opt-in ACT-R ranking for SessionStart context. `0` (default) keeps the N most recent observations, unchanged. Above `0` (try `0.5`), observations the write path saw re-confirmed on later days can climb into the window: each observation's creation and re-confirmation days are scored with power-law decay, `ln(1 + age^-0.5 + ALPHA · Σ age_k^-0.5)`. The newest quarter of the window is always kept by recency. |
 | `CLAUDE_MEM_WORK_STATE_ENABLED` | `true`                        | `false` turns work state off for hosts that track work their own way: SessionStart context leaves out the open lists, and the MCP server leaves the work-state rule (that `work_state_write` is your canonical to-do list) out of its instructions and neither lists nor runs `work_state_write` and `work_state_read`. Lists already written stay in the database and come back when it is turned on again. An environment variable of the same name overrides `settings.json`. Restart the worker after changing it, and start a new session so the MCP server reads it. |
-| `CLAUDE_MEM_AUTO_CLEAR_ENABLED` | `false`                       | `true` turns it on. Claude Code only (version 2.1.287 or later, which runs plugin mods). When the conversation reaches `CLAUDE_MEM_AUTO_CLEAR_PERCENT` of the context window, Claude is asked to save where things stand with `work_state_write` and end its turn; then `/clear` runs and `continue` is sent as your message, so the work carries on in a fresh conversation that starts with the open work state. The conversation is cleared only after a successful save that nothing else followed: if Claude saves nothing, or you stop the turn, nothing is cleared and auto-clear waits for your next `/clear`. Subagents, `-p` runs and SDK sessions are never cleared, and a turn you stop never starts it. Your own `/clear` or `/resume` cancels a clear that is still to come, and a message you send before it runs holds it back until Claude saves again. Off when work state is off, and while `settings.json` exists but cannot be read (the last settings read stay in force). An environment variable of the same name overrides `settings.json`. |
-| `CLAUDE_MEM_AUTO_CLEAR_PERCENT` | `33`                          | Share of the context window, from `1` to `95`, at which auto-clear starts. Read again within 30 seconds of a change, with no restart. If a fresh conversation already starts at or past it (a large system prompt against a small window), auto-clear turns itself off until Claude Code restarts instead of clearing in a loop. |
+| `CLAUDE_MEM_AUTO_CLEAR_ENABLED` | `false`                       | `true` turns it on. Claude Code only (version 2.1.287 or later, which runs plugin mods). When the conversation reaches `CLAUDE_MEM_AUTO_CLEAR_PERCENT` of the context window, Claude is asked to save where things stand with `work_state_write` and end its turn; then `/clear` runs and a continuation prompt is sent as your message, its blanks filled from Claude's last save: `You are working on "<list>" and recently completed "<task>". Pick back up on our overarching goal "<goal>" from where you left off.` (`continue` when that save left the blanks out). The work carries on in a fresh conversation that starts with the open work state. The conversation is cleared only after a successful save that nothing else followed: if Claude saves nothing, or you stop the turn, nothing is cleared and auto-clear waits for your next `/clear`. Subagents, `-p` runs and SDK sessions are never cleared, and a turn you stop never starts it. Your own `/clear` or `/resume` cancels a clear that is still to come, and a message you send before it runs holds it back until Claude saves again. Off when work state is off, and while `settings.json` exists but cannot be read (the last settings read stay in force). An environment variable of the same name overrides `settings.json`. |
+| `CLAUDE_MEM_AUTO_CLEAR_PERCENT` | `40`                          | Share of the context window, from `1` to `95`, at which auto-clear starts. Read again within 30 seconds of a change, with no restart. If a fresh conversation already starts at or past it (a large system prompt against a small window), auto-clear turns itself off until Claude Code restarts instead of clearing in a loop. |
 | `CLAUDE_MEM_SEMANTIC_INJECT` | `false`                         | Add the observations that best match each prompt to that prompt's context (`UserPromptSubmit`), on top of SessionStart context. |
 | `CLAUDE_MEM_SEMANTIC_INJECT_LIMIT` | `5`                       | Number of observations added per prompt (1–20). |
 | `CLAUDE_MEM_SEMANTIC_INJECT_FORMAT` | `narrative`              | `narrative` adds each match's title and full narrative. `index` adds one line per match with its id, title and subtitle and points Claude to `get_observations` for the details. `narrative` is the default because it works without Claude making a tool call: in `index` mode a match it does not expand only contributes its title and subtitle. An `index` line costs a fraction of a narrative, so `index` can carry more matches for the same tokens; pair it with a higher limit. |
@@ -101,7 +101,6 @@ lock directory, and restart to finish applying the saved selection.
 | `CLAUDE_MEM_HOOK_SPOOL_TRANSPORT` | `auto` | `auto` uses HTTP when `CLAUDE_MEM_WORKER_URL` is set or the worker host is non-loopback, and the filesystem for a local worker. Set `http` for a loopback port forward configured through host and port, or `filesystem` only when hooks and worker share the same spool directory. |
 | `CLAUDE_MEM_ALLOWED_ORIGINS`  | _(empty)_                       | Comma-separated browser origins (e.g. `https://app.example.com`) allowed to call the worker API cross-origin, besides `http://localhost:*` and `http://127.0.0.1:*`. A page loaded from the worker's own address (the viewer at `http://<lan-ip>:<port>`) is always allowed. Other `http://localhost:*` pages can read the API but not delete: deletes sync to every device, so a `DELETE` is accepted only from the viewer's own page, an origin listed here, or a client that sends no `Origin` header (hooks, the CLI, curl). To block DNS rebinding, the worker also refuses a request whose `Host` is a DNS name it does not trust. IP addresses, `localhost`, `host.docker.internal`, `CLAUDE_MEM_WORKER_HOST`, the host of `CLAUDE_MEM_PUBLIC_URL`, and the hosts listed here are trusted. To open the viewer by a machine name, such as `http://mybox.local:37777`, list that origin here. Restart the worker after changing it. |
 | `CLAUDE_MEM_PUBLIC_URL`       | _(empty)_                       | Browser-reachable base URL printed for the viewer (live view, welcome hint, restart link) when the worker runs in a remote sandbox behind a port-forward, e.g. `https://37700.host.example`. Empty = `http://localhost:<port>`. The env var wins over the setting. (The [hosted server runtime](hosted-server) reads the same variable as its own public base URL.) |
-| `CLAUDE_MEM_TV_TOKEN`         | —                               | Shared secret for Observation TV remote access. Empty = off. With a non-loopback `CLAUDE_MEM_WORKER_HOST`, only `/tv`, `/tv.html`, `/stream` and `GET /api/observations` are reachable, and only with this token. |
 | `CLAUDE_MEM_LOCAL_API_TOKEN`      | _(empty)_                       | Local API token for hosts with more than one OS user. Empty = off, nothing changes. Set, the worker API and the MCP HTTP transport refuse any request without it, loopback included. Read from `settings.json` only (the environment cannot switch it, and HTTP cannot write it). Restart the worker and the MCP HTTP server to change it. See [Local API Token](#local-api-token). |
 | `CLAUDE_MEM_DATA_DIR`         | `~/.claude-mem`                 | Data root — every other path (database, chroma, logs, settings.json, worker.pid) derives from this |
 | `CLAUDE_MEM_SKIP_TOOLS`       | `ListMcpResourcesTool,SlashCommand,Skill,TodoWrite,AskUserQuestion` | Comma-separated tools to exclude from observations |
@@ -257,6 +256,7 @@ The goals step updates a saved snapshot from new owner prompts, including a snap
 | `CLAUDE_MEM_WORK_VIEW_CODEX_MODEL` | empty | Model id for every refresh step on Codex. Each step keeps its reasoning effort. Empty keeps the per-step defaults. |
 | `CLAUDE_MEM_WORK_VIEW_GEMINI_MODEL` | empty | Model for every refresh step on Gemini, such as `flash-lite`. Empty keeps the per-step defaults. |
 | `CLAUDE_MEM_WORK_VIEW_API_MODEL` | empty | Model for every refresh step on the selected API provider, such as `anthropic/claude-sonnet-4`. Empty keeps the model your provider is configured with. |
+| `CLAUDE_MEM_API_AGENT_EXTRA_BODY` | empty | JSON object merged into every request of the `api` agent, for refresh steps and for corpus questions with `CLAUDE_MEM_CORPUS_AGENT=api`. A Qwen model on vLLM ignores the `reasoning: { enabled: false }` the agent sends. Set `{"chat_template_kwargs":{"enable_thinking":false}}` to turn its thinking off. Anything but a JSON object is ignored with a warning in the worker log. It cannot set `model`, `models`, `messages`, `stream`, `stream_options`, `max_tokens`, `max_completion_tokens`, `reasoning` or `response_format`, and it is not sent to the cmem.ai gateway. Settings file or environment only. |
 | `CLAUDE_MEM_WORK_VIEW_TEXT_LANGUAGE` | empty | Language for the text the refresh writes (request titles, reviews, focus areas, the story), such as `Turkish`. When set, every step except goals is told to write in it, so separate review batches never pick different languages. Empty uses the language most of your asks are written in, decided once per refresh by the grouping step (which already reads them, so it costs no extra model call) and kept for later refreshes that have nothing to group. |
 
 In this fork, an empty `CLAUDE_MEM_WORK_VIEW_AGENT` with `CLAUDE_MEM_PROVIDER=custom` uses the configured Custom endpoint directly. Explicit agent choices (including `off` and `all`) take precedence; Custom failures never fall through to an agent CLI.
@@ -711,11 +711,56 @@ Search operations are provided via:
 
 Worker service is managed by Bun as a background process. The worker auto-starts on first session and runs continuously in the background.
 
+### Native work-state write checks
+
+An operator can require a local check before writes to selected work-state lists. The check runs inside `POST /api/work-state/entries`, the endpoint used by `work_state_write`, so writes through either cannot skip it, for example by omitting an evidence field. The worker's own My Focus and owner-goals rows are written without it.
+
+Create `work-state-write-guard.json` in the worker's data directory (`~/.claude-mem` by default):
+
+```json
+{
+  "version": 1,
+  "scopes": [{ "project": "example-project", "list": "release" }],
+  "command": ["/absolute/path/to/check-write"]
+}
+```
+
+Keep this file owner-controlled, for example with mode `0600` on Unix. It is separate from `settings.json`: the settings API and `work_state_write` cannot set its command. No file means no additional check. Other lists keep their existing behavior. Project matching includes the checkout's configured and legacy aliases and uses storage's ASCII case folding; list names match exactly.
+
+The executable path must be absolute. Arguments follow it in the array. The worker does not start a shell. The command runs with the configuration directory as its working directory and receives one JSON object on stdin:
+
+- `project` and `projects`: the primary checkout key and its read aliases.
+- `list`: the list being written.
+- `fields`: the requested patch.
+- `current` and `proposed`: the task's folded fields before and after that patch, or the list's own fields for a write without a task.
+- `closing` and `currentClosing`: whether the proposed and current statuses close work, using the worker's shared status definition.
+- `history`: all stored patches for this task, or for the list's own state when no task is supplied, in storage order. Each entry has `fields` and a server-derived `closing` flag for the folded status at that point. No sibling task rows are included. A validator can use the complete history to preserve earlier review decisions and prevent reuse of acceptance evidence from any prior closure, not just the most recent one.
+
+The check runs for every write in a matched list, not just a closing write. This lets a validator refuse removal of required evidence as well as premature completion. It must be read-only: do not call the same write endpoint from the command.
+
+Exit successfully and print exactly one JSON response:
+
+```json
+{ "allowed": false, "reason": "Repair owner: builder. Required documentation sections are missing." }
+```
+
+Approval is `{ "allowed": true }`. A refusal needs a nonempty reason of at most 1,000 characters. The command must finish within two seconds; stdout and stderr are each limited to 16 KiB. Crashes, incomplete input delivery, invalid output, timeouts and malformed installed configuration refuse the write. Diagnostic output is not returned to the caller.
+
+A refusal returns HTTP `409` before any row is appended or cloud sync is notified. Approval also fails if the same task changed while the command ran; the caller must read its current state and retry. Changes to unrelated tasks do not invalidate the check.
+
+Configuration is read on each write. Replace it atomically when changing it. Removing it disables this additional validation; treat that as an operator policy change, not an agent repair. This is local workflow enforcement, not a sandbox or identity-authentication system: a process running as the OS owner can still alter its configuration or database.
+
 ### Local API Token
 
 The worker API and the MCP HTTP transport trust any process that can reach loopback. On a host with several OS users, that is every user. `CLAUDE_MEM_LOCAL_API_TOKEN` is an opt-in switch: set it, and a request must carry the token or it is refused with `401`. Unset, nothing changes.
 
-Mint a token the same way as the Observation TV one, put it in `~/.claude-mem/settings.json` (created owner-only, mode `0600`), and restart the worker and any MCP HTTP server:
+Mint a token:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+```
+
+Put it in `~/.claude-mem/settings.json` (created owner-only, mode `0600`), and restart the worker and any MCP HTTP server:
 
 ```json
 {
@@ -727,7 +772,7 @@ A request carries it as `X-Claude-Mem-Token: <token>` or `Authorization: Bearer 
 
 Only two API routes work without it: `GET /api/health` and the MCP HTTP server's `/health`. Point external health checks at those; `/api/readiness`, `/health` on the worker, `/stream` and the rest need the token.
 
-The worker also serves its UI files without the token, for `GET` and `HEAD` only: the HTML shells at `/`, `/viewer`, `/tv` and `/restart`, and the built scripts, styles, fonts and icons in its `ui` folder, matched by exact path. These files are the same on every install and hold no data; everything they load from the worker needs the token.
+The worker also serves its UI files without the token, for `GET` and `HEAD` only: the HTML shells at `/`, `/viewer` and `/restart`, and the built scripts, styles, fonts and icons in its `ui` folder, matched by exact path. These files are the same on every install and hold no data; everything they load from the worker needs the token.
 
 **The viewer.** Open it as `http://localhost:37777/?token=<token>`. Plain `http://localhost:37777` loads the page, but every request it makes is refused with `401`. The page reads the token from its URL, keeps it for the tab, removes it from the address bar, and sends it as the header on its own requests and as `?token=` on its event stream and media images, which cannot send a header. No cookie is set: browsers share cookies across every port on `localhost`, so one would reach any other local server you visit. A write must send the header. A repeated `token` parameter is refused, and neither the token nor the query string is logged. The viewer links the installer and the session-start text print do not carry the token; add `?token=<token>` to them by hand. The same goes for the worker restart link: open it as `/restart?token=<token>`, or from a tab that already has the token.
 
@@ -737,82 +782,13 @@ The worker also serves its UI files without the token, for `GET` and `HEAD` only
 
 **MCP HTTP clients.** Add the header beside `X-Claude-Mem-Cwd`. The working-directory header is only read from requests that carry the token.
 
-**What does not send it yet.** The Observation TV remote mode; the separately released `omp`, `hermes` and `openclaw` integrations; and the example `curl` commands in the `timeline-report`, `weekly-digests`, `ccs-align` and `mode-creator` skills. Leave the token unset, or add `-H "X-Claude-Mem-Token: <token>"` to them.
+**What does not send it yet.** The separately released `omp`, `hermes` and `openclaw` integrations, and the example `curl` commands in the `timeline-report`, `weekly-digests`, `ccs-align` and `mode-creator` skills. Leave the token unset, or add `-H "X-Claude-Mem-Token: <token>"` to them.
 
 The token keeps other OS users out. A process that runs as you can still read `settings.json`.
 
-### Observation TV Remote Access
+### Observation TV (removed)
 
-The worker binds to `127.0.0.1` by default and has **no request authentication** — the loopback bind is its only defence. `CLAUDE_MEM_TV_TOKEN` adds a read-only broadcast surface so a second device on your LAN (a phone, an iPad, a spare monitor) can watch Observation TV and do nothing else.
-
-Mint a token:
-
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
-```
-
-The host setting and the token work as a pair:
-
-| `CLAUDE_MEM_WORKER_HOST` | `CLAUDE_MEM_TV_TOKEN` | Result |
-|---|---|---|
-| `127.0.0.1` (default) | empty | Today. Nothing reachable off-box. **Recommended for everyone not using the TV remotely.** |
-| `127.0.0.1` | set | Token is inert — nothing can reach the port anyway. Harmless. |
-| `0.0.0.0` | **empty** | **Dangerous, and unchanged from today**: the full API — settings incl. provider API keys, deletes, import, better-auth — is on the LAN. This is what the Docker setup already tells people to do, so the worker warns rather than refuses to bind. |
-| `0.0.0.0` | set | The point of the feature. LAN devices reach `/tv`, `/tv.html`, `/stream`, `GET /api/observations` with the secret, and get 404/403/401 for everything else. |
-
-Booting with a non-loopback host and no token logs a `SECURITY` warning; the worker still binds.
-
-**A local port-forward reopens the whole API.** The guard exempts loopback by socket peer, so anything that arrives *as* loopback bypasses it entirely — including `ssh -L <port>:127.0.0.1:<port> <box>` from another device, or any local forwarding proxy. To the worker that traffic is indistinguishable from the operator's own browser, so it gets the full API, `GET /api/settings` and its provider API keys included. This is the one concrete way "the device can do nothing else" stops being true: only forward the port to devices you would hand the machine to.
-
-**Docker and bridge networking.** With `CLAUDE_MEM_WORKER_HOST=0.0.0.0` inside a bridge-network container, requests from the host's own browser arrive from the bridge gateway address, not `127.0.0.1`. Once a token is set, that browser is treated as remote like any other device and must supply `?token=` to open the TV — and the React viewer at `/` is denied outright, exactly as it is for any other remote device.
-
-Open the TV on the second device at `http://<lan-ip>:<port>/tv.html?token=<secret>`.
-
-**The React viewer at `/` stops working remotely when a token is set.** That is intended — the viewer needs the write and settings routes the guard denies. Loopback is never gated, so the viewer keeps working normally on the machine running the worker.
-
-**Treat the URL as the secret.** The token rides in the query string for `/stream` because the browser's `EventSource` API cannot set request headers. It is *not* written to the worker log (the request logger records `req.path`, which excludes the query string), but it **will** be in the browser's history on the device you open it on. `Authorization: Bearer <token>` and `X-Api-Key: <token>` also work for anything that can set headers.
-
-**This is plain HTTP.** The token stops an unauthenticated device from reading the stream; it does not encrypt it. Anyone who can sniff your LAN sees observation titles. For a home network that is the accepted tradeoff; for anything else, terminate TLS in front of the worker (out of scope here) — and still never a tunnel to the unmodified worker, which would publish `GET /api/settings` and its provider API keys to the open internet.
-
-**Use the exact paths.** The allowlist is exact-match and case-sensitive: `/tv.html`, `/tv`, `/stream`, `/api/observations` and nothing else. A trailing slash or a different case — `/tv/`, `/API/observations`, `/api/observations/by-file` — returns 404 even with a valid token. That is deliberate fail-closed behavior, not a bug.
-
-The TV's `?project=` and `?source=` filters are **client-side only**. They are display filters, not access control — a token holder still receives every project's observations.
-
-Accepted risks, stated plainly:
-
-1. **`GET /api/observations` returns full observation bodies** — `narrative`, `facts`, `text`, `files_read`, `files_modified` — for **every project on the box**, not just the four fields the TV renders. A token holder can page back through the newest 10,000 observations for each filter with `offset`; an `offset` above 10,000 answers 400.
-2. **`/stream` is unfiltered.** It carries every observation for every project on the box, plus the project catalog and processing status. There is no per-client filtering.
-3. **No rate limiting.** A token holder can hammer `GET /api/observations` freely.
-4. **The token is readable on loopback** via `GET /api/settings`, exactly like your provider API keys are today. It is deliberately *not* writable through `POST /api/settings` (that route is unauthenticated), so it can only be set by someone with filesystem or environment access.
-5. **`/stream` does not limit concurrent subscribers.** Each connection receives its own `initial_load` snapshot without resetting other viewers, but the client list remains unbounded. A token holder opening many connections can still consume connection and memory resources. This connection-limit concern is pre-existing worker behavior; the token is what newly makes it reachable from the LAN.
-
-### Manual Configuration
-
-Edit `~/.claude-mem/settings.json`:
-
-```json
-{
-  "CLAUDE_MEM_WORKER_HOST": "0.0.0.0",
-  "CLAUDE_MEM_TV_TOKEN": "your-minted-token"
-}
-```
-
-Then restart the worker:
-```bash
-npm run worker:restart
-```
-
-### Watching Off-LAN (cmem.ai Pro)
-
-Everything above is the LAN path. Watching from *outside* your network — on cellular, at a coffee shop, from another house — is a **cmem.ai Pro** feature: open `https://cmem.ai/tv` in any browser while signed in to your account. It requires [Cloud Sync](/cloud-sync) to be enabled, because the hosted page reads titles your worker has already pushed to your sync hub.
-
-**No token, no open port, no inbound connection.** This path needs neither `CLAUDE_MEM_TV_TOKEN` nor a non-loopback `CLAUDE_MEM_WORKER_HOST` — both belong to the LAN path and have no effect on it, so leave them at their defaults. The box never accepts an inbound connection for the hosted TV; the worker only ever dials out. No tunnel (cloudflared, ngrok, or anything like them) is needed, and none is recommended.
-
-**The hosted TV surface shows observation titles and nothing else.** It never renders narratives, facts, file lists, snippets or prompt text.
-
-**That is not the same as "only titles leave your machine."** The hosted TV is a feature *of* cloud sync, and cloud sync uploads your observation narratives and your full prompt text to the sync hub under your cmem.ai account. The hosted page is titles-only; the upload standing behind it is not. Don't enable cloud sync if that content must stay on your machine.
-
-**One rendering difference.** An observation with no title still appears on the LAN TV, which falls back to the subtitle. It does not appear on the hosted phone TV — that surface receives titles only, so it has no subtitle to fall back to.
+Observation TV and its `CLAUDE_MEM_TV_TOKEN` setting were removed. If a worker still finds `CLAUDE_MEM_TV_TOKEN` with a non-loopback `CLAUDE_MEM_WORKER_HOST` and no `CLAUDE_MEM_LOCAL_API_TOKEN`, it binds to loopback instead and logs an error, so the full API is never exposed; to keep network access, set the [local API token](#local-api-token), which protects it now, and delete `CLAUDE_MEM_TV_TOKEN`.
 
 ## Folder Context Files
 

@@ -1,5 +1,5 @@
 import type { MediaMetadataResponse, MediaOwnerDetailsResponse, ObservationMediaRef } from '../types';
-import type { TranslationKeys } from '../i18n/locales/en';
+import { t, interpolate } from '../../i18n';
 
 /** Thumbnails rendered on a card; the rest are counted and reachable in the gallery. */
 export const MAX_CARD_THUMBNAILS = 4;
@@ -62,8 +62,8 @@ export function mediaDisplayStateFrom(status: number, body: unknown): MediaDispl
 export const shouldPollMediaState = (state: MediaDisplayState) => state.kind === 'pending' || state.kind === 'downloading';
 
 /** Status for one variant's frame: a ready attachment whose image failed to load reads as a load error. */
-export const mediaVariantStatusText = (state: MediaDisplayState, variant: MediaVariantName, messages: TranslationKeys['media']) =>
-  mediaVariantFailed(state, variant) ? messages.loadFailed : mediaStatusText(state, messages);
+export const mediaVariantStatusText = (state: MediaDisplayState, variant: MediaVariantName) =>
+  mediaVariantFailed(state, variant) ? 'Couldn’t load' : mediaStatusText(state);
 
 /** True when this variant's image failed to load although the attachment is ready. */
 export const mediaVariantFailed = (state: MediaDisplayState, variant: MediaVariantName) =>
@@ -86,36 +86,55 @@ export const canRetryMediaState = (state: MediaDisplayState) =>
   || ((state.kind === 'pending' || state.kind === 'downloading') && state.stalled === true);
 
 /** Human status for a non-ready tile; ready tiles render the image instead. */
-export function mediaStatusText(state: MediaDisplayState, messages: TranslationKeys['media']): string {
+export function mediaStatusText(state: MediaDisplayState): string {
   switch (state.kind) {
-    case 'loading': return messages.loading;
-    case 'ready': return messages.ready;
-    case 'pending': return state.stalled ? messages.stillProcessing : messages.processing;
-    case 'downloading': return state.stalled ? messages.stillDownloading : messages.downloading;
-    case 'rejected': return messages.rejected.replace('{code}', state.code);
-    case 'failed': return messages.failed.replace('{code}', state.code);
-    case 'unavailable': return messages.removed;
-    case 'error': return messages.loadFailed;
+    case 'loading': return 'Loading…';
+    case 'ready': return 'Ready';
+    case 'pending': return state.stalled ? 'Still processing' : 'Processing…';
+    case 'downloading': return state.stalled ? 'Still downloading' : 'Downloading…';
+    case 'rejected': return `Rejected (${state.code})`;
+    case 'failed': return `Failed (${state.code})`;
+    case 'unavailable': return 'Image removed';
+    case 'error': return 'Couldn’t load';
   }
 }
 
 /** Alt text comes from the bounded request label, never filenames or captions. */
-export function mediaAltText(ref: ObservationMediaRef, index: number, count: number, observationId: number, messages: TranslationKeys['media']): string {
-  return messages.alt.replace('{label}', () => ref.label)
-    .replace('{index}', String(index + 1))
-    .replace('{count}', String(count))
-    .replace('{observationId}', String(observationId));
+export function mediaAltText(ref: ObservationMediaRef, index: number, count: number, observationId: number): string {
+  return interpolate(t('Image {label} ({current} of {total}) attached to observation #{id}'), {
+    label: ref.label, current: index + 1, total: count, id: observationId,
+  });
 }
 
-export const inspectionText = (ref: ObservationMediaRef, messages: TranslationKeys['media']) =>
-  ref.inspection === 'inspected' ? messages.inspected : messages.storedOnly;
+export const inspectionText = (ref: ObservationMediaRef) =>
+  ref.inspection === 'inspected' ? 'Inspected by the observer' : 'Not inspected (stored only)';
 
-export function sourceAvailabilityText(details: MediaOwnerDetailsResponse, messages: TranslationKeys['media']): string {
-  if (details.platform === null) return messages.syncedSource;
+const RECIPE_KINDS: Record<MediaMetadataResponse['recipe'], string> = {
+  'screenshot-v1': 'screenshots',
+  'photo-v1': 'photos',
+};
+
+/**
+ * The words after the image count under a card's strip: what kind of images
+ * (when every converted one shares a recipe) and how many were stored without
+ * being described, e.g. ["screenshots", "stored only"].
+ */
+export function mediaStripFacts(refs: ObservationMediaRef[], states: Record<string, MediaDisplayState>): string[] {
+  const facts: string[] = [];
+  const recipes = new Set(refs.map(ref => states[ref.id]).flatMap(state => state?.kind === 'ready' ? [state.metadata.recipe] : []));
+  if (recipes.size === 1) facts.push(t(RECIPE_KINDS[[...recipes][0]]));
+  const storedOnly = refs.filter(ref => ref.inspection === 'uninspected').length;
+  if (storedOnly === refs.length) facts.push(t('stored only'));
+  else if (storedOnly > 0) facts.push(interpolate(t('{count} stored only'), { count: storedOnly }));
+  return facts;
+}
+
+export function sourceAvailabilityText(details: MediaOwnerDetailsResponse): string {
+  if (details.platform === null) return 'Synced from another device; converted copy retained';
   switch (details.sourceAvailability) {
-    case 'file_present': return messages.sourcePresent;
-    case 'file_missing': return messages.sourceMissing;
-    default: return messages.convertedOnly;
+    case 'file_present': return 'Source file still on disk; converted copy retained';
+    case 'file_missing': return 'Source file no longer available; converted copy retained';
+    default: return 'Converted copy retained; original not stored';
   }
 }
 

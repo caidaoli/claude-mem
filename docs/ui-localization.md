@@ -1,12 +1,13 @@
 # UI languages
 
-The classic memory viewer (`/viewer`), My Work, first-run setup, and Observation
-TV support English, Simplified Chinese and French. Use the **Language** menu in the
-viewer header, My Work header, or setup header to select **简体中文** or **Français**.
+The classic memory viewer (`/viewer`), My Work and first-run setup support
+English, Simplified Chinese, Korean and French. Use the **Language**
+menu in the viewer header, My Work header, or setup header to select **简体中文**,
+**한국어**, or **Français**. My Work also supports **Türkçe**.
 
 The saved choice takes precedence; otherwise Chinese browser locales use Simplified Chinese
 and other locales use English. The choice is saved under `claude-mem-locale` in browser local storage and
-shared between pages on the same origin (including TV); it does not change
+shared between pages on the same origin; it does not change
 worker configuration or send a language setting to any provider. If browser
 storage is unavailable, the choice lasts for the current page.
 
@@ -17,21 +18,18 @@ dialogs, accessibility labels, settings descriptions and known UI error envelope
 Recorded requests, memory titles, narratives, quotes, file paths, model identifiers,
 commands, product names and opaque server error details remain verbatim.
 The display language does not change the language of generated memories. The fork's
-Custom provider keeps generated memories in Chinese independently of this choice.
+Custom provider keeps generated memories in Chinese independently of this choice; for other
+providers, configure `CLAUDE_MEM_MODE=code--zh` or `code--ko` separately when Chinese or Korean observations are wanted.
 
 ## Development
 
-- `src/ui/i18n/core.ts`: shared locale storage and subscriptions, without React.
+- `src/ui/i18n/index.ts`: shared React subscription and translation lookup.
 - `src/ui/i18n/locale.ts`: locale normalization and safe placeholder interpolation.
-- Viewer components use `useI18n()` and typed keys from `src/ui/viewer/i18n/locales/`.
-- My Work and setup use `t('English {name}', { name })`, with dictionaries in
-  `src/ui/my-work/src/i18n/zh-CN/`; `useLocale()` subscribes memoized components.
-- `UiMessage` keeps application-owned templates separate from opaque server errors
-  and user text, so changing language does not alter stored evidence or repeat requests.
-- French uses upstream's English-keyed `src/ui/i18n/*-fr.ts` catalogs. The viewer
-  adapts these to its typed message tree; fork-only phrases without a French entry
-  remain in English. My Work and setup use the same source-text lookup as Chinese.
-- Values are substituted once, preserving dollar signs and placeholder-like text.
+- `src/ui/i18n/*-zh.ts`, `*-ko.ts`, `*-fr.ts`, `mywork-tr.ts`: catalogs using the exact English source text as keys.
+- `interpolate(t('Moved {title} to {area}'), { title, area })` substitutes once,
+  preserving dollar signs and placeholder-like text inside user values.
+- Components subscribe with `useI18n()` so an already-open page updates on selection.
+- Keep unknown/user-authored values out of translation lookup.
 
 Run `npm run typecheck` at the repository root, then `npm run build` and `npm test`
 in `src/ui/my-work`. Additional checks run with:
@@ -42,7 +40,17 @@ node --test tests/ui-i18n.test.ts tests/ui-mywork-interpolation.test.ts
 bun test tests/viewer/i18n-errors.test.ts
 ```
 
-The tests verify catalog content, matching placeholders, coverage
+## Adding a language
+
+1. Add the locale code and its native name to `LOCALE_NAMES` in `src/ui/i18n/locale.ts`.
+   The language menus list it from there.
+2. Add one catalog per area (`viewer`, `mywork`, `setup`, `settings`) with the same keys as
+   the `-zh` catalogs, and register them in `catalogs` in `src/ui/i18n/core.ts`.
+3. Add the language's Today, Yesterday, am and pm words to `WORDS` in
+   `src/ui/my-work/src/lib/display-time.ts`.
+4. Add the catalogs to `tests/ui-i18n.test.ts`.
+
+The tests verify catalog content, matching placeholders, shared wording, coverage
 of literal `t()` calls, safe user-text interpolation and language-independent
 stored error messages. They do not claim every possible server-produced message
 is translated.

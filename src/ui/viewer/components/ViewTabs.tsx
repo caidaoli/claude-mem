@@ -1,5 +1,5 @@
 import React from 'react';
-import { useI18n } from '../i18n';
+import { useI18n } from '../../i18n';
 
 export type ViewTab = 'timeline' | 'sessions';
 
@@ -11,22 +11,23 @@ interface ViewTabsProps {
 /** Switch between the chronological timeline and the per-session view. */
 export function ViewTabs({ active, onSelect }: ViewTabsProps) {
   const { t } = useI18n();
-
   return (
-    <nav className="view-tabs" aria-label={t.viewTabs.label}>
+    <nav className="view-tabs" aria-label={t('View')}>
       <button
+        type="button"
         className={`view-tab${active === 'timeline' ? ' active' : ''}`}
         aria-pressed={active === 'timeline'}
         onClick={() => onSelect('timeline')}
       >
-        {t.viewTabs.timeline}
+        {t('Timeline')}
       </button>
       <button
+        type="button"
         className={`view-tab${active === 'sessions' ? ' active' : ''}`}
         aria-pressed={active === 'sessions'}
         onClick={() => onSelect('sessions')}
       >
-        {t.viewTabs.sessions}
+        {t('Sessions')}
       </button>
     </nav>
   );

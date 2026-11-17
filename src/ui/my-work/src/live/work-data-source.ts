@@ -16,8 +16,6 @@ export type SourceKind = 'sample' | 'local' | 'cloud'
 export interface RequestReadError { requestId: string; title: string | null; reason: string; evidenceHref: string | null }
 
 export interface WorkModel {
-  /** Time used for server-formatted display facts; absent on older workers. */
-  displayAt?: number
   sourceKind: SourceKind
   requests: Request[]
   requestReadErrors: RequestReadError[]
@@ -62,10 +60,10 @@ export interface WorkModel {
 }
 
 /** What the automatic refresh is doing. `finishedAt` is display text. */
-export interface AutoRefresh { state: WorkViewRefreshState; finishedAt: string | null; finishedAtEpoch?: number; error: string | null }
+export interface AutoRefresh { state: WorkViewRefreshState; finishedAt: string | null; error: string | null }
 
 /** The last build story request-progress wrote. `writtenAt` is display text; null when not recorded. */
-export interface BuildStory { recap: string; paragraphs: string[]; writtenAt: string | null; writtenAtEpoch?: number }
+export interface BuildStory { recap: string; paragraphs: string[]; writtenAt: string | null }
 
 /** A saved rule change: the model right after it, and the rule it saved (null from workers that don't say). */
 export interface RuleSaveResult { model: WorkModel; savedRuleId: string | null; save?: SaveReceipt }

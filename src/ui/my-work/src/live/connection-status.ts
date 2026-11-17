@@ -1,4 +1,3 @@
-import { t } from '../i18n/translate.ts'
 import { presentSync, type SyncPresentation, type SyncStatusForDisplay } from '../../../viewer/utils/sync-presentation.ts'
 
 // Typed copy of claude-mem v15.0.1 plugin/ui/work-view/live-status.js (getConnectionStatus).
@@ -41,7 +40,6 @@ export interface ConnectionStatus {
   clockSkew: boolean
   staleAfterMs: number
   tooltip: string
-  activityCheckedAt?: string | null
   /** Separately measured upstream synchronization; feed liveness does not imply this is current. */
   sync?: SyncPresentation
 }
@@ -138,6 +136,6 @@ export function getConnectionStatus({
     + (clockSkew ? 'Source and browser clocks differ; freshness uses received heartbeats. ' : '')
     + 'Connection status does not indicate an agent is running.'
   return { state, label, detail, tone, isLive: state === 'live', eventAgeMs, sourceAgeMs,
-    lastSuccessfulCheckAt: successfulCheckAt, clockSkew, staleAfterMs: threshold, tooltip, activityCheckedAt,
-    sync: presentSync(sync, syncReceivedAt, now, t) }
+    lastSuccessfulCheckAt: successfulCheckAt, clockSkew, staleAfterMs: threshold, tooltip,
+    sync: presentSync(sync, syncReceivedAt, now) }
 }

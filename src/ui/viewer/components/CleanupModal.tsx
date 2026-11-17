@@ -7,7 +7,7 @@
 
 import React, { useState, useCallback } from 'react';
 import { API_ENDPOINTS } from '../constants/api';
-import { useI18n } from '../i18n';
+import { useI18n } from '../../i18n';
 
 interface CleanupModalProps {
   isOpen: boolean;
@@ -40,12 +40,12 @@ interface CleanupResult {
 }
 
 const CLEANUP_OPTIONS = [
-  { value: '7d', labelKey: 'last7Days' as const, descKey: 'last7DaysDesc' as const },
-  { value: '15d', labelKey: 'last15Days' as const, descKey: 'last15DaysDesc' as const },
-  { value: '1m', labelKey: 'last1Month' as const, descKey: 'last1MonthDesc' as const },
-  { value: '6m', labelKey: 'last6Months' as const, descKey: 'last6MonthsDesc' as const },
-  { value: '1y', labelKey: 'last1Year' as const, descKey: 'last1YearDesc' as const },
-  { value: 'all', labelKey: 'all' as const, descKey: 'allDesc' as const }
+  { value: '7d', label: 'Last 7 days', desc: 'Delete records older than 7 days' },
+  { value: '15d', label: 'Last 15 days', desc: 'Delete records older than 15 days' },
+  { value: '1m', label: 'Last 1 month', desc: 'Delete records older than 30 days' },
+  { value: '6m', label: 'Last 6 months', desc: 'Delete records older than 180 days' },
+  { value: '1y', label: 'Last 1 year', desc: 'Delete records older than 365 days' },
+  { value: 'all', label: 'All', desc: 'Delete ALL records (CAREFUL!)' }
 ] as const;
 
 type CleanupPeriod = typeof CLEANUP_OPTIONS[number]['value'];
@@ -93,8 +93,8 @@ export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
   }, [selectedPeriod]);
 
   const executeCleanup = useCallback(async () => {
-    if (selectedPeriod === 'all' && confirmText !== t.cleanup.confirmPhrase) {
-      setError(t.cleanup.confirmError);
+    if (selectedPeriod === 'all' && confirmText !== t('DELETE ALL')) {
+      setError(t('Type "DELETE ALL" to confirm'));
       return;
     }
 
@@ -139,9 +139,9 @@ export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
               <line x1="10" y1="11" x2="10" y2="17" />
               <line x1="14" y1="11" x2="14" y2="17" />
             </svg>
-            {t.cleanup.title}
+            {t('Memory Maintenance')}
           </h2>
-          <button className="modal-close-btn" onClick={handleClose} title={t.cleanup.close}>
+          <button className="modal-close-btn" onClick={handleClose} title={t('Close')}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="18" y1="6" x2="6" y2="18" />
               <line x1="6" y1="6" x2="18" y2="18" />
@@ -152,7 +152,7 @@ export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
         <div className="modal-body">
           {/* Period Selection */}
           <div className="cleanup-section">
-            <label className="section-label">{t.cleanup.cleanupPeriod}</label>
+            <label className="section-label">{t('Cleanup Period')}</label>
             <div className="cleanup-options">
               {CLEANUP_OPTIONS.map(option => (
                 <button
@@ -164,8 +164,8 @@ export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
                     resetState();
                   }}
                 >
-                  <span className="option-label">{t.cleanup[option.labelKey]}</span>
-                  <span className="option-description">{t.cleanup[option.descKey]}</span>
+                  <span className="option-label">{t(option.label)}</span>
+                  <span className="option-description">{t(option.desc)}</span>
                 </button>
               ))}
             </div>
@@ -186,31 +186,31 @@ export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
           {/* Preview Results */}
           {preview && !result && (
             <div className="cleanup-preview">
-              <h3>{t.cleanup.previewTitle}</h3>
+              <h3>{t('Preview')}</h3>
               {preview.cutoffDate && (
                 <p className="cutoff-date">
-                  {t.cleanup.cutoffDate} <strong>{new Date(preview.cutoffDate).toLocaleString()}</strong>
+                  {t('Cutoff date:')} <strong>{new Date(preview.cutoffDate).toLocaleString()}</strong>
                 </p>
               )}
               <div className="preview-stats">
                 <div className="stat-item">
-                  <span className="stat-label">{t.cleanup.observations}</span>
+                  <span className="stat-label">{t('Observations')}</span>
                   <span className="stat-value">{preview.preview.observations.toLocaleString()}</span>
                 </div>
                 <div className="stat-item">
-                  <span className="stat-label">{t.cleanup.summaries}</span>
+                  <span className="stat-label">{t('Summaries')}</span>
                   <span className="stat-value">{preview.preview.summaries.toLocaleString()}</span>
                 </div>
                 <div className="stat-item">
-                  <span className="stat-label">{t.cleanup.prompts}</span>
+                  <span className="stat-label">{t('Prompts')}</span>
                   <span className="stat-value">{preview.preview.prompts.toLocaleString()}</span>
                 </div>
                 <div className="stat-item">
-                  <span className="stat-label">{t.cleanup.sessions}</span>
+                  <span className="stat-label">{t('Sessions')}</span>
                   <span className="stat-value">{preview.preview.sessions.toLocaleString()}</span>
                 </div>
                 <div className="stat-item total">
-                  <span className="stat-label">{t.cleanup.total}</span>
+                  <span className="stat-label">{t('Total')}</span>
                   <span className="stat-value">{preview.totalRecords.toLocaleString()}</span>
                 </div>
               </div>
@@ -221,12 +221,12 @@ export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
                   className={`cleanup-confirm-btn ${selectedPeriod === 'all' ? 'danger' : ''}`}
                   onClick={() => setShowConfirm(true)}
                 >
-                  {t.cleanup.startCleanup}
+                  {t('Start Cleanup')}
                 </button>
               )}
 
               {preview.totalRecords === 0 && (
-                <p className="no-records">{t.cleanup.noRecords}</p>
+                <p className="no-records">{t('No records to delete in this period.')}</p>
               )}
             </div>
           )}
@@ -241,18 +241,18 @@ export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
                   <line x1="12" y1="17" x2="12.01" y2="17" />
                 </svg>
                 <p>
-                  <strong>{preview.totalRecords.toLocaleString()}</strong>{t.cleanup.confirmWarningPost}
+                  <strong>{preview.totalRecords.toLocaleString()}</strong>{t(' records will be permanently deleted. This cannot be undone!')}
                 </p>
               </div>
 
               {selectedPeriod === 'all' && (
                 <div className="confirm-input">
-                  <label>{t.cleanup.confirmTypeLabel}</label>
+                  <label>{t('Type "DELETE ALL" to confirm:')}</label>
                   <input
                     type="text"
                     value={confirmText}
                     onChange={e => setConfirmText(e.target.value)}
-                    placeholder={t.cleanup.confirmPlaceholder}
+                    placeholder={t('DELETE ALL')}
                   />
                 </div>
               )}
@@ -266,15 +266,15 @@ export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
                     setConfirmText('');
                   }}
                 >
-                  {t.cleanup.cancel}
+                  {t('Cancel')}
                 </button>
                 <button
                   type="button"
                   className={`execute-btn ${selectedPeriod === 'all' ? 'danger' : ''}`}
                   onClick={executeCleanup}
-                  disabled={isLoading || (selectedPeriod === 'all' && confirmText !== t.cleanup.confirmPhrase)}
+                  disabled={isLoading || (selectedPeriod === 'all' && confirmText !== t('DELETE ALL'))}
                 >
-                  {isLoading ? t.cleanup.deleting : t.cleanup.delete}
+                  {isLoading ? t('Deleting...') : t('Delete')}
                 </button>
               </div>
             </div>
@@ -287,18 +287,18 @@ export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
                 <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
                 <polyline points="22 4 12 14.01 9 11.01" />
               </svg>
-              <h3>{t.cleanup.cleanupComplete}</h3>
+              <h3>{t('Cleanup Complete!')}</h3>
               <div className="result-stats">
-                <p><strong>{result.totalDeleted.toLocaleString()}</strong>{t.cleanup.recordsDeleted}</p>
+                <p><strong>{result.totalDeleted.toLocaleString()}</strong>{t(' records deleted:')}</p>
                 <ul>
-                  <li>{result.deleted.observations.toLocaleString()} {t.cleanup.observation}</li>
-                  <li>{result.deleted.summaries.toLocaleString()} {t.cleanup.summary}</li>
-                  <li>{result.deleted.prompts.toLocaleString()} {t.cleanup.prompt}</li>
-                  <li>{result.deleted.sessions.toLocaleString()} {t.cleanup.session}</li>
+                  <li>{result.deleted.observations.toLocaleString()} {t('observation')}</li>
+                  <li>{result.deleted.summaries.toLocaleString()} {t('summary')}</li>
+                  <li>{result.deleted.prompts.toLocaleString()} {t('prompt')}</li>
+                  <li>{result.deleted.sessions.toLocaleString()} {t('session')}</li>
                 </ul>
               </div>
               <button type="button" className="done-btn" onClick={handleClose}>
-                {t.cleanup.done}
+                {t('Done')}
               </button>
             </div>
           )}
@@ -308,7 +308,7 @@ export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
         {!preview && !result && (
           <div className="modal-footer">
             <button type="button" className="cancel-btn" onClick={handleClose}>
-              {t.cleanup.cancel}
+              {t('Cancel')}
             </button>
             <button
               type="button"
@@ -316,7 +316,7 @@ export function CleanupModal({ isOpen, onClose }: CleanupModalProps) {
               onClick={fetchPreview}
               disabled={isLoading}
             >
-              {isLoading ? t.cleanup.loading : t.cleanup.preview}
+              {isLoading ? t('Loading...') : t('Preview')}
             </button>
           </div>
         )}

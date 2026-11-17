@@ -2,7 +2,6 @@
 // and the owner-goals words behind each area and ask. Pure, so `node --test` can load it; nothing is re-ranked by
 // guesswork: the owner's order wins, then the suggested priority, the same order the worker sorts by (my-focus.mjs).
 import { OTHER_FOCUS_AREA_ID, type FocusArea, type FocusAsk, type FocusChange, type Quote } from '../data.ts'
-import { t } from '../i18n/translate.ts'
 import type { WorkViewFocusArea } from './work-view-api-types.ts'
 
 /** One owner-goals item (an area or an ask), already read by to-work-model's toGoalItem. */
@@ -67,8 +66,8 @@ export const suggestionEditDecision = (change: FocusChange): 'merged' | null => 
 /** What an area chip reads: the area's name, "Other", or "Sorting…" when the request has no placement yet. */
 export function focusAreaLabel(focusAreaId: string | undefined, areas: readonly FocusArea[]): string {
   const placed = resolveFocusAreaId(focusAreaId, areas)
-  if (placed === OTHER_FOCUS_AREA_ID) return t(OTHER_LABEL)
-  return areas.find((area) => area.id === placed)?.name ?? t(SORTING_LABEL)
+  if (placed === OTHER_FOCUS_AREA_ID) return OTHER_LABEL
+  return areas.find((area) => area.id === placed)?.name ?? SORTING_LABEL
 }
 
 const toAsk = (item: MinedGoalItem): FocusAsk => ({ id: item.id, title: item.title, timesAsked: item.timesAsked, latestAt: item.latestAt, quotes: item.quotes })

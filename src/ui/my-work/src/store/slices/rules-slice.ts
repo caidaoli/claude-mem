@@ -1,6 +1,5 @@
 // My Rules saves: one at a time, each recorded as a receipt for the exact version the worker saved, so live
 // updates arriving meanwhile can't turn a receipt or an Undo into a statement about a different rule.
-import { t } from '../../i18n/translate.ts'
 import { ruleUndoIsCurrent, ruleVersion } from '../../live/rule-actions.ts'
 import type { SliceCreator } from '../create-store.ts'
 import type { RulesSlice } from '../store-types.ts'
@@ -42,7 +41,7 @@ export const createRulesSlice: SliceCreator<RulesSlice> = (set, get) => ({
     const load = get().work.load
     const shownRules = load.state === 'loaded' ? load.model.rules : []
     if (!ruleUndoIsCurrent(last.ruleId, last.expectedVersion, shownRules)) {
-      set((state) => { state.rules.saveError = t('This rule changed since your edit. Review its current version before changing it again.') })
+      set((state) => { state.rules.saveError = 'This rule changed since your edit. Review its current version before changing it again.' })
       return
     }
     const { ruleId, undo } = last

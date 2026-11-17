@@ -1,6 +1,5 @@
 // The active source's model: fixtures in sample mode, real records otherwise (spec §12). Every page reads it from
 // here; live requests change only through their data source, never in the browser.
-import { t } from '../../i18n/translate.ts'
 import { SAMPLE_REQUESTS, SaveRefusedError, assertConsistentRequest, type Request } from '../../data.ts'
 import { canContinueConversations } from '../../live/conversation-continuation.ts'
 import { freshlyUpdatedRequestIds, mergeRecentChanges, requestChanges } from '../../live/update-queue.ts'
@@ -84,7 +83,7 @@ export const createWorkSlice: SliceCreator<WorkSlice> = (set, get) => {
       set((state) => { state.work.refreshError = null })
     } catch (error) {
       if (session !== thisSession) return
-      set((state) => { state.work.refreshError = t('Saved. Reading the latest work after it failed: {error}', { error: messageOf(error) }) })
+      set((state) => { state.work.refreshError = `Saved. Reading the latest work after it failed: ${messageOf(error)}` })
     }
   }
 

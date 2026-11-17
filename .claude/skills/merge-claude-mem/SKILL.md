@@ -132,8 +132,8 @@ UPSTREAM_HEAD=$(sed -n '1p' "$STATE_DIR/upstream-head")
 git diff --stat "$(git merge-base "$PRE_MERGE_HEAD" "$UPSTREAM_HEAD")" "$UPSTREAM_HEAD" -- src/ui
 ```
 
-- viewer：组件里用 `useI18n()` 的 `t.<section>.<key>`，键同时加到 `src/ui/viewer/i18n/locales/en.ts` 和 `zh-CN.ts`（typecheck 会检查两边的键是否一致）。
-- My Work：用 `t('English {var}', vars)`，中文加到 `src/ui/my-work/src/i18n/zh-CN/*.ts` 对应的字典里，键就是英文原文。
+- viewer、My Work、setup 和设置页都用上游的 `t('English {var}')`，键就是英文原文；中文加到 `src/ui/i18n/` 对应区域的 `*-zh.ts`。
+- `tests/ui-i18n.test.ts` 要求 ko/fr 目录与 zh 键一致（My Work 还有 tr），同一英文在同语言各目录译文一致；Fork 新增文案要同时补齐这些目录。
 
 从持久快照读取旧实现，例如：
 

@@ -4,7 +4,6 @@
 // text simply swaps (MotionConfig reducedMotion="user" in App.tsx, and the CSS rule in index.css).
 import { useEffect, useState } from 'react'
 import { useNow } from '@/lib/use-now'
-import { t } from '@/i18n'
 import { AnimatePresence, motion } from 'motion/react'
 import { ArrowRightIcon } from 'lucide-react'
 import { STATE_LABEL } from '@/components/bits'
@@ -18,23 +17,23 @@ import { useConnection, useRecentChanges, useWorkModel } from '@/store'
 /** How long a request has been going. An open live request counts up as you watch; anything else shows its record. */
 export function RunningFor({ request }: { request: Request }) {
   const now = useNow(!!request.runningLive && !!request.startedAtIso)
-  if (!request.runningLive || !request.startedAtIso) return <>{t(request.runningFor)}</>
+  if (!request.runningLive || !request.startedAtIso) return <>{request.runningFor}</>
   return <>{formatDuration(now - Date.parse(request.startedAtIso))}</>
 }
 
 /** "just now", "3 min ago": when the screen saw a change. */
 function sinceLabel(at: number, now: number) {
   const minutes = Math.floor((now - at) / 60_000)
-  if (minutes < 1) return t('just now')
-  if (minutes < 60) return t('{minutes} min ago', { minutes })
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes} min ago`
   const hours = Math.floor(minutes / 60)
-  return t('{hours} hr ago', { hours })
+  return `${hours} hr ago`
 }
 
 /** What one change says, in the words the badges use. */
 function changeWords(change: RequestChange): { verb: string; tone: string } {
-  if (change.kind === 'new') return { verb: t('New request'), tone: 'text-accent-foreground' }
-  if (change.kind === 'progress') return { verb: `${change.from === null ? t('First review') : `${change.from}% →`} ${change.to}%`, tone: 'text-working-foreground' }
+  if (change.kind === 'new') return { verb: 'New request', tone: 'text-accent-foreground' }
+  if (change.kind === 'progress') return { verb: `${change.from === null ? 'First review' : `${change.from}% →`} ${change.to}%`, tone: 'text-working-foreground' }
   const tone = {
     working: 'text-working-foreground', 'needs-check': 'text-review-foreground', 'your-move': 'text-attention-foreground',
     idle: 'text-idle-foreground', shipped: 'text-shipped-foreground',
@@ -44,7 +43,7 @@ function changeWords(change: RequestChange): { verb: string; tone: string } {
       : change.to === 'your-move' ? 'Needs you'
         : change.to === 'idle' ? 'Went idle'
           : STATE_LABEL[change.to]
-  return { verb: t(verb), tone }
+  return { verb, tone }
 }
 
 /** How long each change stays in the ticker before the next one slides in. */
@@ -83,7 +82,7 @@ export function ChangeTicker({ onOpen }: { onOpen: (requestId: string) => void }
           {live && <span className="absolute inline-flex size-full rounded-full bg-shipped-foreground/40 motion-safe:animate-ping" />}
           <span className={cn('relative inline-flex size-2 rounded-full', live ? 'bg-shipped-foreground' : 'bg-idle-foreground')} />
         </span>
-        <span className="hidden shrink-0 text-xs font-medium text-muted-foreground sm:inline">{t('Just changed')}</span>
+        <span className="hidden shrink-0 text-xs font-medium text-muted-foreground sm:inline">Just changed</span>
         {/* Screen readers hear each new change once. The cycling line below is off for them, or every slide would be read forever. */}
         <span role="status" aria-live="polite" className="sr-only">{newest ? `${changeWords(newest).verb}: ${newest.title}` : ''}</span>
         <div aria-live="off" className="relative h-7 min-w-0 flex-1">
@@ -106,7 +105,7 @@ export function ChangeTicker({ onOpen }: { onOpen: (requestId: string) => void }
               </motion.button>
             ) : (
               <motion.span key="watching" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 flex min-w-0 items-center px-1 text-muted-foreground">
-                <span className="truncate">{t('Watching your agents')}<span className="hidden sm:inline">{t('. Changes show up here the moment they’re recorded')}</span>{t('.')}</span>
+                <span className="truncate">Watching your agents<span className="hidden sm:inline">. Changes show up here the moment they're recorded</span>.</span>
               </motion.span>
             )}
           </AnimatePresence>

@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useI18n, interpolate } from '../../i18n';
 import type { MediaOwnerDetailsResponse, ObservationMedia, ObservationMediaRef } from '../types';
 import { useMediaStates } from '../hooks/useMediaStates';
-import { useI18n } from '../i18n';
 import { formatDate } from '../utils/formatters';
 import { withLocalApiTokenQuery } from '../../local-api-token-client';
 import {
@@ -13,6 +13,7 @@ import {
   inspectionText,
   mediaAltText,
   mediaOwnerDetailsUrl,
+  mediaStripFacts,
   mediaStatusText,
   mediaVariantFailed,
   mediaVariantStatusText,
@@ -24,6 +25,18 @@ import {
 } from '../utils/media';
 
 const LOADING: MediaDisplayState = { kind: 'loading' };
+
+function translateMediaStatus(status: string, t: (s: string) => string): string {
+  if (status.startsWith('Rejected (')) {
+    const code = status.slice('Rejected ('.length, -1);
+    return interpolate(t('Rejected ({code})'), { code });
+  }
+  if (status.startsWith('Failed (')) {
+    const code = status.slice('Failed ('.length, -1);
+    return interpolate(t('Failed ({code})'), { code });
+  }
+  return t(status);
+}
 
 interface StripViewProps {
   observationId: number;
@@ -43,18 +56,23 @@ export function ObservationMediaStripView({ observationId, media, states, onOpen
   const refs = media.attachments;
   const visible = refs.slice(0, MAX_CARD_THUMBNAILS);
   const hiddenCount = refs.length - visible.length;
+  const stripAriaLabel = interpolate(t(refs.length === 1 ? '{count} image attached' : '{count} images attached'), { count: refs.length });
+
   return (
-    <div className="media-strip" role="group" aria-label={(refs.length === 1 ? t.media.attachedOne : t.media.attachedMany).replace('{count}', String(refs.length))}>
+    <div className="media-strip" role="group" aria-label={stripAriaLabel}>
       {visible.map((ref, index) => {
         const state = states[ref.id] ?? LOADING;
         const isLastWithMore = index === visible.length - 1 && hiddenCount > 0;
-        const alt = mediaAltText(ref, index, refs.length, observationId, t.media);
+        const alt = mediaAltText(ref, index, refs.length, observationId);
+        const openLabel = isLastWithMore
+          ? interpolate(t('Open {alt} and {count} more'), { alt, count: hiddenCount })
+          : interpolate(t('Open {alt}'), { alt });
         return (
           <div key={ref.id} className={`media-thumb media-thumb--${state.kind}`}>
             <button
               type="button"
               className="media-thumb-button"
-              aria-label={t.media.openImage.replace('{alt}', () => alt) + (isLastWithMore ? t.media.andMore.replace('{count}', String(hiddenCount)) : '')}
+              aria-label={openLabel}
               onClick={event => onOpen(index, event.currentTarget)}
             >
               {state.kind === 'ready' && !mediaVariantFailed(state, 'llm') ? (
@@ -68,21 +86,24 @@ export function ObservationMediaStripView({ observationId, media, states, onOpen
                   onError={() => onImageError(ref.id, 'llm')}
                 />
               ) : (
-                <span className="media-thumb-status">{mediaVariantStatusText(state, 'llm', t.media)}</span>
+                <span className="media-thumb-status">{translateMediaStatus(mediaVariantStatusText(state, 'llm'), t)}</span>
               )}
-              {ref.inspection === 'uninspected' && <span className="media-thumb-badge">{t.media.notInspected}</span>}
               {isLastWithMore && <span className="media-thumb-more">+{hiddenCount}</span>}
             </button>
             {canRetryMediaState(state) && (
-              <button type="button" className="media-thumb-retry" onClick={() => onRetry(ref.id)}>{t.feed.retry}</button>
+              <button type="button" className="media-thumb-retry" onClick={() => onRetry(ref.id)}>{t('Retry')}</button>
             )}
           </div>
         );
       })}
-      <span className="media-strip-count">
-        {(refs.length === 1 ? t.media.countOne : t.media.countMany).replace('{count}', String(refs.length))}
-        {media.overflow ? t.media.overflow : ''}
-      </span>
+      <p className="media-strip-summary">
+        <span className="media-strip-count">
+          {interpolate(t(media.overflow
+            ? (refs.length === 1 ? '{count} image (more on the source event)' : '{count} images (more on the source event)')
+            : (refs.length === 1 ? '{count} image' : '{count} images')), { count: refs.length })}
+        </span>
+        {mediaStripFacts(refs, states).map(fact => <span key={fact} className="media-strip-fact"> · {fact}</span>)}
+      </p>
     </div>
   );
 }
@@ -104,16 +125,17 @@ interface DialogViewProps {
 export function MediaLightboxDialog({ observationId, refs, index, state, ownerDetails, onClose, onShow, onRetry, onImageError, onRequestOwnerDetails }: DialogViewProps) {
   const { t } = useI18n();
   const ref = refs[index];
-  const alt = mediaAltText(ref, index, refs.length, observationId, t.media);
+  const alt = mediaAltText(ref, index, refs.length, observationId);
   const metadata = state.kind === 'ready' ? state.metadata : null;
   const titleId = `media-lightbox-title-${observationId}`;
   return (
     <div className="media-lightbox" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>
       <div className="media-lightbox-header">
         <h2 id={titleId} className="media-lightbox-title">
-          {t.media.imagePosition.replace('{index}', String(index + 1)).replace('{count}', String(refs.length))} <span className="media-lightbox-label">{ref.label}</span>
+          {interpolate(t('Image {current} of {total}'), { current: index + 1, total: refs.length })}{' '}
+          <span className="media-lightbox-label">{ref.label}</span>
         </h2>
-        <button type="button" className="modal-close-btn media-lightbox-close" aria-label={t.media.closeViewer} onClick={onClose}>
+        <button type="button" className="modal-close-btn media-lightbox-close" aria-label={t('Close image viewer')} onClick={onClose}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <line x1="18" y1="6" x2="6" y2="18"></line>
             <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -121,7 +143,7 @@ export function MediaLightboxDialog({ observationId, refs, index, state, ownerDe
         </button>
       </div>
       <div className="media-lightbox-stage">
-        <button type="button" className="media-lightbox-nav" aria-label={t.media.previousImage} disabled={index === 0} onClick={() => onShow(index - 1)}>‹</button>
+        <button type="button" className="media-lightbox-nav" aria-label={t('Previous image')} disabled={index === 0} onClick={() => onShow(index - 1)}>‹</button>
         <div className="media-lightbox-frame" aria-live="polite">
           {metadata && !mediaVariantFailed(state, 'viewer') ? (
             <img
@@ -133,44 +155,47 @@ export function MediaLightboxDialog({ observationId, refs, index, state, ownerDe
             />
           ) : (
             <div className={`media-lightbox-status media-thumb--${state.kind}`}>
-              <span>{mediaVariantStatusText(state, 'viewer', t.media)}</span>
-              {canRetryMediaState(state) && <button type="button" className="media-thumb-retry" onClick={() => onRetry(ref.id)}>{t.feed.retry}</button>}
+              <span>{translateMediaStatus(mediaVariantStatusText(state, 'viewer'), t)}</span>
+              {canRetryMediaState(state) && <button type="button" className="media-thumb-retry" onClick={() => onRetry(ref.id)}>{t('Retry')}</button>}
             </div>
           )}
         </div>
-        <button type="button" className="media-lightbox-nav" aria-label={t.media.nextImage} disabled={index === refs.length - 1} onClick={() => onShow(index + 1)}>›</button>
+        <button type="button" className="media-lightbox-nav" aria-label={t('Next image')} disabled={index === refs.length - 1} onClick={() => onShow(index + 1)}>›</button>
       </div>
-      <dl className="media-lightbox-provenance">
-        <dt>{t.media.inspection}</dt><dd>{inspectionText(ref, t.media)}</dd>
-        <dt>{t.media.status}</dt><dd>{mediaStatusText(state, t.media)}</dd>
-        {metadata && (
-          <>
-            <dt>{t.media.recipe}</dt><dd>{metadata.recipe}</dd>
-            {metadata.viewer && (
-              <>
-                <dt>{t.media.dimensions}</dt><dd>{metadata.viewer.width} × {metadata.viewer.height}</dd>
-                <dt>{t.media.size}</dt><dd>{formatMediaBytes(metadata.viewer.byteLength)} (WebP)</dd>
-              </>
-            )}
-            <dt>{t.media.captured}</dt><dd>{formatDate(metadata.capturedAt)}</dd>
-          </>
-        )}
-      </dl>
+      <div className="media-lightbox-footer">
+        {/* One line of facts so the picture keeps the room; each value keeps its name for screen readers. */}
+        <p className="media-lightbox-facts">
+          <span><span className="visually-hidden">{t('Status')}: </span>{translateMediaStatus(mediaStatusText(state), t)}</span>
+          {metadata && (
+            <>
+              <span><span className="visually-hidden">{t('Recipe')}: </span>{metadata.recipe}</span>
+              {metadata.viewer && (
+                <>
+                  <span><span className="visually-hidden">{t('Dimensions')}: </span>{metadata.viewer.width} × {metadata.viewer.height}</span>
+                  <span><span className="visually-hidden">{t('Size')}: </span>{formatMediaBytes(metadata.viewer.byteLength)} WebP</span>
+                </>
+              )}
+              <span><span className="visually-hidden">{t('Captured')}: </span>{formatDate(metadata.capturedAt)}</span>
+            </>
+          )}
+        </p>
+        <p className="media-lightbox-inspection"><span className="visually-hidden">{t('Inspection')}: </span>{t(inspectionText(ref))}</p>
+      </div>
       {metadata && (
         <div className="media-lightbox-owner">
           {ownerDetails === null && (
-            <button type="button" className="view-mode-toggle" onClick={onRequestOwnerDetails}>{t.media.showSourceDetails}</button>
+            <button type="button" className="view-mode-toggle" onClick={onRequestOwnerDetails}>{t('Show source details')}</button>
           )}
-          {ownerDetails === 'loading' && <span>{t.media.loadingSourceDetails}</span>}
-          {ownerDetails === 'error' && <span>{t.media.sourceDetailsUnavailable}</span>}
+          {ownerDetails === 'loading' && <span>{t('Loading source details…')}</span>}
+          {ownerDetails === 'error' && <span>{t('Source details unavailable')}</span>}
           {ownerDetails && typeof ownerDetails === 'object' && (
             <dl className="media-lightbox-provenance">
-              <dt>{t.media.source}</dt><dd>{sourceAvailabilityText(ownerDetails, t.media)}</dd>
+              <dt>{t('Source')}</dt><dd>{t(sourceAvailabilityText(ownerDetails))}</dd>
               {ownerDetails.platform !== null && (
                 <>
-                  <dt>{t.media.platform}</dt><dd>{ownerDetails.platform}</dd>
-                  <dt>{t.media.sourceShape}</dt><dd>{ownerDetails.sourceShape}</dd>
-                  <dt>{t.media.sourceFile}</dt><dd className="media-lightbox-path">{ownerDetails.sourceLocatorPath ?? t.media.inlineImage}</dd>
+                  <dt>{t('Platform')}</dt><dd>{ownerDetails.platform}</dd>
+                  <dt>{t('Source shape')}</dt><dd>{ownerDetails.sourceShape}</dd>
+                  <dt>{t('Source file')}</dt><dd className="media-lightbox-path">{ownerDetails.sourceLocatorPath ?? t('none (inline image)')}</dd>
                 </>
               )}
             </dl>

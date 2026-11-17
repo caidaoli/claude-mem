@@ -1,14 +1,12 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { describe, it, type TestContext } from 'node:test'
-import { switchLocale } from '../i18n/translate.ts'
-import { toWorkModel } from './to-work-model.ts'
 import { createLocalSource, type LocalSourceOptions } from './local-source.ts'
 import { sampleSource } from './sample-source.ts'
 import type { ConversationContinuationEvent, MappedWorkModel, WorkModel } from './work-data-source.ts'
 import type { WorkViewOverview } from './work-view-overview.ts'
 import type { WorkViewSnapshot } from './work-view-api-types.ts'
-import { SaveRefusedError } from '../data.ts'
+import { RefreshNotStartedError, SaveRefusedError } from '../data.ts'
 import { OPEN_IN_APP_CLICK_ID_PATTERN } from '../../../../shared/conversation-continuation.ts'
 
 const SAMPLE = await sampleSource.loadWorkModel()
@@ -67,59 +65,6 @@ function harness(fetcher: typeof fetch, bootstrapTimeoutMs = 100, page: Pick<Loc
 }
 
 describe('compact local source', () => {
-  it('retains an older worker completed duration in loaded and cached detail across locale changes', async () => {
-    const full = { ...fullRequest(), startedAtIso: '2026-10-20T10:00:00Z', startedAt: 'Oct 20, 10:00 am', runningFor: '2 hours' }
-    const { local, streams } = harness(async () => json({ version: 1, revision: FIRST, request: full }))
-    const stop = local.subscribeToLiveUpdates(() => {}, () => {})
-    try {
-      const compact = overview()
-      compact.model.requests[0] = { ...full, detailLoaded: false }
-      streams[0].emit('work-view-overview', compact)
-      const loaded = await local.loadRequestDetail!(full.id, FIRST)
-      assert.equal(loaded.runningFor, '2 hours')
-      switchLocale('zh-CN')
-      const cached = await local.loadRequestDetail!(full.id, FIRST)
-      assert.equal(cached.runningFor, '2 hours')
-      assert.equal(cached.startedAt, 'Oct 20, 10:00 am')
-    } finally { stop(); switchLocale('en') }
-  })
-
-  it('remaps compact cards and cached lazy detail on locale changes without a full snapshot read', async () => {
-    const raw = snapshot()
-    const now = Date.now()
-    raw.humanRequests[0].startedAtEpoch = now - 29 * 60_000
-    raw.humanRequests[0].activity[0].atEpoch = Date.parse('2026-10-20T12:00:00Z')
-    const model = toWorkModel(raw, now)
-    const full = { ...model.requests[0], detailLoaded: true, detailRevision: FIRST }
-    const compact = { ...full, detailLoaded: false, granular: [], conversations: [], prompts: [], story: [] }
-    const envelope = { version: 1, revision: FIRST, generatedAt: new Date(now).toISOString(), source, model: { ...model, requests: [compact] } }
-    const urls: string[] = []
-    const { local, streams } = harness(async (url) => {
-      urls.push(String(url))
-      return json({ version: 1, revision: FIRST, request: full })
-    })
-    const shown: WorkModel[] = []
-    const stop = local.subscribeToLiveUpdates(value => shown.push(value), () => {})
-    try {
-      streams[0].emit('work-view-overview', envelope)
-      assert.equal(shown.at(-1)?.requests[0].runningFor, '29 min')
-      switchLocale('zh-CN')
-      const zh = shown.at(-1)!.requests[0]
-      assert.equal(zh.detailLoaded, false)
-      assert.equal(zh.runningFor, '29 分钟')
-      assert.match(zh.startedAt, /^\d{1,2}月\d{1,2}日/)
-      assert.deepEqual(urls, [])
-      const detail = await local.loadRequestDetail!(full.id, FIRST)
-      assert.match(detail.granular[0].at, /^10月20日$/)
-      switchLocale('en')
-      assert.equal(shown.at(-1)?.requests[0].runningFor, '29 min')
-      const cached = await local.loadRequestDetail!(full.id, FIRST)
-      assert.match(cached.granular[0].at, /^Oct 20$/)
-      assert.equal(urls.length, 1)
-      assert.match(urls[0], /^\/api\/work-view\/requests\//)
-    } finally { stop(); switchLocale('en') }
-  })
-
   it('reuses unchanged compact requests while renewing connection health', async () => {
     const { local, streams } = harness(async () => json(overview()))
     const shown: WorkModel[] = []
@@ -1132,5 +1077,26 @@ describe('continuing a conversation from this computer', () => {
       assert.equal(member in cloudServed, false, `a cloud-served page has ${member}`)
       assert.equal(member in sampleSource, false, `the sample source has ${member}`)
     }
+  })
+})
+
+describe('manual refresh', () => {
+  it('a refresh the worker refuses throws its status and its own reason, for the screen to word in the reader\'s language', async () => {
+    const withReason = harness(async () => json({ error: 'database is locked' }, 409)).local
+    await assert.rejects(withReason.refreshWork(), (error: unknown) => {
+      assert.ok(error instanceof RefreshNotStartedError)
+      assert.equal(error.status, 409)
+      assert.equal(error.workerReason, 'database is locked')
+      assert.equal(error.message, 'Refresh could not start: database is locked')
+      return true
+    })
+    const withoutReason = harness(async () => new Response('not json', { status: 503 })).local
+    await assert.rejects(withoutReason.refreshWork(), (error: unknown) => {
+      assert.ok(error instanceof RefreshNotStartedError)
+      assert.equal(error.status, 503)
+      assert.equal(error.workerReason, null)
+      assert.equal(error.message, 'Refresh could not start: the worker answered 503')
+      return true
+    })
   })
 })

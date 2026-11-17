@@ -1,6 +1,7 @@
 import type { SessionCatalogEntry, StreamEvent } from '../types';
 import { API_ENDPOINTS } from '../constants/api';
-import { en } from '../i18n/locales/en';
+import { hasEveryWord } from './search';
+import { DELETE_REQUEST_TIMEOUT_MS, describeDeleteStopped, sendDelete } from './feed-deletion';
 
 /**
  * A session is identified by (platform_source, content_session_id): the same
@@ -23,6 +24,42 @@ export function sameSession(a: SessionRef | null | undefined, b: SessionRef | nu
 
 export function catalogEntryRef(entry: SessionCatalogEntry): SessionRef {
   return { platformSource: entry.platform_source, contentSessionId: entry.content_session_id };
+}
+
+/**
+ * What a session is called, the one rule for the list and the session page (the list used `||` and the page
+ * `??`, so an empty custom title read differently on the two). In order: the session's custom title, which an
+ * integration sets on purpose (dsh-plugin's customTitle, a synced set_title), then the newest summary's request
+ * (from the catalog, or `loadedSummary` from the rows the page has loaded) where there is none. `null` means
+ * "No summary yet". An older worker sends no `summary_title` at all; then a row with no custom title keeps its
+ * 15.x title, the project name, instead of reading as unsummarized (G19).
+ */
+export function sessionTitle(
+  entry: Pick<SessionCatalogEntry, 'summary_title' | 'custom_title' | 'project'> | null | undefined,
+  loadedSummary?: string | null,
+): string | null {
+  const custom = entry?.custom_title?.trim();
+  if (custom) return custom;
+  const summary = entry?.summary_title?.trim() || loadedSummary?.trim();
+  if (summary) return summary;
+  return entry && entry.summary_title === undefined ? entry.project : null;
+}
+
+/**
+ * The short id chip on a session row. Eight characters tell sessions apart (the first block of a UUID, as
+ * git's short ids do); the full id stays in the chip's title, its accessible name and on the session page.
+ */
+export const SHORT_SESSION_ID_LENGTH = 8;
+
+export function shortSessionId(contentSessionId: string): string {
+  return contentSessionId.length > SHORT_SESSION_ID_LENGTH ? contentSessionId.slice(0, SHORT_SESSION_ID_LENGTH) : contentSessionId;
+}
+
+/** True when every word of the query is in the session's title, project, tool or id, in any case (hasEveryWord). */
+export function matchesSessionSearch(entry: SessionCatalogEntry, query: string): boolean {
+  const text = [entry.summary_title, entry.custom_title, entry.project, entry.platform_source, entry.content_session_id]
+    .filter(Boolean).join('\n');
+  return hasEveryWord(text, query);
 }
 
 /** Any feed row: observations and prompts carry content_session_id, summaries carry session_id. */
@@ -85,36 +122,35 @@ export function parseViewRoute(hash: string): ViewRoute {
 }
 
 /** User-facing reason for a refused session delete, by the worker's status code. */
-export function describeSessionDeleteFailure(
-  status: number,
-): string {
+export function describeSessionDeleteFailure(status: number): string {
   if (status === 409) {
-    return en.deleteFailure.sessionBusy;
+    return 'Not deleted: this session is still running, or holds memories synced from another device (delete those there).';
   }
   if (status === 503) {
-    return en.deleteFailure.syncUnavailable;
+    return 'Not deleted: cloud sync is unavailable, so the delete could not be recorded for your other devices. Try again once sync reconnects.';
   }
   if (status === 404) {
-    return en.deleteFailure.sessionGone;
+    return 'Not deleted: this session is already gone.';
   }
-  return en.deleteFailure.httpStatus.replace('{status}', String(status));
+  return `Not deleted: the worker answered HTTP ${status}.`;
 }
 
+/** The reader pressed Cancel or Escape while a session delete was on its way. Its outcome is unknown. */
+export const SESSION_DELETE_STOPPED = describeDeleteStopped('session');
+
 /**
- * Delete a session and everything captured in it through the worker's
- * sync-safe endpoint. Rejects with a user-facing message.
+ * Delete a session and everything captured in it through the worker's sync-safe endpoint, by the same request path
+ * as a card's delete (sendDelete), so it rejects with the same kinds of user-facing message. The wait is the card
+ * delete's (DELETE_REQUEST_TIMEOUT_MS): the worker removes a session's rows and records their tombstones in one SQLite
+ * transaction and only queues the cloud delete (DataRoutes.handleDeleteSession), so it answers at once.
  */
 export async function deleteSession(
   ref: SessionRef,
   fetchImpl: typeof fetch = fetch,
+  { signal, timeoutMs = DELETE_REQUEST_TIMEOUT_MS }: { signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<void> {
   const url = `${API_ENDPOINTS.SESSIONS}/${encodeURIComponent(ref.platformSource)}/${encodeURIComponent(ref.contentSessionId)}`;
-  const response = await fetchImpl(url, { method: 'DELETE' }).catch(() => {
-    throw new Error(en.deleteFailure.unreachable);
-  });
-  if (!response.ok) {
-    throw new Error(describeSessionDeleteFailure(response.status));
-  }
+  await sendDelete(url, { fetchImpl, signal, timeoutMs, subject: 'session', describeRefusal: describeSessionDeleteFailure });
 }
 
 /** The session a `session_deleted` SSE event names, or null when the event is malformed. */
@@ -140,6 +176,8 @@ export interface CatalogJournal {
   added: SessionCatalogEntry[];
   /** Sessions whose item count changed live during the request. */
   touched: Set<string>;
+  /** The newest summary title each session got live during the request (a page read before it has the older one). */
+  retitled: Map<string, string>;
   /** Sessions with a live item deletion during the request. */
   decreased: Set<string>;
   /** Sessions deleted and then recreated while this page was in flight. */
@@ -149,7 +187,7 @@ export interface CatalogJournal {
 }
 
 export function emptyCatalogJournal(): CatalogJournal {
-  return { added: [], touched: new Set(), decreased: new Set(), recreated: new Set(), removed: new Set() };
+  return { added: [], touched: new Set(), retitled: new Map(), decreased: new Set(), recreated: new Set(), removed: new Set() };
 }
 
 /**
@@ -173,12 +211,16 @@ export function mergeCatalogPage(
     // Keep the recreated row provisional until the hook confirms it.
     if (live && journal.recreated.has(key)) return live;
     // A page may already include the live rows: use the larger count rather
-    // than adding a delta twice. Keep authoritative page metadata (titles).
+    // than adding a delta twice. Keep the page's other metadata (the custom
+    // title), but a summary that arrived live during the request is newer than
+    // a page whose query may have run before it was stored: its title wins.
     // Counts have no revision: keep a deletion provisional until the hook
     // confirms it with a request started after that deletion.
-    return live && (journal.decreased.has(key) || live.item_count > entry.item_count)
+    const counted = live && (journal.decreased.has(key) || live.item_count > entry.item_count)
       ? { ...entry, item_count: live.item_count }
       : entry;
+    const liveTitle = journal.retitled.get(key);
+    return liveTitle !== undefined && liveTitle !== counted.summary_title ? { ...counted, summary_title: liveTitle } : counted;
   };
   let combined: SessionCatalogEntry[];
   if (mode === 'replace') {

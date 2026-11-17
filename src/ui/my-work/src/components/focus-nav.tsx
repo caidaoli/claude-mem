@@ -3,8 +3,8 @@
 // The rail's highlight is App's side-nav pill: one pill slides between focus areas, pages and Past focus.
 import { useMemo } from 'react'
 import { Grid2X2Icon, HistoryIcon, SparklesIcon } from 'lucide-react'
+import { interpolate, useI18n } from '@/lib/i18n'
 import { ActivePill } from '@/components/bits'
-import { t } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { Req } from '@/spec/req'
 import { OTHER_FOCUS_AREA_ID } from '@/data'
@@ -22,6 +22,7 @@ interface FocusNavEntry { key: string; label: string; count: number; moving?: bo
 
 /** The entries in rail order. Rail and chip row read the same list. */
 function useFocusNavEntries(selected: FocusSelection): { focus: FocusNavEntry[]; pastFocus: FocusNavEntry } {
+  const { t } = useI18n()
   const { focusAreas, requests } = useWorkModel()
   const activity = useMemo(() => focusNavActivity(focusAreas, requests), [focusAreas, requests])
   const kept = focusNavAreas(focusAreas, selected?.kind === 'area' ? selected.focusAreaId : null)
@@ -30,7 +31,7 @@ function useFocusNavEntries(selected: FocusSelection): { focus: FocusNavEntry[];
     focus: [
       ...kept.map((area) => ({ key: area.id, label: area.name, count: activity.get(area.id)?.count ?? 0, moving: activity.get(area.id)?.moving, selection: { kind: 'area' as const, focusAreaId: area.id } })),
       { key: OTHER_FOCUS_AREA_ID, label: t('Other'), count: activity.get(OTHER_FOCUS_AREA_ID)?.count ?? 0, moving: activity.get(OTHER_FOCUS_AREA_ID)?.moving, selection: { kind: 'area', focusAreaId: OTHER_FOCUS_AREA_ID } },
-      ...(suggested > 0 ? [{ key: 'suggested', label: t('{count} suggested', { count: suggested }), count: 0, selection: { kind: 'suggested' as const }, muted: true }] : []),
+      ...(suggested > 0 ? [{ key: 'suggested', label: interpolate(t('{count} suggested'), { count: suggested }), count: 0, selection: { kind: 'suggested' as const }, muted: true }] : []),
     ],
     pastFocus: { key: 'past-focus', label: t('Past focus'), count: 0, selection: { kind: 'past-focus' }, muted: true },
   }
@@ -41,16 +42,18 @@ const sameSelection = (a: FocusSelection, b: FocusSelection) => !!a && !!b && a.
 /** Work is moving in this area right now. Pulses; reduced motion keeps the dot still. */
 function MovingDot({ moving, className }: { moving?: boolean; className?: string }) {
   if (!moving) return null
-  return <span title={t('Work moving now')} className={cn('size-1.5 shrink-0 rounded-full bg-working-foreground motion-safe:animate-pulse', className)}><span className="sr-only">{t('Work moving now')}</span></span>
+  return <span title="Work moving now" className={cn('size-1.5 shrink-0 rounded-full bg-working-foreground motion-safe:animate-pulse', className)}><span className="sr-only">Work moving now</span></span>
 }
 
 function Count({ count, className }: { count: number; className?: string }) {
+  const { t } = useI18n()
   if (count === 0) return null
-  return <span className={cn('flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[11px] font-semibold text-primary-foreground tabular-nums', className)}>{count}<span className="sr-only">{t(' need you')}</span></span>
+  return <span className={cn('flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[11px] font-semibold text-primary-foreground tabular-nums', className)}>{count}<span className="sr-only"> {t('need you')}</span></span>
 }
 
 /** The wide rail's MY FOCUS section (lg and up). */
 export function FocusRail({ selected, onSelect }: { selected: FocusSelection; onSelect: (selection: FocusSelection) => void }) {
+  const { t } = useI18n()
   const { focus } = useFocusNavEntries(selected)
   return (
     <Req ids={['R16.1', 'R16.3']}>
@@ -77,6 +80,7 @@ export function FocusRail({ selected, onSelect }: { selected: FocusSelection; on
 
 /** Past focus, at the bottom of the rail. */
 export function PastFocusLink({ selected, onSelect }: { selected: FocusSelection; onSelect: (selection: FocusSelection) => void }) {
+  const { t } = useI18n()
   const selection = { kind: 'past-focus' } as const
   const active = sameSelection(selected, selection)
   return (
@@ -93,6 +97,7 @@ export function PastFocusLink({ selected, onSelect }: { selected: FocusSelection
 /** Phones and the icon-only rail: the same entries as a chip row above the cards. It scrolls sideways; the right edge
  * fades while more chips are off screen, and the row ends with room to scroll the last chip clear of the fade. */
 export function FocusChipRow({ selected, onSelect }: { selected: FocusSelection; onSelect: (selection: FocusSelection) => void }) {
+  const { t } = useI18n()
   const { focus, pastFocus } = useFocusNavEntries(selected)
   return (
     <Req ids={['R16.1', 'R11.1']} className="lg:hidden">

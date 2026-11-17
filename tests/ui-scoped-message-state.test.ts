@@ -4,12 +4,11 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { interpolate } from '../src/ui/i18n/locale.ts';
-import { SETUP_ZH_CN as setupZh } from '../src/ui/my-work/src/i18n/zh-CN/setup.ts';
-import { en } from '../src/ui/viewer/i18n/locales/en.ts';
-import { zhCN } from '../src/ui/viewer/i18n/locales/zh-CN.ts';
+import { setupZh } from '../src/ui/i18n/setup-zh.ts';
+import { viewerZh } from '../src/ui/i18n/viewer-zh.ts';
 
 const require = createRequire(import.meta.url);
-const catalog = setupZh;
+const catalog = { ...setupZh, ...viewerZh };
 
 // Exercise real handlers and state across rerenders without a DOM or global module mocks.
 async function fixture(path: string, exportName: string) {
@@ -28,14 +27,13 @@ async function fixture(path: string, exportName: string) {
     useEffect() {},
     useMemo: (compute: () => unknown) => compute(),
     useCallback: (callback: unknown) => callback,
-    useI18n: () => ({ t: locale === 'en' ? en : zhCN, locale }),
-    t: (s: string, values?: Record<string, string | number>) => interpolate(locale === 'en' ? s : catalog[s] ?? s, values ?? {}),
-    useLocale: () => locale,
-    intlLocale: () => locale === 'zh-CN' ? 'zh-CN' : 'en-US',
-    setLocale: (value: string) => { locale = value; },
+    useI18n: () => ({ t: runtimeT, locale }),
+    // The viewer's shared formatters (utils/formatters.ts) import t and getLocale from the same module.
+    t: (s: string) => runtimeT(s),
     getLocale: () => locale,
     interpolate,
   };
+  function runtimeT(s: string) { return locale === 'en' ? s : catalog[s] ?? s; }
   const compiled = await build({
     entryPoints: [fileURLToPath(new URL(path, import.meta.url))],
     tsconfig: fileURLToPath(new URL('../src/ui/my-work/tsconfig.app.json', import.meta.url)),
@@ -46,7 +44,7 @@ async function fixture(path: string, exportName: string) {
       build.onResolve({ filter: /\/i18n$/ }, () => ({ path: 'i18n', namespace: 'fixture' }));
       build.onLoad({ filter: /.*/, namespace: 'fixture' }, ({ path }) => ({ contents: path === 'react'
         ? `export * from '__react'; export {default} from '__react'; export const {useState,useRef,useEffect,useMemo,useCallback}=require('__runtime');`
-        : `export const {useI18n,getLocale,interpolate,t,useLocale,intlLocale,setLocale}=require('__runtime');` }));
+        : `export const {useI18n,getLocale,interpolate,t}=require('__runtime');` }));
     } }],
   });
   const module = { exports: {} as any };
@@ -90,7 +88,7 @@ test('workspace search and save statuses rerender in the selected language; raw 
   assert.equal(byClass(tree, 'workspace-status').props.children, '1 memory found across your projects.');
   ui.language('zh-CN');
   tree = ui.render(props);
-  assert.equal(byClass(tree, 'workspace-status').props.children, interpolate(setupZh['{count} memory found across your projects.'], { count: 1 }));
+  assert.equal(byClass(tree, 'workspace-status').props.children, setupZh['1 memory found across your projects.']);
   const card = find(tree, e => e.props?.record?.id === 1);
   assert.equal(card.props.record.body, '$& {error}');
   await card.props.onKeep();
@@ -102,7 +100,10 @@ test('workspace search and save statuses rerender in the selected language; raw 
   search();
   await new Promise(resolve => setImmediate(resolve));
   ui.language('zh-CN');
-  assert.equal(byClass(ui.render(props), 'workspace-status').props.children, 'Note saved.');
+  // A failure says what failed in the selected language; the raw error stays verbatim under Details (plan G17).
+  const failure = find(ui.render(props), e => e.type?.name === 'SetupError');
+  assert.equal(failure.props.title, setupZh['Couldn’t search your memory.']);
+  assert.equal(failure.props.failure.detail, 'Note saved.');
 });
 
 test('logs fetch and clear errors translate at render time without refetching', async () => {
@@ -111,7 +112,8 @@ test('logs fetch and clear errors translate at render time without refetching', 
   const originalConfirm = globalThis.confirm;
   let requests = 0;
   globalThis.fetch = (async () => { requests++; return { ok: false, statusText: '$& {reason}' }; }) as any;
-  globalThis.confirm = () => true;
+  // The drawer asks in the page before clearing (16.0); the browser's confirm box must never be called.
+  globalThis.confirm = () => { throw new Error('the logs drawer must not use the browser confirm box'); };
   const props = { isOpen: true, onClose() {} };
   const errorText = () => byClass(ui.render(props), 'console-error').props.children.join('');
   try {
@@ -120,7 +122,9 @@ test('logs fetch and clear errors translate at render time without refetching', 
     ui.language('zh-CN');
     assert.match(errorText(), /获取日志失败：\$& \{reason\}/);
     assert.equal(requests, 1);
-    await find(ui.render(props), e => e.props?.title === zhCN.logs.clearLogs).props.onClick();
+    // "Clear logs…" opens the in-page question; its red button sends the clear.
+    find(ui.render(props), e => String(e.props?.className ?? '').split(' ').includes('console-clear-btn')).props.onClick();
+    await find(ui.render(props), e => typeof e.props?.onConfirm === 'function').props.onConfirm();
     assert.match(errorText(), /清除日志失败：\$& \{reason\}/);
     ui.language('en');
     assert.match(errorText(), /Failed to clear logs: \$& \{reason\}/);
@@ -163,7 +167,7 @@ test('a stale log failure cannot overwrite a newer response after switching lang
   const pending: ((value: any) => void)[] = [];
   globalThis.fetch = (() => new Promise(resolve => pending.push(resolve))) as any;
   const props = { isOpen: true, onClose() {} };
-  const refresh = () => find(ui.render(props), e => e.props?.title === (uiLocale === 'en' ? 'Refresh logs' : zhCN.logs.refreshLogs)).props.onClick();
+  const refresh = () => find(ui.render(props), e => e.props?.title === (uiLocale === 'en' ? 'Refresh logs' : viewerZh['Refresh logs'])).props.onClick();
   let uiLocale = 'en';
   try {
     const older = refresh();

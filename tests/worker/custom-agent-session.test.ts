@@ -644,6 +644,16 @@ describe('CustomAgent session behavior', () => {
     expect(f.storeObservations.mock.calls[0][7]).toBe('gpt-4o');
   });
 
+  it('does not store a JSON session summary without progress fields', async () => {
+    const summary = { request: '请求', investigated: ' ', learned: null, completed: '', next_steps: '后续', notes: null };
+    replies.push(sse([{ choices: [{ delta: { content: JSON.stringify(summary) }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 7, completion_tokens: 5, total_tokens: 12 } }]));
+    const f = fixture([summarize]);
+    await f.agent.startSession(f.session);
+    expect(requests).toHaveLength(1);
+    expect(f.storeObservations).not.toHaveBeenCalled();
+  });
+
   it('does not retry a failed summary when the summary tier is the Custom model', async () => {
     settings.CLAUDE_MEM_TIER_SUMMARY_MODEL = settings.CLAUDE_MEM_CUSTOM_MODEL;
     replies.push(modelNotFound());

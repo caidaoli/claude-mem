@@ -4,7 +4,9 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { CONVERSATION_CONTINUATION_STATES, type ConversationContinuation, type ConversationContinuationTarget } from '../../../../shared/conversation-continuation.ts'
 import { interpolate } from '../../../i18n/locale.ts'
-import { WORK_ZH_CN } from '../i18n/zh-CN/work.ts'
+import { myworkKo } from '../../../i18n/mywork-ko.ts'
+import { myworkTr } from '../../../i18n/mywork-tr.ts'
+import { myworkZh } from '../../../i18n/mywork-zh.ts'
 import { SAMPLE_REQUESTS } from '../data.ts'
 import { myworkFr } from '../../../i18n/mywork-fr.ts'
 import {
@@ -235,7 +237,7 @@ describe('what a row shows when a read of its conversation failed', () => {
 
   it('"Try again" in the words the drawer already has, and "Trying again…", in every language My Work speaks', () => {
     const { tryAgainLabel, tryingAgainLabel } = conversationReadFailureView('The worker answered 500.', true)!
-    for (const [language, catalog] of Object.entries({ 'zh-CN': WORK_ZH_CN, fr: myworkFr })) {
+    for (const [language, catalog] of Object.entries({ zh: myworkZh, ko: myworkKo, tr: myworkTr, fr: myworkFr })) {
       for (const label of [tryAgainLabel, tryingAgainLabel]) assert.ok(catalog[label]?.trim(), `${language} has "${label}"`)
     }
   })
@@ -271,12 +273,12 @@ describe('what a row\'s message box, Send and Stop are called for a screen reade
     }
   })
 
-  it('has Chinese and French words for every name, and each button\'s name holds the word it shows', () => {
+  it('has Chinese, Korean and Turkish words for every name, and each button\'s name holds the word it shows', () => {
     for (const names of [namesFor(), namesFor({ anotherConversationHasTheSameTitle: true })]) {
       // Someone who speaks to their computer says the word they see, so a name holds it (WCAG 2.5.3, label in name).
       assert.ok(names.sendButton.english.startsWith('Send '))
       assert.ok(names.stopButton.english.startsWith('Stop '))
-      for (const [locale, catalog] of Object.entries({ 'zh-CN': WORK_ZH_CN, fr: myworkFr })) {
+      for (const [locale, catalog] of Object.entries({ 'zh-CN': myworkZh, ko: myworkKo, tr: myworkTr })) {
         for (const words of Object.values(names)) assert.ok(catalog[words.english]?.trim(), `${locale} has no words for ${words.english}`)
         const lower = (text: string) => text.toLocaleLowerCase(locale)
         assert.ok(lower(catalog[names.sendButton.english]).includes(lower(catalog['Send'])), `${locale}: ${catalog[names.sendButton.english]}`)
@@ -366,7 +368,7 @@ describe('what a row offers beside Send', () => {
     }
   })
 
-  it('has Chinese and French words for each, and each button\'s name holds the words it shows', () => {
+  it('has Chinese, Korean and Turkish words for each, and each button\'s name holds the words it shows', () => {
     for (const actions of [conversationAppActions(claudeRow, runsInRecordedFolder, true)!, conversationAppActions({ ...claudeRow, anotherConversationHasTheSameTitle: true }, runsInRecordedFolder, true)!]) {
       const { openInApp, copyResumeCommand, runsInFolderNotice } = actions
       // Someone who speaks to their computer says the words they see, so a name holds them (WCAG 2.5.3, label in name).
@@ -376,7 +378,7 @@ describe('what a row offers beside Send', () => {
       for (const [label, name] of buttons) assert.ok(name.english.startsWith(`${label}`), name.english)
       const words = [openInApp!.label.english, ...buttons.map(([label, name]) => [label, name.english]).flat(), runsInFolderNotice!.english,
         'Opening…', 'Could not copy the command: {reason}', 'Copy it from here:']
-      for (const [locale, catalog] of Object.entries({ 'zh-CN': WORK_ZH_CN, fr: myworkFr })) {
+      for (const [locale, catalog] of Object.entries({ 'zh-CN': myworkZh, ko: myworkKo, tr: myworkTr })) {
         for (const english of words) assert.ok(catalog[english]?.trim(), `${locale} has no words for ${english}`)
         const lower = (text: string) => text.toLocaleLowerCase(locale)
         for (const [label, name] of buttons) assert.ok(lower(catalog[name.english]).includes(lower(catalog[label])), `${locale}: ${catalog[name.english]}`)
@@ -407,7 +409,7 @@ describe('a folder as its row lays it out', () => {
     const folderGone: ContinuationWords = { english: 'Its folder is gone, so this turn will run in {folder}.', values: { folder: NEAREST_FOLDER } }
     assert.deepEqual(sentenceAroundFolder(folderGone.english, folderGone), { wordsBefore: 'Its folder is gone, so this turn will run in ', folder: NEAREST_FOLDER, wordsAfter: '.' })
     for (const words of [runsIn, folderGone]) {
-      for (const catalog of [WORK_ZH_CN, myworkFr]) {
+      for (const catalog of [myworkZh, myworkKo, myworkTr, myworkFr]) {
         const translated = (catalog as Record<string, string>)[words.english]
         const sentence = sentenceAroundFolder(translated, words)
         assert.ok(sentence, `${translated} has a place for the folder`)
@@ -434,7 +436,7 @@ describe('the buttons beside the message box keep their width while their label 
   const laidOut = (labels: ButtonLabelInPlace[]) => labels.map((label) => label.text)
   const shown = (labels: ButtonLabelInPlace[]) => labels.filter((label) => label.isShown).map((label) => label.text)
 
-  for (const [label, workingLabel] of [['Open in Claude', 'Opening…'], ['Send', 'Sending…'], [WORK_ZH_CN['Send'], WORK_ZH_CN['Sending…']]] as const) {
+  for (const [label, workingLabel] of [['Open in Claude', 'Opening…'], ['Send', 'Sending…'], [myworkZh['Send'], myworkZh['Sending…']]] as const) {
     it(`“${label}” lays out “${workingLabel}” in the same place in both states, and shows only the one for now`, () => {
       const idle = buttonLabelsKeepingTheirWidth(label, workingLabel, false)
       const working = buttonLabelsKeepingTheirWidth(label, workingLabel, true)
@@ -452,7 +454,7 @@ describe('what the row says when the clipboard does not take the command', () =>
   const reasons = ['Write permission denied.', 'Document is not focused.', "Cannot read properties of undefined (reading 'writeText')", 'NotAllowedError']
 
   it('ends the first line with the browser\'s reason, whole, so a reason that has its own full stop never gets a second one', () => {
-    for (const [language, catalog] of [['en', null], ['zh-CN', WORK_ZH_CN], ['fr', myworkFr]] as const) {
+    for (const [language, catalog] of [['en', null], ['zh-CN', myworkZh], ['ko', myworkKo], ['tr', myworkTr]] as const) {
       for (const reason of reasons) {
         const words = resumeCommandCopyFailureWords(reason)
         const why = inLanguage(catalog, words.why)

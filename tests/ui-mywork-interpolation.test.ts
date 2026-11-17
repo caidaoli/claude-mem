@@ -2,13 +2,10 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import ts from 'typescript';
+import ts from 'typescript-compiler-api';
 import { buildSync } from 'esbuild';
 import { interpolate } from '../src/ui/i18n/locale.ts';
-import { WORK_ZH_CN } from '../src/ui/my-work/src/i18n/zh-CN/work.ts';
-import { APP_ZH_CN } from '../src/ui/my-work/src/i18n/zh-CN/app.ts';
-import { STEER_ZH_CN } from '../src/ui/my-work/src/i18n/zh-CN/steer.ts';
-const myworkZh = { ...WORK_ZH_CN, ...APP_ZH_CN, ...STEER_ZH_CN };
+import { myworkZh } from '../src/ui/i18n/mywork-zh.ts';
 import { OTHER_FOCUS_AREA_ID, type FocusArea, type FocusChange, type Request } from '../src/ui/my-work/src/data.ts';
 import { RULE_TIERS, type OwnerRule, type RuleScope } from '../src/ui/my-work/src/data-rules.ts';
 import { renderRulesFile, type SavedRule } from '../src/services/work-view/my-rules.mjs';
@@ -184,3 +181,36 @@ test('rule receipts retain user text and render again after a language switch', 
   }
   assert.equal(renderRuleReceipt({ text: 'Other' }), 'Other', 'legacy receipts must not be translated as UI keys');
 });
+
+// Evaluate the actual JSX's message expressions so missing separators cannot hide behind catalog-only tests.
+function pageMessage(file: URL, template: string, values: Record<string, unknown>, language: string) {
+  const source = ts.createSourceFile(file.pathname, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let expression: ts.CallExpression | undefined;
+  function visit(node: ts.Node) {
+    if (ts.isCallExpression(node) && node.expression.getText(source) === 'interpolate'
+      && node.arguments[0]?.getText(source) === `t('${template}')`) expression = node;
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+  assert.ok(expression, `${file}: missing complete message ${template}`);
+  const t = (text: string) => language === 'en' ? text : myworkZh[text] ?? text;
+  return new Function('t', 'interpolate', 'displayTime', ...Object.keys(values), `return ${expression.getText(source)};`)(t, interpolate, (value: string) => value, ...Object.values(values));
+}
+
+for (const language of ['en', 'zh-CN']) {
+  test(`request metadata and conditional rules use complete sentences (${language})`, () => {
+    const request = { askedBy: '$& {time}', startedAt: 'Nov 3', runningFor: '2 min', stage: 'Building' };
+    const metadata = pageMessage(new URL('request-detail.tsx', components), 'Asked by {name} · started {time} · {duration} · {stage}', { request }, language);
+    const stage = language === 'en' ? request.stage : myworkZh[request.stage] ?? request.stage;
+    assert.equal(metadata, language === 'en' ? `Asked by ${request.askedBy} · started Nov 3 · 2 min · ${stage}` : `由 ${request.askedBy} 发起 · 开始于 Nov 3 · 2 min · ${stage}`);
+    const checked = { ...request, checkedAt: '$& {checked}' };
+    assert.equal(pageMessage(new URL('request-detail.tsx', components), '{checked} Shipping is still your call. ', { request: checked, notice: null }, language),
+      language === 'en' ? 'Checked $& {checked}. Shipping is still your call. ' : '已于 $& {checked} 检查。 是否交付仍由您决定。 ');
+    const rule = { when: '$& {then}', then: '$$ {when}' };
+    assert.equal(pageMessage(new URL('my-work.tsx', pages), 'When {when}: {then}', { rule }, language),
+      language === 'en' ? `When ${rule.when}: ${rule.then}` : `当 ${rule.when} 时：${rule.then}`);
+    assert.equal(pageMessage(new URL('suggested-areas.tsx', pages), 'Why it’s suggested: {reason}', {
+      area: { quotes: [], evidence: '$& {reason}' }, SOURCE_TEXT: {},
+    }, language), language === 'en' ? 'Why it’s suggested: $& {reason}' : '建议原因：$& {reason}');
+  });
+}

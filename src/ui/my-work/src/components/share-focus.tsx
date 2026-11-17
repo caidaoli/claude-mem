@@ -1,3 +1,4 @@
+import { interpolate, t, useI18n } from '@/lib/i18n'
 // Sharing one focus area as a page people and agents comment on (§17): the dialog behind the area menu's Share…,
 // and the Shared mark beside the area's name. The worker signs every call to cmem.ai.
 import { useCallback, useEffect, useState } from 'react'
@@ -6,7 +7,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
-import { t } from '@/i18n'
 import { Req } from '@/spec/req'
 import type { FocusArea } from '@/data'
 import { useWorkModel } from '@/store'
@@ -20,20 +20,19 @@ function ago(iso: string | null, now: number): string {
   if (!iso) return t('not yet')
   const minutes = Math.max(0, Math.round((now - Date.parse(iso)) / 60_000))
   if (minutes < 1) return t('just now')
-  if (minutes < 60) return t('{minutes} min ago', { minutes })
+  if (minutes < 60) return interpolate(t('{minutes} min ago'), { minutes })
   const hours = Math.round(minutes / 60)
-  return hours < 48 ? t('{hours} h ago', { hours }) : t('{days} days ago', { days: Math.round(hours / 24) })
+  return hours < 48 ? interpolate(t('{hours} h ago'), { hours }) : interpolate(t('{days} days ago'), { days: Math.round(hours / 24) })
 }
 
-/** "5 min ago", kept current while it is on screen; `label` places it in a sentence as {ago}. */
-function Ago({ at, label }: { at: string | null; label?: string }) {
+/** "5 min ago", kept current while it is on screen. */
+function Ago({ at }: { at: string | null }) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000)
     return () => clearInterval(timer)
   }, [])
-  const text = ago(at, now)
-  return <>{label ? t(label, { ago: text }) : text}</>
+  return <>{ago(at, now)}</>
 }
 
 /** Beside the area's name while it is shared. */
@@ -42,8 +41,8 @@ export function SharedMark({ focusAreaId, onOpen }: { focusAreaId: string; onOpe
   if (!shares[focusAreaId]) return null
   return (
     <Req ids={['R17.1']}>
-      <button type="button" onClick={onOpen} className="inline-flex min-h-11 items-center sm:min-h-0" aria-label={t('Shared by link: open sharing')}>
-        <Badge variant="outline" className="gap-1 font-normal"><Link2Icon className="size-3" />{t('Shared')}</Badge>
+      <button type="button" onClick={onOpen} className="inline-flex min-h-11 items-center sm:min-h-0" aria-label={t("Shared by link: open sharing")}>
+        <Badge variant="outline" className="gap-1 font-normal"><Link2Icon className="size-3" />{t("Shared")}</Badge>
       </button>
     </Req>
   )
@@ -54,8 +53,8 @@ function Comment({ comment }: { comment: FocusShareComment }) {
     <li className="space-y-1 rounded-lg border bg-card px-3 py-2">
       <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
         {comment.authorKind === 'agent' ? <BotIcon className="size-3.5" /> : <UserIcon className="size-3.5" />}
-        <span className="font-medium text-foreground">{comment.authorKind === 'agent' ? t('{agent}, agent for {person}', { agent: comment.agentName ?? '', person: comment.authorName }) : comment.authorName}</span>
-        {comment.isOwner && <span>{t('· you')}</span>}
+        <span className="font-medium text-foreground">{comment.authorKind === 'agent' ? `${comment.agentName}, agent for ${comment.authorName}` : comment.authorName}</span>
+        {comment.isOwner && <span>{t("· you")}</span>}
         <time dateTime={comment.createdAt}><Ago at={comment.createdAt} /></time>
       </p>
       <p className="text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">{comment.body}</p>
@@ -102,10 +101,10 @@ function Comments({ focusAreaId }: { focusAreaId: string }) {
 
   return (
     <Req ids={['R17.2']}>
-      <section className="space-y-2" aria-label={t('Comments')}>
-        <h3 className="text-xs font-medium text-muted-foreground">{t('Comments')}{comments ? ` · ${comments.length}` : ''}</h3>
-        {comments === null && !error && <p className="text-sm text-muted-foreground">{t('Reading comments…')}</p>}
-        {comments?.length === 0 && <p className="text-sm text-muted-foreground">{t('No comments yet. People comment on the page; agents comment through the cmem.ai MCP server with the link.')}</p>}
+      <section className="space-y-2" aria-label={t("Comments")}>
+        <h3 className="text-xs font-medium text-muted-foreground">{t("Comments")}{comments ? ` · ${comments.length}` : ''}</h3>
+        {comments === null && !error && <p className="text-sm text-muted-foreground">{t("Reading comments…")}</p>}
+        {comments?.length === 0 && <p className="text-sm text-muted-foreground">{t("No comments yet. People comment on the page; agents comment through the cmem.ai MCP server with the link.")}</p>}
         {!!comments?.length && (
           <ol className="max-h-72 space-y-2 overflow-y-auto pr-1">
             {comments.map((comment) => <Comment key={comment.id} comment={comment} />)}
@@ -113,9 +112,9 @@ function Comments({ focusAreaId }: { focusAreaId: string }) {
         )}
         {error && <p className="text-xs text-destructive" role="alert">{t(error)}</p>}
         <div className="space-y-2">
-          <Textarea aria-label={t('Answer as yourself')} placeholder={t('Answer as yourself')} value={draft} maxLength={COMMENT_MAX_CHARS} onChange={(event) => setDraft(event.target.value)} rows={2} />
+          <Textarea aria-label={t("Answer as yourself")} placeholder={t("Answer as yourself")} value={draft} maxLength={COMMENT_MAX_CHARS} onChange={(event) => setDraft(event.target.value)} rows={2} />
           <div className="flex justify-end">
-            <Button size="sm" className="h-11 sm:h-8" disabled={posting || !draft.trim()} onClick={() => void post()}>{t(posting ? 'Posting…' : 'Comment')}</Button>
+            <Button size="sm" className="h-11 sm:h-8" disabled={posting || !draft.trim()} onClick={() => void post()}>{posting ? t("Posting…") : t("Comment")}</Button>
           </div>
         </div>
       </section>
@@ -125,6 +124,7 @@ function Comments({ focusAreaId }: { focusAreaId: string }) {
 
 /** Share… from the area menu: share by link, copy it, read and answer comments, stop sharing. */
 export function ShareFocusDialog({ area, open, onOpenChange }: { area: FocusArea; open: boolean; onOpenChange: (open: boolean) => void }) {
+  useI18n()
   const model = useWorkModel()
   const { loaded, connected, shares } = useFocusShares()
   const share = shares[area.id]
@@ -156,34 +156,34 @@ export function ShareFocusDialog({ area, open, onOpenChange }: { area: FocusArea
   async function copy() {
     if (!share) return
     try { await navigator.clipboard.writeText(share.url); setCopied(true); setTimeout(() => setCopied(false), 2000) }
-    catch { setError(t('Could not copy. Select the link and copy it.')) }
+    catch { setError('Could not copy. Select the link and copy it.') }
   }
 
   return (
     <Dialog open={open} onOpenChange={openChange}>
       <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{t('Share “{name}”', { name: area.name })}</DialogTitle>
-          <DialogDescription>{t('A page of this area that people and agents can read and comment on.')}</DialogDescription>
+          <DialogTitle>{interpolate(t('Share “{name}”'), { name: area.name })}</DialogTitle>
+          <DialogDescription>{t("A page of this area that people and agents can read and comment on.")}</DialogDescription>
         </DialogHeader>
 
         {!live ? (
-          <p className="text-sm text-muted-foreground">{t('Sharing works on your live work. This is the sample.')}</p>
+          <p className="text-sm text-muted-foreground">{t("Sharing works on your live work. This is the sample.")}</p>
         ) : !loaded ? (
-          <p className="text-sm text-muted-foreground">{t('Checking…')}</p>
+          <p className="text-sm text-muted-foreground">{t("Checking…")}</p>
         ) : !share && !connected ? (
-          <p className="text-sm">{t('Sharing needs cloud sync, so the page can live at cmem.ai. Connect cmem.ai from Setup, then share.')}</p>
+          <p className="text-sm">{t("Sharing needs cloud sync, so the page can live at cmem.ai. Connect cmem.ai from Setup, then share.")}</p>
         ) : !share ? (
           <Req ids={['R17.1', 'R17.3']}>
             <div className="space-y-3">
               <ul className="list-disc space-y-1.5 pl-5 text-sm">
-                <li>{t('Anyone with the link can read it. To comment, people sign in at cmem.ai, and agents use the cmem.ai MCP server.')}</li>
-                <li>{t('It shows only this area: its requests, where each stands, and what is next. Nothing from your other areas or Other.')}</li>
-                <li>{t('It keeps up: a request you place in this area shows up, and one you move out leaves. It keeps updating while claude-mem runs on this computer, even with My Work closed.')}</li>
-                <li>{t('Your own words, prompts, transcripts, files and machine names stay here.')}</li>
+                <li>{t("Anyone with the link can read it. To comment, people sign in at cmem.ai, and agents use the cmem.ai MCP server.")}</li>
+                <li>{t("It shows only this area: its requests, where each stands, and what is next. Nothing from your other areas or Other.")}</li>
+                <li>{t("It keeps up: a request you place in this area shows up, and one you move out leaves. It keeps updating while claude-mem runs on this computer, even with My Work closed.")}</li>
+                <li>{t("Your own words, prompts, transcripts, files and machine names stay here.")}</li>
               </ul>
               <Button className="h-11 w-full sm:h-9" disabled={busy} onClick={() => void run(() => shareFocusArea(area.id))}>
-                <Link2Icon />{t(busy ? 'Sharing…' : 'Share this area')}
+                <Link2Icon />{busy ? t('Sharing…') : t("Share this area")}
               </Button>
             </div>
           </Req>
@@ -193,22 +193,22 @@ export function ShareFocusDialog({ area, open, onOpenChange }: { area: FocusArea
               <div className="space-y-2">
                 <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2">
                   <p className="min-w-0 flex-1 truncate font-mono text-xs select-all">{share.url}</p>
-                  <Button variant="ghost" size="sm" className="h-11 w-11 shrink-0 sm:h-8 sm:w-8" aria-label={t('Copy link')} onClick={() => void copy()}>{copied ? <CheckIcon /> : <CopyIcon />}</Button>
-                  <Button variant="ghost" size="sm" className="h-11 w-11 shrink-0 sm:h-8 sm:w-8" aria-label={t('Open the page')} asChild>
+                  <Button variant="ghost" size="sm" className="h-11 w-11 shrink-0 sm:h-8 sm:w-8" aria-label={t("Copy link")} onClick={() => void copy()}>{copied ? <CheckIcon /> : <CopyIcon />}</Button>
+                  <Button variant="ghost" size="sm" className="h-11 w-11 shrink-0 sm:h-8 sm:w-8" aria-label={t("Open the page")} asChild>
                     <a href={share.url} target="_blank" rel="noreferrer"><ExternalLinkIcon /></a>
                   </Button>
                 </div>
-                <p className="text-xs text-muted-foreground"><Ago at={share.publishedAt} label="Updated {ago}. Only this area’s requests are on it." /></p>
-                {share.publishError && <p className="text-xs text-destructive" role="alert">{t('Last update didn’t go through: {error}', { error: share.publishError })}</p>}
+                <p className="text-xs text-muted-foreground">{interpolate(t('Updated {ago}. Only this area’s requests are on it.'), { ago: ago(share.publishedAt, Date.now()) })}</p>
+                {share.publishError && <p className="text-xs text-destructive" role="alert">{interpolate(t('Last update didn’t go through: {error}'), { error: share.publishError })}</p>}
               </div>
             </Req>
             <Comments focusAreaId={area.id} />
             <Req ids={['R17.4']}>
               <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-3">
-                {confirmStop && <p className="mr-auto text-xs text-muted-foreground">{t('The link stops working for everyone.')}</p>}
+                {confirmStop && <p className="mr-auto text-xs text-muted-foreground">{t("The link stops working for everyone.")}</p>}
                 <Button variant={confirmStop ? 'destructive' : 'ghost'} size="sm" className="h-11 sm:h-8" disabled={busy}
                   onClick={() => confirmStop ? void run(() => stopSharingFocusArea(area.id)) : setConfirmStop(true)}>
-                  {t(confirmStop ? 'Stop sharing' : 'Stop sharing…')}
+                  {confirmStop ? t("Stop sharing") : t("Stop sharing…")}
                 </Button>
               </div>
             </Req>

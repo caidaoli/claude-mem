@@ -15,7 +15,6 @@ import {
   type ConversationOpenedInApp,
 } from '../../../../shared/conversation-continuation.ts'
 import type { Request } from '../data.ts'
-import { t } from '../i18n/translate.ts'
 import type { ConversationContinuationEvent, ConversationContinuationRead, ConversationContinuationSource, WorkDataSource } from './work-data-source.ts'
 
 /**
@@ -455,12 +454,12 @@ export function conversationRouteFailureSentence(
   body: unknown,
   attemptedAction: string,
 ): string {
-  if (answer.status === 413) return t('Could not {action}: it is too large for the worker to take.', { action: attemptedAction })
+  if (answer.status === 413) return `Could not ${attemptedAction}: it is too large for the worker to take.`
   if (isRecord(body)) {
     if (body.error === 'ValidationError') {
       // validateBody answers a failed request check with this code word and the issues, not with a sentence.
       const issues = validationIssueWords(body.issues)
-      if (issues) return t('Could not {action}: the worker could not read the request ({issues}).', { action: attemptedAction, issues })
+      if (issues) return `Could not ${attemptedAction}: the worker could not read the request (${issues}).`
     } else {
       // The worker-wide guards answer a code word in `error` and their sentence in `message`; the work-view guards and
       // the routes answer their sentence in `error`.
@@ -468,15 +467,15 @@ export function conversationRouteFailureSentence(
       if (sentence) return sentence
     }
   }
-  return t('Could not {action}: the worker answered {status}{statusText}.', { action: attemptedAction, status: answer.status, statusText: answer.statusText ? ` ${answer.statusText}` : '' })
+  return `Could not ${attemptedAction}: the worker answered ${answer.status}${answer.statusText ? ` ${answer.statusText}` : ''}.`
 }
 
 /** A call that never got an answer: the worker is not running, or the connection broke. */
 export function unreachableWorkerSentence(attemptedAction: string, error: unknown): string {
-  return t('Could not {action}: the worker could not be reached ({reason}).', { action: attemptedAction, reason: error instanceof Error ? error.message : String(error) })
+  return `Could not ${attemptedAction}: the worker could not be reached (${error instanceof Error ? error.message : String(error)}).`
 }
 
 /** A success whose body is not what the route sends. It says no more than it knows: a turn may have started. */
 export function unreadableAnswerSentence(status: number): string {
-  return t('The worker answered {status}, but this page cannot read its answer.', { status })
+  return `The worker answered ${status}, but this page cannot read its answer.`
 }

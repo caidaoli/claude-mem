@@ -17,7 +17,6 @@
 // object key or locator), maps route answers to display states, and holds
 // the gallery's keyboard rules. Tested by tests/ui/my-work/observation-media.test.ts.
 // ============================================================
-import { t } from '../../i18n/translate.ts'
 import type { WorkViewMediaManifest, WorkViewMediaRef } from '../../live/work-view-api-types.ts'
 
 export type VMediaRef = WorkViewMediaRef;
@@ -123,13 +122,13 @@ export const STATE_COPY: Record<MediaDisplayState, string> = {
 };
 
 export function inspectionCopy(inspection: VMediaRef['inspection']): string {
-  return t(inspection === 'inspected' ? 'Seen by the observer model' : 'Not inspected by the model');
+  return inspection === 'inspected' ? 'Seen by the observer model' : 'Not inspected by the model';
 }
 
 export function altText(ref: VMediaRef, index: number, total: number, title: string): string {
-  const position = total > 1 ? t(' {index} of {total}', { index: index + 1, total }) : '';
-  const inspected = ref.inspection === 'uninspected' ? t(' (not inspected by the model)') : '';
-  return t('Screenshot{position} ({label}) attached to observation: {title}{inspected}', { position, label: ref.label, title, inspected });
+  const position = total > 1 ? ` ${index + 1} of ${total}` : '';
+  const inspected = ref.inspection === 'uninspected' ? ' (not inspected by the model)' : '';
+  return `Screenshot${position} (${ref.label}) attached to observation: ${title}${inspected}`;
 }
 
 export type GalleryAction = { type: 'close' } | { type: 'go'; index: number } | null;

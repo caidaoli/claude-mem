@@ -21,9 +21,9 @@ export const SAMPLE_RULE_SCOPES: RuleScope[] = [
 ]
 
 /** A dated quote. `kind` is the request-progress preference kind; instruction-file lines are directives. */
-export interface RuleQuote { at: string; atEpoch?: number; quote: string; kind: 'directive' | 'correction' | 'praise' | 'frustration'; where: 'prompt' | 'CLAUDE.md' }
+export interface RuleQuote { at: string; quote: string; kind: 'directive' | 'correction' | 'praise' | 'frustration'; where: 'prompt' | 'CLAUDE.md' }
 /** The records a rule was built from: prompts, request-progress reviews, owner-goals runs, instruction files. */
-export interface RuleRecord { kind: 'Prompt' | 'Review' | 'Goals run' | 'Instructions'; label: string; at: string; atEpoch?: number }
+export interface RuleRecord { kind: 'Prompt' | 'Review' | 'Goals run' | 'Instructions'; label: string; at: string }
 
 export type RuleStatus = WorkViewRule['status']
 export interface OwnerRule {
@@ -37,12 +37,11 @@ export interface OwnerRule {
   quotesOmitted?: WorkViewRule['quotesOmitted']
   timesSeen: number
   latestAt: string
-  latestAtEpoch?: number
   /** For the strength sort: times seen × recency (§14). */
   latestDaysAgo: number
   source: 'request-progress' | 'owner-goals' | 'you'
   status: RuleStatus
-  replacedBy?: { ruleId: string; at: string; atEpoch?: number }
+  replacedBy?: { ruleId: string; at: string }
   records: RuleRecord[]
 }
 

@@ -14,7 +14,7 @@ import { Shimmer } from '@/components/ai-elements/shimmer'
 import { AgentMark } from '@/components/brand'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { t, useLocale } from '@/i18n'
+import { interpolate, t, useI18n } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import {
   buttonLabelsKeepingTheirWidth, continuationEventConcernsConversation, continuationView, conversationAppActions, conversationControlNames,
@@ -29,7 +29,7 @@ import type { ContinuablePlatform } from '../../../../shared/conversation-contin
 const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error)
 
 /** Words from live/conversation-continuation.ts in the page's language: `english` is the catalog key. */
-const inPageLanguage = (words: ContinuationWords) => t(words.english, words.values)
+const inPageLanguage = (words: ContinuationWords) => interpolate(t(words.english), words.values)
 
 /**
  * A button's labels laid in one place, with only the shown one visible (buttonLabelsKeepingTheirWidth), so the button
@@ -103,7 +103,7 @@ function WhereItRuns({ id, words, folderIsGone = false }: { id: string; words: C
  * While the read it asked for is on its way, the button says so in place of its label, and keeps its width.
  */
 function ReadFailure({ view, onTryAgain }: { view: ConversationReadFailureView; onTryAgain: (pressedButton: HTMLButtonElement) => void }) {
-  useLocale()
+  useI18n()
   const failureId = useId()
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -132,7 +132,7 @@ export function ConversationContinue({ platform, conversationSessionId, toolName
    */
   anotherConversationHasTheSameTitle?: boolean
 }) {
-  useLocale()
+  useI18n()
   const source = useStore((state) => state.conversationContinuationSource())
   // Only the page this computer's worker serves can run a CLI here; sample data and a cloud-served page add nothing.
   if (!source) return null
@@ -165,7 +165,7 @@ function ContinuableConversation({
   conversationTitle: string
   anotherConversationHasTheSameTitle: boolean
 }) {
-  useLocale()
+  useI18n()
   const [read, setRead] = useState<ConversationContinuationRead | null>(null)
   /** Why the newest read that answered failed. Only a read's answer changes it: "Try again" leaves it on screen. */
   const [readFailure, setReadFailure] = useState<string | null>(null)

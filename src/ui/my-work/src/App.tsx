@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, type ReactNode } from 'react'
 import { MotionConfig } from 'motion/react'
 import { CreditCardIcon, InboxIcon, ListChecksIcon, UsersIcon } from 'lucide-react'
+import { LOCALES, LOCALE_NAMES, useI18n, type Locale } from '@/lib/i18n'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
@@ -13,10 +14,8 @@ import { ActivePill, ClassicViewerLink, DeviceFreshness, FeedbackLink, GitHubSta
 import { Navbar, NavBody } from '@/components/aceternity/resizable-navbar'
 import { Notch } from '@/components/aceternity/notch'
 import { StickyBanner } from '@/components/aceternity/sticky-banner'
-import { LanguageSwitcher } from '@/components/language-switcher'
 import { CmemMark } from '@/components/brand'
 import { FocusChipRow, FocusRail, PastFocusLink, SIDE_NAV_PILL } from '@/components/focus-nav'
-import { t, useLocale } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { MyWork } from '@/pages/my-work'
 import { Req } from '@/spec/req'
@@ -61,9 +60,9 @@ function AccountAndBillingLink() {
   if (!isServedFromCloud(window.location.hostname)) return null
   return (
     <Req ids={['R18.1']}>
-      <a href={ACCOUNT_AND_BILLING_URL} title={t('Account & billing')} className="relative flex h-10 w-full items-center gap-2.5 rounded-[10px] px-1.5 text-left text-[0.9rem] text-foreground/85 transition-colors hover:bg-card/70">
+      <a href={ACCOUNT_AND_BILLING_URL} title="Account & billing" className="relative flex h-10 w-full items-center gap-2.5 rounded-[10px] px-1.5 text-left text-[0.9rem] text-foreground/85 transition-colors hover:bg-card/70">
         <NavTile icon={CreditCardIcon} active={false} />
-        <span className="relative hidden lg:inline">{t('Account & billing')}</span>
+        <span className="relative hidden lg:inline">Account &amp; billing</span>
       </a>
     </Req>
   )
@@ -81,6 +80,7 @@ function HeaderBody({ visible, children }: { visible?: boolean; children: ReactN
 
 /** TeamBrain is a switch on the same GUI; turning it on is where the team plan is bought (§9). */
 function TeamSwitch({ team, onChange }: { team: boolean; onChange: (team: boolean) => void }) {
+  const { t } = useI18n()
   return (
     <Req ids={['R9.1', 'R9.4']}>
       <HoverCard openDelay={100}>
@@ -97,6 +97,23 @@ function TeamSwitch({ team, onChange }: { team: boolean; onChange: (team: boolea
   )
 }
 
+function LanguageSelector() {
+  const { t, locale, setLocale } = useI18n()
+  return (
+    <div className="flex items-center">
+      <select
+        aria-label={t('Language')}
+        value={locale}
+        onChange={(e) => setLocale(e.target.value as Locale)}
+        // The control edge, ≥3:1 on the header in both themes (G12; --border measured 1.53:1 dark, 1.26:1 light).
+        className="h-7 rounded-md border border-control-edge bg-card px-2 text-xs text-muted-foreground transition-colors hover:text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+      >
+        {LOCALES.map((code) => <option key={code} value={code}>{LOCALE_NAMES[code]}</option>)}
+      </select>
+    </div>
+  )
+}
+
 const SetupPage = lazy(() => import('@/setup/setup-page'))
 const MyRules = lazy(() => import('@/pages/my-rules').then(module => ({ default: module.MyRules })))
 const SuggestedAreas = lazy(() => import('@/pages/suggested-areas').then(module => ({ default: module.SuggestedAreas })))
@@ -105,6 +122,7 @@ const RequestDetail = lazy(() => import('@/components/request-detail').then(modu
 
 /** The shell remains usable while a secondary page's code arrives. */
 function PageLoading({ label }: { label: string }) {
+  const { t } = useI18n()
   return <section aria-label={label} aria-busy="true" className="rounded-xl border bg-card/60 p-6">
     <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner className="size-4" />{t('Loading…')}</p>
   </section>
@@ -112,10 +130,11 @@ function PageLoading({ label }: { label: string }) {
 
 /** Opening a request responds immediately, including focus trapping and a working close control. */
 function RequestDetailLoading({ title, onClose }: { title: string; onClose: () => void }) {
+  const { t } = useI18n()
   return <Sheet open onOpenChange={(open) => { if (!open) onClose() }}>
-    <SheetContent className="w-full gap-0 overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
-      <SheetHeader className="gap-3 border-b p-5 md:p-6">
-        <SheetTitle className="pr-8 text-xl leading-snug">{title}</SheetTitle>
+    <SheetContent>
+      <SheetHeader className="gap-3 border-b p-5 pr-14 md:p-6 md:pr-14">
+        <SheetTitle className="text-xl leading-snug">{title}</SheetTitle>
         <SheetDescription>{t('Request details')}</SheetDescription>
       </SheetHeader>
       <p role="status" className="flex items-center gap-2 p-5 text-sm text-muted-foreground md:p-6"><Spinner className="size-4" />{t('Loading request detail…')}</p>
@@ -124,8 +143,6 @@ function RequestDetailLoading({ title, onClose }: { title: string; onClose: () =
 }
 
 export default function App() {
-  // A language switch re-renders the whole tree from here.
-  useLocale()
   // An agent may leave setup for the person's first visit. Only a persisted
   // install handoff opens it automatically; old installations and cloud readers keep My Work.
   const page = useStore((state) => state.view.page)
@@ -148,6 +165,7 @@ export default function App() {
 
 /** Reads the active source once and follows its live feed, then renders the app. A failed load says so plainly instead of showing anything made up. */
 function WorkApp() {
+  const { t } = useI18n()
   const load = useStore((state) => state.work.load)
   const startWorkSource = useStore.use.startWorkSource()
   const retryWorkRead = useStore.use.retryWorkRead()
@@ -156,7 +174,9 @@ function WorkApp() {
   return (
     <div className="flex min-h-svh items-center justify-center p-4 text-foreground">
       <Empty className="max-w-md border bg-card/60">
-        <EmptyHeader>
+        {/* While reading, the header is the one status region, so "Reading local work…" is announced once (the ring
+            beside it says nothing, D b18 M 372). */}
+        <EmptyHeader role={load.state === 'loading' ? 'status' : undefined}>
           {load.state === 'loading' ? <><Spinner /><EmptyTitle>{t('Reading local work…')}</EmptyTitle></> : (
             <>
               <EmptyTitle>{t("Can't read local work right now")}</EmptyTitle>
@@ -171,6 +191,7 @@ function WorkApp() {
 }
 
 function LoadedApp() {
+  const { t } = useI18n()
   const { sourceKind, requests, focusAreas } = useWorkModel()
   // Which areas are shared, for their Shared mark. The worker keeps the pages current (R17.3).
   useFocusSharesLoader(sourceKind === 'local')
@@ -205,8 +226,8 @@ function LoadedApp() {
                 {sample && <Badge variant="outline" className="font-normal">{t('Wireframe · sample data')}</Badge>}
                 {sample && <Req ids={['R13.1']}>
                   <ToggleGroup type="single" size="sm" variant="outline" spacing={1} className="flex-nowrap" value={workspace.mode} onValueChange={(mode) => mode && setWorkspace({ mode: mode as 'home' | 'web', connected: mode === 'web' || workspace.connected })}>
-                    <ToggleGroupItem value="home" className="h-7 text-xs">{t('At home')}<span className="hidden md:inline">· localhost:37777</span></ToggleGroupItem>
-                    <ToggleGroupItem value="web" className="h-7 text-xs">{t('On the go')}<span className="hidden md:inline">· cmem.ai</span></ToggleGroupItem>
+                    <ToggleGroupItem value="home" className="h-7 text-xs">{t('At home')}<span className="hidden md:inline">{t('· localhost:37777')}</span></ToggleGroupItem>
+                    <ToggleGroupItem value="web" className="h-7 text-xs">{t('On the go')}<span className="hidden md:inline">{t('· cmem.ai')}</span></ToggleGroupItem>
                   </ToggleGroup>
                 </Req>}
                 <div className="ml-auto flex items-center gap-3">
@@ -235,9 +256,9 @@ function LoadedApp() {
                       <TeamSwitch team={workspace.team} onChange={(team) => setWorkspace({ team })} />
                       <DeviceFreshness />
                       <LiveIndicator />
+                      <LanguageSelector />
                       <ClassicViewerLink />
                       <FeedbackLink />
-                      <LanguageSwitcher />
                       <GitHubStars />
                     </div>
                   </HeaderBody>
@@ -256,7 +277,7 @@ function LoadedApp() {
                             {pageActive(id) && <ActivePill layoutId={SIDE_NAV_PILL} />}
                             <NavTile icon={icon} active={pageActive(id)} />
                             <span className="relative hidden lg:inline">{t(label)}</span>
-                            {id === 'work' && yourMoveCount > 0 && <span className="absolute top-0.5 right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground lg:relative lg:top-auto lg:right-auto lg:ml-auto lg:h-5 lg:min-w-5 lg:text-[11px]">{yourMoveCount}<span className="sr-only">{t(' need you')}</span></span>}
+                            {id === 'work' && yourMoveCount > 0 && <span className="absolute top-0.5 right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground lg:relative lg:top-auto lg:right-auto lg:ml-auto lg:h-5 lg:min-w-5 lg:text-[11px]">{yourMoveCount}<span className="sr-only"> {t('need you')}</span></span>}
                           </button>
                         ))}
                       </div>
@@ -297,7 +318,7 @@ function LoadedApp() {
                           <span className={cn('relative flex flex-col items-center gap-1', pageActive(id) ? 'font-semibold text-accent-foreground' : 'text-muted-foreground')}>
                             <NavTile icon={icon} active={pageActive(id)} />{t(label)}
                           </span>
-                          {id === 'work' && yourMoveCount > 0 && <span className="absolute top-1.5 left-[calc(50%+6px)] flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">{yourMoveCount}<span className="sr-only">{t(' need you')}</span></span>}
+                          {id === 'work' && yourMoveCount > 0 && <span className="absolute top-1.5 left-[calc(50%+6px)] flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">{yourMoveCount}<span className="sr-only"> {t('need you')}</span></span>}
                         </>
                       ),
                     }))}

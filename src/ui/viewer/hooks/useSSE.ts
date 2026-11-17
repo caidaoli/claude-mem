@@ -1,6 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useI18n } from '../i18n';
-import { en } from '../i18n/locales/en';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Observation, Summary, UserPrompt, StreamEvent, FeedItemType } from '../types';
 import { API_ENDPOINTS } from '../constants/api';
 import { TIMING } from '../constants/timing';
@@ -17,6 +15,8 @@ export interface LiveSessionItem {
   session: SessionRef;
   project: string;
   createdAtEpoch: number;
+  /** A live summary's request: the session's newest summary title from now on. */
+  summaryTitle?: string;
 }
 
 /**
@@ -51,11 +51,6 @@ export interface StreamHandlers {
 }
 
 export function useSSE(handlers: StreamHandlers) {
-  const { t } = useI18n();
-  const syncTranslations = useMemo(() => new Map<string, string>(Object.entries(en.sync).map(([key, source]) => [source, t.sync[key as keyof typeof en.sync]])), [t.sync]);
-  const syncTranslationsRef = useRef(syncTranslations);
-  syncTranslationsRef.current = syncTranslations;
-  const translateSync = (message: string) => syncTranslationsRef.current.get(message) ?? message;
   const [observations, setObservations] = useState<Observation[]>([]);
   const [summaries, setSummaries] = useState<Summary[]>([]);
   const [prompts, setPrompts] = useState<UserPrompt[]>([]);
@@ -63,7 +58,7 @@ export function useSSE(handlers: StreamHandlers) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [queueDepth, setQueueDepth] = useState(0);
   const [isConnected, setIsConnected] = useState(false);
-  const [syncStatus, setSyncStatus] = useState(() => presentSync(null, null, performance.now(), translateSync));
+  const [syncStatus, setSyncStatus] = useState(() => presentSync(null, null, performance.now()));
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
   const handlersRef = useRef(handlers);
@@ -118,9 +113,10 @@ export function useSSE(handlers: StreamHandlers) {
     setProjects(prev => prev.includes(project) ? prev : [...prev, project]);
   };
 
-  const reportLiveItem = (row: { content_session_id?: string | null; session_id?: string | null; platform_source?: string | null; project: string; created_at_epoch: number }) => {
+  const reportLiveItem = (row: { content_session_id?: string | null; session_id?: string | null; platform_source?: string | null; project: string; created_at_epoch: number; request?: string | null }) => {
     const session = sessionRefOf(row);
-    if (session) handlersRef.current.onLiveItem({ session, project: row.project, createdAtEpoch: row.created_at_epoch });
+    const summaryTitle = typeof row.request === 'string' && row.request.trim() ? row.request.trim() : undefined;
+    if (session) handlersRef.current.onLiveItem({ session, project: row.project, createdAtEpoch: row.created_at_epoch, summaryTitle });
   };
 
   useEffect(() => {
@@ -130,7 +126,7 @@ export function useSSE(handlers: StreamHandlers) {
     let statusRequest: AbortController | null = null;
     const syncEvidence: { value: SyncStatusForDisplay | null; receivedAt: number | null } = { value: null, receivedAt: null };
     const refreshSync = () => {
-      const next = presentSync(syncEvidence.value, syncEvidence.receivedAt, performance.now(), translateSync);
+      const next = presentSync(syncEvidence.value, syncEvidence.receivedAt, performance.now());
       setSyncStatus(previous => previous.state === next.state && previous.label === next.label && previous.detail === next.detail ? previous : next);
     };
     const acceptSync = (value: unknown) => {

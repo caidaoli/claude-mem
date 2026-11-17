@@ -1,4 +1,5 @@
 import { displayTime } from '@/lib/display-time'
+import { t, useI18n, interpolate } from '@/lib/i18n'
 import { useMemo, useRef, useState, type ReactNode } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
 import { ArrowRightIcon, ArrowUpDownIcon, ChevronDownIcon, ImageIcon, InboxIcon, PlugIcon, TriangleAlertIcon } from 'lucide-react'
@@ -20,7 +21,6 @@ import { ChangeTicker } from '@/components/live-motion'
 import { RequestCard } from '@/components/request-card'
 import { SplitFlapText } from '@/components/split-flap'
 import { SaveButton } from '@/components/save-button'
-import { t } from '@/i18n'
 import { useMatchesMedia } from '@/lib/use-media'
 import { cn } from '@/lib/utils'
 import { Req } from '@/spec/req'
@@ -83,9 +83,9 @@ function Summary({ requests, onOpen, onShowNeedsYou, onShowWorking }: { requests
         <p className="flex flex-wrap items-center gap-x-2 text-[0.95rem] leading-snug md:text-base">
           {first ? (
             <>
-              <span className="font-semibold">{waiting === 1 ? t('One thing needs you:') : t('{count} need you. First:', { count: waiting })}</span>
+              <span className="font-semibold">{waiting === 1 ? t("One thing needs you:") : interpolate(t('{count} need you. First:'), { count: waiting })}</span>
               <button type="button" onClick={() => onOpen(first)} className="inline-flex min-h-11 items-center gap-1 text-left font-semibold text-attention-foreground underline decoration-attention-border underline-offset-4 hover:decoration-current md:min-h-8">
-                {reduceMotion ? t(first.next.text) : <PointerHighlight rectangleClassName="rounded-sm border-attention-border" pointerClassName="text-attention-foreground">{t(first.next.text)}</PointerHighlight>}<ArrowRightIcon className="size-4 shrink-0" />
+                {reduceMotion ? first.next.text : <PointerHighlight rectangleClassName="rounded-sm border-attention-border" pointerClassName="text-attention-foreground">{first.next.text}</PointerHighlight>}<ArrowRightIcon className="size-4 shrink-0" />
               </button>
             </>
           ) : <span className="font-semibold">{t("Nothing needs you right now.")}</span>}
@@ -94,7 +94,7 @@ function Summary({ requests, onOpen, onShowNeedsYou, onShowWorking }: { requests
         <p className={cn('flex flex-wrap items-center gap-x-1.5 text-sm text-muted-foreground', first && !reduceMotion && 'pt-4')}>
           {moving.length ? (
             <>
-              <span className="inline-flex items-center gap-1.5 text-working-foreground"><span className="size-1.5 rounded-full bg-working-foreground motion-safe:animate-pulse" />{t('Moving now:')}</span>
+              <span className="inline-flex items-center gap-1.5 text-working-foreground"><span className="size-1.5 rounded-full bg-working-foreground motion-safe:animate-pulse" />Moving now:</span>
               {/* Phones name the first one; wider screens name up to MOVING_NAMED. */}
               {moving.slice(0, MOVING_NAMED).map((request, index) => (
                 <span key={request.id} className={cn('min-w-0 items-center', index === 0 ? 'inline-flex' : 'hidden md:inline-flex')}>
@@ -104,12 +104,12 @@ function Summary({ requests, onOpen, onShowNeedsYou, onShowWorking }: { requests
                   {index < Math.min(moving.length, MOVING_NAMED) - 1 && <span className="hidden md:inline">,</span>}
                 </span>
               ))}
-              {moving.length > 1 && <button type="button" onClick={onShowWorking} className="min-h-11 underline underline-offset-4 hover:text-foreground md:hidden">{t('and {count} more', { count: moving.length - 1 })}</button>}
-              {moving.length > MOVING_NAMED && <button type="button" onClick={onShowWorking} className="hidden underline underline-offset-4 hover:text-foreground md:inline md:min-h-6">{t('and {count} more', { count: moving.length - MOVING_NAMED })}</button>}
+              {moving.length > 1 && <button type="button" onClick={onShowWorking} className="min-h-11 underline underline-offset-4 hover:text-foreground md:hidden">and {moving.length - 1} more</button>}
+              {moving.length > MOVING_NAMED && <button type="button" onClick={onShowWorking} className="hidden underline underline-offset-4 hover:text-foreground md:inline md:min-h-6">and {moving.length - MOVING_NAMED} more</button>}
             </>
-          ) : <span>{t('Nothing is moving right now.')}</span>}
-          {toCheck.length > 0 && <span>{t(' · {count} waiting for your check', { count: toCheck.length }).trim()}</span>}
-          {waiting > 1 && <>·<button type="button" onClick={onShowNeedsYou} className="min-h-11 underline underline-offset-4 hover:text-foreground md:min-h-6">{t('Show all {count} that need you', { count: waiting })}</button></>}
+          ) : <span>Nothing is moving right now.</span>}
+          {toCheck.length > 0 && <span>{interpolate(t(' · {count} waiting for your check'), { count: toCheck.length }).trim()}</span>}
+          {waiting > 1 && <>·<button type="button" onClick={onShowNeedsYou} className="min-h-11 underline underline-offset-4 hover:text-foreground md:min-h-6">Show all {waiting} that need you</button></>}
         </p>
       </div>
     </Req>
@@ -131,7 +131,7 @@ function TodayPanel({ story, onOpenStory }: { story: BuildStory; onOpenStory: ()
       <div className="min-w-0 space-y-3">
         <Req ids={['R7.1', 'R7.2']}>
           <div className="space-y-1">
-            <p className="section-label">{story.writtenAt ? t('Build story · {writtenAt}', { writtenAt: displayTime(story.writtenAt) }) : t("Build story")}</p>
+            <p className="section-label">{story.writtenAt ? interpolate(t('Build story · {writtenAt}'), { writtenAt: displayTime(story.writtenAt) }) : t("Build story")}</p>
             <p className="text-sm">{story.recap}</p>
             <Button variant="link" className="h-11 p-0 text-sm text-accent-foreground md:h-auto" onClick={onOpenStory}>{t("Read the build story")}</Button>
           </div>
@@ -140,9 +140,9 @@ function TodayPanel({ story, onOpenStory }: { story: BuildStory; onOpenStory: ()
           <Req ids={['R8.2']}>
             <div className="flex flex-wrap items-center gap-2 border-t border-border/70 pt-3 text-sm">
               <PlugIcon className="size-4 text-muted-foreground" />
-              <span className="mr-auto text-muted-foreground">{t('See this on your phone, and in Claude.ai and ChatGPT.')}</span>
-              <Button size="sm" variant="outline" className="h-11 md:h-8">{t('Connect Claude.ai')}</Button>
-              <Button size="sm" variant="outline" className="h-11 md:h-8">{t('Connect ChatGPT')}</Button>
+              <span className="mr-auto text-muted-foreground">{t("See this on your phone, and in Claude.ai and ChatGPT.")}</span>
+              <Button size="sm" variant="outline" className="h-11 md:h-8">{t("Connect Claude.ai")}</Button>
+              <Button size="sm" variant="outline" className="h-11 md:h-8">{t("Connect ChatGPT")}</Button>
             </div>
           </Req>
         )}
@@ -161,32 +161,33 @@ function StorySheet({ open, story, requests, onClose, onOpenRules }: { open: boo
   const scrollRef = useRef<HTMLDivElement>(null)
   return (
     <Sheet open={open} onOpenChange={(next) => { if (!next) onClose() }}>
-      <SheetContent ref={scrollRef} className="overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-lg">
-        <SheetHeader>
-          <SheetTitle>{t('Build story')}</SheetTitle>
-          <SheetDescription>{story.writtenAt ? t('From request-progress, reviewed from memory, written {at}.', { at: story.writtenAt }) : t('From request-progress, reviewed from memory.')}</SheetDescription>
+      {/* The one sheet width and the scrolling come from SheetContent (D b17 M 355); this panel adds only its spacing. */}
+      <SheetContent ref={scrollRef}>
+        <SheetHeader className="pr-14">
+          <SheetTitle>{t("Build story")}</SheetTitle>
+          <SheetDescription>{interpolate(t('From request-progress, reviewed from memory{writtenAt}.'), { writtenAt: story.writtenAt ? `, ${interpolate(t('written {date}'), { date: displayTime(story.writtenAt) })}` : '' })}</SheetDescription>
         </SheetHeader>
-        <TracingBeam scrollContainer={scrollRef} className="pr-4 pb-6 pl-10">
+        <TracingBeam scrollContainer={scrollRef} className="mt-4 pr-4 pb-6 pl-10">
         <div className="space-y-6">
           <Req ids={['R7.1']}>
-            <p className="text-sm">{t(shipped === 1 ? '{shipped} request shipped and {waiting} waiting on you.' : '{shipped} requests shipped and {waiting} waiting on you.', { shipped, waiting })}</p>
+            <p className="text-sm">{interpolate(t(shipped === 1 ? '{shipped} request shipped and {waiting} waiting on you.' : '{shipped} requests shipped and {waiting} waiting on you.'), { shipped: shipped, waiting: waiting })}</p>
           </Req>
           <Req ids={['R7.2']}>
             <div className="space-y-3">{story.paragraphs.map((paragraph, index) => <p key={index} className="text-sm text-muted-foreground">{paragraph}</p>)}</div>
           </Req>
           <Req ids={['R7.3']}>
             <div className="space-y-2">
-              <h4 className="section-label">{t('What it learned about how you work')}</h4>
-              {learned.length === 0 && <p className="text-sm text-muted-foreground">{t('No preferences learned yet.')}</p>}
+              <h4 className="section-label">{t("What it learned about how you work")}</h4>
+              {learned.length === 0 && <p className="text-sm text-muted-foreground">{t("No preferences learned yet.")}</p>}
               <ul className="space-y-2">
                 {learned.map((rule) => (
                   <li key={rule.id} className="text-sm">
-                    {rule.when ? t('When {when}: {then}', { when: rule.when, then: rule.then }) : rule.then}
-                    {rule.status === 'suggested' && <span className="ml-1.5 text-xs text-muted-foreground">{t('· suggested, not approved yet')}</span>}
+                    {rule.when ? interpolate(t('When {when}: {then}'), { when: rule.when, then: rule.then }) : rule.then}
+                    {rule.status === 'suggested' && <span className="ml-1.5 text-xs text-muted-foreground">{t("· suggested, not approved yet")}</span>}
                   </li>
                 ))}
               </ul>
-              <Button variant="outline" className="h-11 md:h-9" onClick={onOpenRules}>{t('Review in My Rules')}</Button>
+              <Button variant="outline" className="h-11 md:h-9" onClick={onOpenRules}>{t("Review in My Rules")}</Button>
             </div>
           </Req>
         </div>
@@ -251,17 +252,17 @@ function CardsView({ requests, grouped, readErrors, onOpen, onOpenFocus }: { req
         : (
           <motion.div key={entry.key} layout="position" transition={GLIDE} className="col-span-full flex items-center gap-2.5 pt-2 first:pt-0">
             <span className={cn('size-2 rounded-full', entry.group.dot)} />
-            <h2 className="text-sm font-semibold tracking-tight">{t(entry.group.label)}</h2>
+            <h2 className="text-sm font-semibold tracking-tight">{entry.group.label}</h2>
             <span className="text-sm text-muted-foreground tabular-nums">{entry.count}</span>
             <span className="h-px flex-1 bg-border/70" />
             {entry.folds && (
               <Button variant="ghost" size="sm" className="h-11 text-xs text-muted-foreground md:h-7" aria-expanded={entry.open} onClick={() => setUnfolded((current) => ({ ...current, [entry.group.id]: !entry.open }))}>
-                {entry.open ? t('Show fewer') : t('Show all {count}', { count: entry.count })}<ChevronDownIcon className={cn('transition-transform', entry.open && 'rotate-180')} />
+                {entry.open ? 'Show fewer' : `Show all ${entry.count}`}<ChevronDownIcon className={cn('transition-transform', entry.open && 'rotate-180')} />
               </Button>
             )}
           </motion.div>
         ))}
-      {errors.length > 0 && <p key="heading-errors" className="col-span-full pt-2 text-sm font-semibold tracking-tight">{t('Couldn’t read')}</p>}
+      {errors.length > 0 && <p key="heading-errors" className="col-span-full pt-2 text-sm font-semibold tracking-tight">Couldn't read</p>}
       {errors}
     </div>
   )
@@ -319,13 +320,13 @@ function ListView({ requests, sort, onSort, onOpen, onOpenFocus }: { requests: R
         <Table>
           <TableHeader className="bg-surface/60">
             <TableRow>
-              <TableHead className="w-10"><span className="sr-only">{t('Agent')}</span></TableHead>
-              <TableHead>{t('Request')}</TableHead>
-              {team && <TableHead>{t('Asked by')}</TableHead>}
-              {sortHead(t('Status'), 'attention')}
-              <TableHead>{t('Next step')}</TableHead>
-              {sortHead(t('Progress'), 'progress')}
-              {sortHead(t('Started'), 'started')}
+              <TableHead className="w-10"><span className="sr-only">{t("Agent")}</span></TableHead>
+              <TableHead>{t("Request")}</TableHead>
+              {team && <TableHead>{t("Asked by")}</TableHead>}
+              {sortHead('Status', 'attention')}
+              <TableHead>{t("Next step")}</TableHead>
+              {sortHead('Progress', 'progress')}
+              {sortHead('Started', 'started')}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -336,7 +337,7 @@ function ListView({ requests, sort, onSort, onOpen, onOpenFocus }: { requests: R
                   <button type="button" onClick={(event) => { event.stopPropagation(); onOpen(request) }} className={cn('rounded-sm text-left leading-snug font-medium hover:underline focus-visible:outline-2 focus-visible:outline-ring', !request.title && 'text-muted-foreground')}>{titleOf(request)}</button>
                   <div><FocusAreaChip focusAreaId={request.focusAreaId} onOpen={onOpenFocus} /></div>
                 </TableCell>
-                {team && <TableCell className="align-top text-sm">{t(request.askedBy)}</TableCell>}
+                {team && <TableCell className="align-top text-sm">{request.askedBy}</TableCell>}
                 <TableCell className="align-top"><FlipStatus state={request.state} /></TableCell>
                 <TableCell className="max-w-64 align-top whitespace-normal"><NextMove next={request.next} /></TableCell>
                 <TableCell className="w-32 align-top"><ProgressMeter request={request} compact /></TableCell>
@@ -411,11 +412,11 @@ function ByAgentView({ requests, onOpen }: { requests: Request[]; onOpen: (reque
             <motion.div key={agent.id} layout="position" transition={GLIDE} className="mb-4 break-inside-avoid">
             <HoverCell>
             <Agent className="min-w-0">
-              <AgentHeader name={t(agent.name)} role={t(agent.role)} icon={<AgentMark tool={agent.tool} className="size-5" />}
-                model={`${t(device.name)} · ${device.syncedMinutesAgo === 0 ? t('this machine') : t('synced {minutes} min ago', { minutes: device.syncedMinutesAgo })}`} />
+              <AgentHeader name={agent.name} role={agent.role} icon={<AgentMark tool={agent.tool} className="size-5" />}
+                model={`${device.name} · ${device.syncedMinutesAgo === 0 ? t("this machine") : interpolate(t('synced {minutes} min ago'), { minutes: device.syncedMinutesAgo })}`} />
               <AgentContent className="space-y-0 px-2 pb-2">
                 <SubagentStatus agent={agent} />
-                {theirs.length === 0 && <p className="px-3 pb-3 text-sm text-muted-foreground">{t('Nothing on it in this view.')}</p>}
+                {theirs.length === 0 && <p className="px-3 pb-3 text-sm text-muted-foreground">{t("Nothing on it in this view.")}</p>}
                 {theirs.map((request) => (
                   <button key={request.id} type="button" onClick={() => onOpen(request)} className="flex w-full min-w-0 flex-col gap-1.5 rounded-lg px-3 py-2.5 text-left hover:bg-surface focus-visible:outline-2 focus-visible:outline-ring">
                     <span className="flex w-full min-w-0 items-start justify-between gap-2">
@@ -445,14 +446,14 @@ function TeamBoard({ requests, onOpen }: { requests: Request[]; onOpen: (request
         {sourceKind === 'sample' && (
           <Alert className="border-attention-border bg-attention text-attention-foreground">
             <TriangleAlertIcon />
-            <AlertTitle>{t('Possible collision (sample)')}</AlertTitle>
-            <AlertDescription className="text-attention-foreground">{t('Alex and Priya both have agents changing the price forecast page.')}</AlertDescription>
+            <AlertTitle>{t("Possible collision (sample)")}</AlertTitle>
+            <AlertDescription className="text-attention-foreground">{t("Alex and Priya both have agents changing the price forecast page.")}</AlertDescription>
           </Alert>
         )}
         <div className="grid gap-4 md:grid-cols-3">
           {people.map((person) => (
             <div key={person} className="space-y-2.5 rounded-xl border bg-card/60 p-4 shadow-panel">
-              <p className="section-label">{t(person)}</p>
+              <p className="section-label">{person}</p>
               {requests.filter((request) => request.askedBy === person).map((request) => (
                 <button key={request.id} type="button" onClick={() => onOpen(request)} className="w-full space-y-2 rounded-lg border bg-card p-3 text-left hover:bg-surface">
                   <p className="text-sm leading-snug">{titleOf(request)}</p>
@@ -473,10 +474,10 @@ function RequestReadErrorCard({ readError }: { readError: RequestReadError }) {
     <Req ids={['R12.1']}>
       <Alert className="h-full border-attention-border bg-card">
         <TriangleAlertIcon />
-        <AlertTitle className="line-clamp-none">{t("Couldn't read this request: {reason}", { reason: readError.reason })}</AlertTitle>
+        <AlertTitle className="line-clamp-none">{interpolate(t("Couldn't read this request: {reason}"), { reason: readError.reason })}</AlertTitle>
         <AlertDescription>
           {readError.title && <p>{readError.title}</p>}
-          {readError.evidenceHref && <a href={readError.evidenceHref} target="_blank" rel="noreferrer" className="underline underline-offset-4 hover:text-foreground">{t('Open the prompt it came from')}</a>}
+          {readError.evidenceHref && <a href={readError.evidenceHref} target="_blank" rel="noreferrer" className="underline underline-offset-4 hover:text-foreground">{t("Open the prompt it came from")}</a>}
         </AlertDescription>
       </Alert>
     </Req>
@@ -488,6 +489,7 @@ function RequestReadErrorCard({ readError }: { readError: RequestReadError }) {
  * show; requests not sorted yet ("Sorting…") show only under every request.
  */
 export function MyWork({ focusAreaId, onOpen, onOpenFocus, onOpenRules }: { focusAreaId: string | null; onOpen: (request: Request) => void; onOpenFocus: (focusAreaId: string) => void; onOpenRules: () => void }) {
+  useI18n()
   const { team } = useWorkspace()
   const { sourceKind, requests: allRequests, requestReadErrors: allReadErrors, unlinkedWorkCount, sourceHealth, buildStory, lastRuns, refresh, focusAreas } = useWorkModel()
   const area = focusAreaId && focusAreaId !== OTHER_FOCUS_AREA_ID ? focusAreas.find((entry) => entry.id === focusAreaId) ?? null : null
@@ -528,7 +530,7 @@ export function MyWork({ focusAreaId, onOpen, onOpenFocus, onOpenRules }: { focu
 
       <div className="flex flex-wrap items-center gap-2 md:gap-3">
         <Req ids={['R4.1', 'R4.2', 'R4.3', 'R9.2']}>
-          <ToggleGroup type="single" variant="outline" size="sm" spacing={1} value={view} onValueChange={(next) => next && setView(next as View)} aria-label={t('View')}>
+          <ToggleGroup type="single" variant="outline" size="sm" spacing={1} value={view} onValueChange={(next) => next && setView(next as View)} aria-label={t("View")}>
             {VIEWS.filter((entry) => entry.value !== 'team' || team).map(({ value, label }) => (
               <ToggleGroupItem key={value} value={value} className="relative h-11 px-3.5 data-[state=on]:bg-transparent data-[state=on]:hover:bg-transparent md:h-8">
                 {view === value && <ActivePill layoutId="view-toggle-active-pill" />}
@@ -556,7 +558,7 @@ export function MyWork({ focusAreaId, onOpen, onOpenFocus, onOpenRules }: { focu
         )}
         {/* Phone: the filters wrap to a second row instead of widening the page past the screen; the sort stays beside them. */}
         <div className="flex w-full items-start gap-1 md:w-auto md:items-center">
-          <ToggleGroup type="single" variant="outline" size="sm" spacing={1} value={filter} onValueChange={(next) => next && setFilter(next as Filter)} aria-label={t('Filter')} className="min-w-0 flex-1 md:flex-none md:flex-nowrap">
+          <ToggleGroup type="single" variant="outline" size="sm" spacing={1} value={filter} onValueChange={(next) => next && setFilter(next as Filter)} aria-label={t("Filter")} className="min-w-0 flex-1 md:flex-none md:flex-nowrap">
             {FILTERS.filter((entry) => entry.value !== 'closed' || filter === 'closed' || requests.some(entry.matches)).map(({ value, label, dot, matches: test }) => (
               <ToggleGroupItem key={value} value={value} className="h-11 gap-1.5 px-3 md:h-8">
                 {dot && <span className={cn('size-1.5 rounded-full', dot)} />}
@@ -567,7 +569,8 @@ export function MyWork({ focusAreaId, onOpen, onOpenFocus, onOpenRules }: { focu
           </ToggleGroup>
           {view !== 'agents' && view !== 'team' && (
             <Select value={sort} onValueChange={(next) => setSort(next as SortKey)}>
-              <SelectTrigger aria-label={t('Sort')} className="h-11 border-transparent bg-transparent px-2.5 text-[0.82rem] text-muted-foreground shadow-none data-[size=default]:h-11 md:h-8 md:data-[size=default]:h-8 [&>svg:last-child]:hidden sm:[&>svg:last-child]:inline"><ArrowUpDownIcon className="size-4" /><span className="hidden sm:inline"><SelectValue /></span></SelectTrigger>
+              {/* The primitive's ≥3:1 control edge stays (G12; a transparent edge here measured 1.0:1). */}
+              <SelectTrigger aria-label={t("Sort")} className="h-11 bg-transparent px-2.5 text-[0.82rem] text-muted-foreground shadow-none data-[size=default]:h-11 md:h-8 md:data-[size=default]:h-8 [&>svg:last-child]:hidden sm:[&>svg:last-child]:inline"><ArrowUpDownIcon className="size-4" /><span className="hidden sm:inline"><SelectValue /></span></SelectTrigger>
               <SelectContent>{SORTS.map(({ value, label }) => <SelectItem key={value} value={value}>{t(label)}</SelectItem>)}</SelectContent>
             </Select>
           )}
@@ -579,8 +582,8 @@ export function MyWork({ focusAreaId, onOpen, onOpenFocus, onOpenRules }: { focu
           <Empty className="border bg-card/60">
             <EmptyHeader>
               <EmptyMedia variant="icon"><InboxIcon /></EmptyMedia>
-              <EmptyTitle>{t(focusAreaId ? 'No requests in this area yet.' : 'No requests recorded yet.')}</EmptyTitle>
-              <EmptyDescription>{t(focusAreaId ? 'A refresh places new requests here, or move one here from its page.' : 'Ask an agent for something and it appears here.')}</EmptyDescription>
+              <EmptyTitle>{focusAreaId ? t("No requests in this area yet.") : t("No requests recorded yet.")}</EmptyTitle>
+              <EmptyDescription>{focusAreaId ? t("A refresh places new requests here, or move one here from its page.") : t("Ask an agent for something and it appears here.")}</EmptyDescription>
             </EmptyHeader>
           </Empty>
         </Req>
@@ -589,8 +592,8 @@ export function MyWork({ focusAreaId, onOpen, onOpenFocus, onOpenRules }: { focu
           <Empty className="border bg-card/60">
             <EmptyHeader>
               <EmptyMedia variant="icon"><InboxIcon /></EmptyMedia>
-              <EmptyTitle>{t('Nothing here')}</EmptyTitle>
-              <EmptyDescription>{t('No requests match. New work shows up as soon as an agent writes it.')}</EmptyDescription>
+              <EmptyTitle>{t("Nothing here")}</EmptyTitle>
+              <EmptyDescription>{t("No requests match. New work shows up as soon as an agent writes it.")}</EmptyDescription>
             </EmptyHeader>
           </Empty>
         </Req>
@@ -605,7 +608,7 @@ export function MyWork({ focusAreaId, onOpen, onOpenFocus, onOpenRules }: { focu
         </div>
       )}
       {unlinkedWorkCount > 0 && (
-        <p className="text-xs text-muted-foreground">{t(unlinkedWorkCount === 1 ? "{count} work record isn't linked to a request yet." : "{count} work records aren't linked to a request yet.", { count: unlinkedWorkCount })}</p>
+        <p className="text-xs text-muted-foreground">{interpolate(t(unlinkedWorkCount === 1 ? "{count} work record isn't linked to a request yet." : "{count} work records aren't linked to a request yet."), { count: unlinkedWorkCount })}</p>
       )}
 
       {/* The recap and the build story are written by request-progress; with no story, both are hidden. */}

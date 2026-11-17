@@ -4,12 +4,12 @@
 // suggestion (and the only way to undo a merge), keep / done / dismiss for a decided area, the old name or goal.
 import { useState } from 'react'
 import { CheckIcon } from 'lucide-react'
+import { interpolate, useI18n } from '@/lib/i18n'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { t } from '@/i18n'
 import { Req } from '@/spec/req'
 import { type FocusArea, type FocusChange } from '@/data'
 import { useStore, useWorkModel } from '@/store'
@@ -35,6 +35,7 @@ export function useFocusChanges() {
 
 /** The last change, where it was saved, and Undo; or why a change was not saved. */
 export function FocusChangeBar({ changes }: { changes: FocusChanges }) {
+  const { t } = useI18n()
   const { sourceKind } = useWorkModel()
   const { last, error, saving, undoLast } = changes
   return (
@@ -63,6 +64,7 @@ export type AreaEdit = { kind: 'rename' | 'edit-goal' | 'merge'; area: FocusArea
 export function AreaEditDialog({ edit, changes, onClose, onSaved, ownUndo }: {
   edit: AreaEdit | null; changes: FocusChanges; onClose: () => void; onSaved?: (change: FocusChange) => void; ownUndo?: (change: FocusChange) => boolean
 }) {
+  const { t } = useI18n()
   const { focusAreas } = useWorkModel()
   const [text, setText] = useState('')
   const [into, setInto] = useState('')
@@ -78,7 +80,9 @@ export function AreaEditDialog({ edit, changes, onClose, onSaved, ownUndo }: {
   const change: FocusChange = edit.kind === 'merge' ? { action: 'merge', focusAreaId: edit.area.id, intoFocusAreaId: into }
     : edit.kind === 'rename' ? { action: 'rename', focusAreaId: edit.area.id, name: text } : { action: 'edit-goal', focusAreaId: edit.area.id, goal: text }
   const submit = async () => { if (await changes.apply(change, { record: !ownUndo?.(change) })) { onSaved?.(change); onClose() } }
-  const title = t(edit.kind === 'rename' ? 'Rename “{name}”' : edit.kind === 'edit-goal' ? 'Goal for “{name}”' : 'Merge “{name}” into…', { name: edit.area.name })
+  const title = edit.kind === 'rename' ? interpolate(t('Rename “{name}”'), { name: edit.area.name })
+    : edit.kind === 'edit-goal' ? interpolate(t('Goal for “{name}”'), { name: edit.area.name })
+    : interpolate(t('Merge “{name}” into…'), { name: edit.area.name })
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose() }}>
       <DialogContent>
@@ -87,7 +91,7 @@ export function AreaEditDialog({ edit, changes, onClose, onSaved, ownUndo }: {
           <DialogDescription>
             {edit.kind === 'rename' ? t('A short name you would ask for things inside of. It can’t reuse a page name.')
               : edit.kind === 'edit-goal' ? t('One sentence saying what this area is for.')
-                : t('Its requests and asks show under the area you choose. Undo right after brings “{name}” back as it was.', { name: edit.area.name })}
+                : interpolate(t('Its requests and asks show under the area you choose. Undo right after brings “{name}” back as it was.'), { name: edit.area.name })}
           </DialogDescription>
         </DialogHeader>
         {edit.kind === 'merge' ? (
@@ -100,15 +104,15 @@ export function AreaEditDialog({ edit, changes, onClose, onSaved, ownUndo }: {
           </div>
         ) : (
           <div className="space-y-2">
-            <Label htmlFor="area-text">{t(edit.kind === 'rename' ? 'Name' : 'Goal')}</Label>
+            <Label htmlFor="area-text">{edit.kind === 'rename' ? t('Name') : t('Goal')}</Label>
             <Input id="area-text" value={text} maxLength={edit.kind === 'rename' ? MAX_AREA_NAME_CHARS : MAX_AREA_GOAL_CHARS} onChange={(event) => setText(event.target.value)} className="h-11 sm:h-9" />
-            {navWord && <p className="text-xs text-attention-foreground">{t('“{name}” reuses the page name “{word}”. Pick a name that means only this area.', { name: text.trim(), word: navWord })}</p>}
+            {navWord && <p className="text-xs text-attention-foreground">{interpolate(t('“{text}” reuses the page name “{navWord}”. Pick a name that means only this area.'), { text: text.trim(), navWord })}</p>}
           </div>
         )}
         {changes.error && <p role="alert" className="text-xs text-destructive">{changes.error}</p>}
         <DialogFooter>
           <Button variant="ghost" className="h-11 sm:h-9" onClick={onClose}>{t('Cancel')}</Button>
-          <Button className="h-11 sm:h-9" disabled={changes.saving || (edit.kind === 'merge' ? !into : !text.trim() || !!navWord)} onClick={submit}>{t(changes.saving ? 'Saving…' : 'Save')}</Button>
+          <Button className="h-11 sm:h-9" disabled={changes.saving || (edit.kind === 'merge' ? !into : !text.trim() || !!navWord)} onClick={submit}>{changes.saving ? t('Saving…') : t('Save')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
