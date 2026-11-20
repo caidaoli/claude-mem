@@ -26,6 +26,7 @@
  */
 
 import { SettingsDefaultsManager, type SettingsDefaults } from '../../shared/SettingsDefaultsManager.js';
+import { SELECTABLE_PROVIDERS, type SelectableProvider } from '../../ui/provider-options.js';
 import { readFileSync } from 'fs';
 import { parseJsonWithBom } from '../../shared/atomic-json.js';
 import { settingsTarget } from '../../shared/settings-document.js';
@@ -42,6 +43,8 @@ import { isGeminiAvailable, isGeminiSelected } from './GeminiProvider.js';
 import { isOpenRouterAvailable, isOpenRouterSelected, resolveOpenRouterConfig } from './OpenRouterProvider.js';
 import { isCustomAvailable, isCustomSelected } from './CustomAgent.js';
 import { isOpenAICompatAvailable, isOpenAICompatSelected } from './OpenAICompatProvider.js';
+import { hasCodexChatGptLogin } from './CodexAppServerClient.js';
+import { CODEX_CLI_SETUP_RECHECK_COOLDOWN_MS, getDependencyStatus, isDependencyStatusInCooldown } from '../../shared/dependency-health.js';
 import { isCodexSelected } from './CodexProvider.js';
 import { isClassified, type ClassifiedProviderError } from './provider-errors.js';
 import { canClaudeServeAsFallback, claudeQuotaStandIn } from '../../shared/claude-fallback-readiness.js';
@@ -67,7 +70,7 @@ import {
  * openrouter. `custom` is the fork's CustomAgent (Gemini/OpenAI/Codex
  * protocols against a user endpoint).
  */
-export type SelectableProvider = 'claude' | 'gemini' | 'openrouter' | 'codex' | 'openai-compatible' | 'custom';
+export type { SelectableProvider } from '../../ui/provider-options.js';
 
 /** Retry a fallen-back gateway occasionally so a later subscription recovers. */
 export const CMEM_FALLBACK_RETRY_MS = 15 * 60_000;
@@ -112,11 +115,7 @@ export interface ProviderSelection {
 }
 
 /** What CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER may name. */
-export const QUOTA_FALLBACK_PROVIDERS = ['claude', 'gemini', 'openrouter', 'openai-compatible', 'custom'] as const;
-export type QuotaFallbackProvider = typeof QUOTA_FALLBACK_PROVIDERS[number];
-
-/** The CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER value that turns the fallback off. */
-export const QUOTA_FALLBACK_OFF = 'off';
+export type QuotaFallbackProvider = SelectableProvider;
 
 /**
  * The configured fallback, or null when it is turned off ('off') or the value
@@ -128,7 +127,7 @@ export function readQuotaFallbackProvider(): QuotaFallbackProvider | null {
   const settings = SettingsDefaultsManager.loadFromFile(paths.settings());
   const raw = String(settings.CLAUDE_MEM_QUOTA_FALLBACK_PROVIDER ?? '').trim();
   if (raw === '') return 'claude';
-  return (QUOTA_FALLBACK_PROVIDERS as readonly string[]).includes(raw) ? raw as QuotaFallbackProvider : null;
+  return (SELECTABLE_PROVIDERS as readonly string[]).includes(raw) ? raw as QuotaFallbackProvider : null;
 }
 
 /**
@@ -158,6 +157,11 @@ function gatewayFallbackState(): 'not-refusing' | 'refusing' | 'probe' {
 function isFallbackAvailable(provider: QuotaFallbackProvider): boolean {
   switch (provider) {
     case 'custom': return isCustomAvailable();
+    case 'codex': {
+      const setup = getDependencyStatus('codex_cli');
+      return (!setup || !isDependencyStatusInCooldown(setup, CODEX_CLI_SETUP_RECHECK_COOLDOWN_MS))
+        && hasCodexChatGptLogin();
+    }
     case 'gemini': return isGeminiAvailable();
     case 'openai-compatible': return isOpenAICompatAvailable();
     case 'claude': return canClaudeServeAsFallback();
@@ -399,7 +403,7 @@ function quotaProviderDisplayName(provider: string, settings: SettingsDefaults, 
     case 'claude': return auth === 'api-key' ? 'your Anthropic API key' : 'your Claude plan';
     case 'openrouter': return isCmemGatewayUrl(resolveOpenRouterConfig().apiUrl) ? 'cmem.ai' : 'OpenRouter';
     case 'gemini': return 'Gemini';
-    case 'codex': return 'Codex';
+    case 'codex': return 'Codex (your ChatGPT subscription)';
     case 'custom': return 'your Custom endpoint';
     case 'openai-compatible': {
       const preset = resolveOpenAICompatPreset(settings.CLAUDE_MEM_OPENAI_COMPAT_PRESET);

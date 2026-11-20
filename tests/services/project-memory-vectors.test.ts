@@ -30,7 +30,7 @@ const fakeManager = {
     if (tool === 'chroma_list_collections') {
       if (listResponse !== undefined) return listResponse;
       const names = [...corpus.keys()].slice(args.offset, args.offset + args.limit);
-      return names.length ? names : ['__NO_COLLECTIONS_FOUND__'];
+      return names;
     }
     const documents = corpus.get(args.collection_name)!;
     if (tool === 'chroma_get_documents') {
@@ -294,15 +294,15 @@ describe('Chroma collection list MCP decoding', () => {
       .toEqual(['cm__claude-mem', 'cm__legacy']);
   });
 
-  it('reads the FastMCP empty marker', async () => {
-    expect(await decode([{ type: 'text', text: '__NO_COLLECTIONS_FOUND__' }])).toEqual(['__NO_COLLECTIONS_FOUND__']);
+  it('reads the FastMCP empty marker as no collections', async () => {
+    expect(await decode([{ type: 'text', text: '__NO_COLLECTIONS_FOUND__' }])).toEqual([]);
   });
 
   it('also decodes a single JSON-encoded collection array', async () => {
     expect(await decode([{ type: 'text', text: '["cm__claude-mem","cm__legacy"]' }])).toEqual(['cm__claude-mem', 'cm__legacy']);
   });
 
-  it('rejects mixed non-text content', async () => {
-    await expect(decode([{ type: 'text', text: 'cm__claude-mem' }, { type: 'resource', resource: {} }])).rejects.toThrow('invalid collection list');
+  it('returns no collection list for mixed non-text content', async () => {
+    expect(await decode([{ type: 'text', text: 'cm__claude-mem' }, { type: 'resource', resource: {} }])).toBeNull();
   });
 });

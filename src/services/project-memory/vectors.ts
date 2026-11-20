@@ -5,7 +5,6 @@ import { paths } from '../../shared/paths.js';
 import { ChromaMcpManager } from '../sync/ChromaMcpManager.js';
 
 const PAGE_SIZE = 100;
-const NO_COLLECTIONS = '__NO_COLLECTIONS_FOUND__';
 const fold = (project: string): string => project.replace(/[A-Z]/g, char => char.toLowerCase());
 
 export interface VectorPurgeOptions {
@@ -46,13 +45,8 @@ async function listCollections(manager: ChromaMcpManager): Promise<string[]> {
   for (let offset = 0; ; offset += PAGE_SIZE) {
     const response = await manager.callTool('chroma_list_collections', { limit: PAGE_SIZE, offset });
     if (!Array.isArray(response) || response.length > PAGE_SIZE
-      || response.some(name => typeof name !== 'string'
-        || (name !== NO_COLLECTIONS && !/^[a-zA-Z0-9][a-zA-Z0-9._-]*[a-zA-Z0-9]$/.test(name)))) {
+      || response.some(name => typeof name !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*[a-zA-Z0-9]$/.test(name))) {
       throw new Error('Invalid Chroma collection list response');
-    }
-    if (response.includes(NO_COLLECTIONS)) {
-      if (response.length !== 1) throw new Error('Invalid Chroma empty collection marker');
-      break;
     }
     for (const name of response as string[]) {
       if (collections.has(name)) throw new Error(`Chroma collection pagination repeated ${name}`);
