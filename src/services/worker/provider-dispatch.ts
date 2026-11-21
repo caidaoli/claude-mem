@@ -436,7 +436,7 @@ const quotaNoticeResolution: QuotaFallbackResolver = (held, nowMs, activeHolds) 
   if (primaries.size > 1) return quotaServingProvider(held, nowMs);
   const settings = SettingsDefaultsManager.loadFromFile(paths.settings());
   const selected = settings.CLAUDE_MEM_PROVIDER;
-  const main = (['claude', 'gemini', 'openrouter', 'codex', 'openai-compatible', 'custom'] as string[]).includes(selected)
+  const main = (SELECTABLE_PROVIDERS as readonly string[]).includes(selected)
     ? selected : 'claude';
   const backup = readQuotaFallbackProvider();
   // Where main's runs actually go: Claude while cmem.ai's trial-expiry
