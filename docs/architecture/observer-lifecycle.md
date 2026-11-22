@@ -15,10 +15,11 @@ capture skips that event. If quota or credentials stop the observer, pending
 inputs are discarded. Later activity can start fresh work through the existing
 provider gates. Timer-driven and operator paths cannot revive discarded work.
 
-The RAM buffer holds at most 128 messages per session and 1,024 per worker.
-Unsent inputs expire after five minutes. An in-flight paid request may finish;
-the expiry does not abort it. Releasing a failed claim does not reset its age.
-Source timestamps stay separate from time spent in the buffer.
+The worker skips events with a capture timestamp at least five minutes old
+before admission. The RAM buffer holds at most 512 messages per session and
+4,096 per worker. Unsent inputs expire 30 minutes after entering the buffer.
+In-flight paid requests may finish. Releasing a failed claim preserves its
+original buffer age.
 
 The common hook handoff sends observations, file edits, and summaries directly
 to the existing worker endpoints, with a transport deadline
@@ -85,6 +86,7 @@ no prior age/count cap, quota preservation, and a periodic cooldown sweep.
 
 Exercise a quota failure across many sessions, advance beyond cooldown/reset,
 and assert zero old provider calls. Verify fresh capture still starts. Verify
-bounded buffer capacity and age, in-flight completion, quota/auth admission,
-lost handoff, remote receipt redelivery, and restart with legacy spool files.
+buffer capacity, capture and buffer age, in-flight completion, quota/auth
+admission, lost handoff, remote receipt redelivery, and restart with legacy
+spool files.
 Preserve privacy gates and the latency limit on the hook path.

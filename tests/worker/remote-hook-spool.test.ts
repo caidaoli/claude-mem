@@ -9,7 +9,6 @@ import { SessionStore } from '../../src/services/sqlite/SessionStore.js';
 import { HookSpoolRoutes } from '../../src/services/worker/http/routes/HookSpoolRoutes.js';
 import { createMiddleware } from '../../src/services/worker/http/middleware.js';
 import { setIngestContext, requireIngestContext } from '../../src/services/worker/http/shared.js';
-import { LIVE_OBSERVER_MAX_AGE_MS } from '../../src/shared/observer-work-policy.js';
 import { hookSpoolConsumedMarkers } from '../../src/services/worker/hook-spool-drain.js';
 import { DELIVERABLE_ERRORS_PER_EVENT, HookSpool, HOOK_SPOOL_RETRY_WINDOW_MS, remoteHookSpoolReceipt, remoteHookSpoolReceivedKey, type HookSpoolEntry } from '../../src/shared/hook-spool.js';
 import { remoteSpoolEnvelopeSchema, usesRemoteHookSpool, remoteHookSpoolToken } from '../../src/shared/hook-spool-remote.js';
@@ -86,8 +85,8 @@ describe('remote hook spool receipts', () => {
     expect(drains).toBe(0);
   });
 
-  it('acknowledges a stale legacy sender without starting inference or storing a payload', async () => {
-    expect((await send({ ...entry, enqueuedAtEpochMs: Date.now() - LIVE_OBSERVER_MAX_AGE_MS })).status).toBe(202);
+  it('acknowledges a five-minute-old event without starting inference or storing a payload', async () => {
+    expect((await send({ ...entry, enqueuedAtEpochMs: Date.now() - 5 * 60_000 })).status).toBe(202);
     expect(queueObservation).not.toHaveBeenCalled();
     expect(startGenerator).not.toHaveBeenCalled();
     expect(await spool.entries()).toEqual([]);

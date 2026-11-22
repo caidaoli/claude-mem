@@ -5,7 +5,7 @@ import { classifyOpenAICompatError } from '../../src/services/worker/OpenAICompa
 import { OpenAICompatibleProvider, type ProviderQueryResult } from '../../src/services/worker/OpenAICompatibleProvider.js';
 import { ModeManager } from '../../src/services/domain/ModeManager.js';
 import { SettingsDefaultsManager } from '../../src/shared/SettingsDefaultsManager.js';
-import { LIVE_OBSERVER_MAX_AGE_MS } from '../../src/shared/observer-work-policy.js';
+import { LIVE_OBSERVER_BUFFER_MAX_AGE_MS } from '../../src/shared/observer-work-policy.js';
 import { SessionManager, type TransportResumeClock } from '../../src/services/worker/SessionManager.js';
 import { computeBackoffMs, MAX_RETRY_AFTER_MS, withRetry } from '../../src/services/worker/retry.js';
 import {
@@ -304,7 +304,7 @@ describe('PaidSendBudget: one allowance per claimed batch, shared by withRetry a
     const now = Date.now();
     const clock = spyOn(Date, 'now').mockReturnValue(now);
     const { sessionManager, session, sessionDbId } = makeSessionManager();
-    clock.mockReturnValue(now + LIVE_OBSERVER_MAX_AGE_MS - 60_000);
+    clock.mockReturnValue(now + LIVE_OBSERVER_BUFFER_MAX_AGE_MS - 60_000);
     const survivingId = sessionManager.getMessageBuffer().enqueue(sessionDbId, {
       type: 'observation', tool_name: 'Read', tool_input: '{}', tool_response: 'newer content', prompt_number: 1,
     });
@@ -314,7 +314,7 @@ describe('PaidSendBudget: one allowance per claimed batch, shared by withRetry a
     await provider().runQuery(paidSendBudgetForClaimedBatch(session)).catch(() => undefined);
     sessionManager.scheduleTransportResume(sessionDbId);
 
-    clock.mockReturnValue(now + LIVE_OBSERVER_MAX_AGE_MS + 1);
+    clock.mockReturnValue(now + LIVE_OBSERVER_BUFFER_MAX_AGE_MS + 1);
     await sessionManager.resetProcessingToPending(sessionDbId);
     expect(sessionManager.claimNextObservation(sessionDbId, () => true)?._persistentId).toBe(survivingId);
     const resumedBudget = paidSendBudgetForClaimedBatch(session)!;
