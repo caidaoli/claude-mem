@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { createRequire } from 'module';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -17,6 +17,15 @@ type SpawnCall = {
 function makePluginRoot(): string {
   const root = mkdtempSync(join(tmpdir(), 'claude-mem-codex-plugin-'));
   mkdirSync(join(root, '.agents', 'plugins'), { recursive: true });
+  mkdirSync(join(root, 'plugin', 'hooks'), { recursive: true });
+  writeFileSync(
+    join(root, 'plugin', 'hooks', 'codex-hooks.json'),
+    JSON.stringify({
+      hooks: {
+        SessionStart: [{ hooks: [{ type: 'command', command: 'worker-service.cjs hook codex session-start', timeout: 60 }] }],
+      },
+    })
+  );
   writeFileSync(
     join(root, 'package.json'),
     JSON.stringify({ name: 'claude-mem' }, null, 2)
@@ -74,6 +83,7 @@ describe('sync-codex-plugin', () => {
       rootDir: root,
       homeDir: mkdtempSync(join(tmpdir(), 'claude-mem-codex-home-')),
       env: {},
+      launcherPath: '/bin/claude-mem',
       spawnSync,
       log: () => {},
       stdout: { write: (chunk: string) => stdout.push(chunk) },
@@ -121,6 +131,7 @@ describe('sync-codex-plugin', () => {
       rootDir: root,
       homeDir: mkdtempSync(join(tmpdir(), 'claude-mem-codex-home-')),
       env: {},
+      launcherPath: '/bin/claude-mem',
       spawnSync,
       log: () => {},
       stdout: { write: () => {} },
@@ -153,6 +164,7 @@ describe('sync-codex-plugin', () => {
       rootDir: root,
       homeDir: mkdtempSync(join(tmpdir(), 'claude-mem-codex-home-')),
       env: {},
+      launcherPath: '/bin/claude-mem',
       spawnSync,
       log: () => {},
       stdout: { write: () => {} },
@@ -180,6 +192,7 @@ describe('sync-codex-plugin', () => {
       rootDir: root,
       homeDir,
       env: {},
+      launcherPath: '/bin/claude-mem',
       spawnSync,
       log: () => {},
       stdout: { write: () => {} },
@@ -187,5 +200,11 @@ describe('sync-codex-plugin', () => {
     });
 
     expect(installs).toEqual([join(homeDir, '.codex'), join(homeDir, '.codex-cli')]);
+    for (const home of ['.codex', '.codex-cli']) {
+      const hooks = JSON.parse(readFileSync(join(homeDir, home, 'hooks.json'), 'utf-8'));
+      expect(hooks.hooks.SessionStart).toEqual([
+        { hooks: [{ type: 'command', command: "'/bin/claude-mem' hook codex session-start", timeout: 60 }] },
+      ]);
+    }
   });
 });

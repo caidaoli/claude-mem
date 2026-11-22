@@ -145,6 +145,14 @@ git show "${PRE_MERGE_HEAD}:src/services/worker/CustomAgent.ts"
 
 只恢复确认丢失的行为，不机械覆盖整个文件。
 
+Codex 同步必须保留用户级 hooks 注册。上游 v15.18.3（#6058）起插件清单指向空 hooks 文件，hooks 只写在 `$CODEX_HOME/hooks.json`，原先只有 `npx claude-mem install` 会写；Fork 用 `build-and-sync`，若 `scripts/sync-codex-plugin.cjs` 丢了 `registerCodexHooks`，或 `package.json` 的 `sync-codex-plugin` 改回 `node`（脚本要 require TS 源码），Codex 会完全不触发 claude-mem 且不报错：
+
+```bash
+set -euo pipefail
+grep -q 'registerCodexUserHooks' scripts/sync-codex-plugin.cjs
+jq -e '.scripts["sync-codex-plugin"] | startswith("bun ")' package.json
+```
+
 ## 4. 验证并暂存
 
 先构建并暂存 `plugin/`，再跑测试。`committed-plugin-bundles` 会按索引里的路径检查 bundle，而 work-view 每次构建都会换哈希文件名；旧路径如果还留在索引里，这个测试会成片失败：

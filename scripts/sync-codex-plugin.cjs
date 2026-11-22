@@ -148,6 +148,20 @@ function tryInstallCodexPlugin(selector, deps) {
   return { ok: true };
 }
 
+// Since upstream #6058 the plugin bundles no Codex hooks: they live in the
+// home's own hooks.json, which only `npx claude-mem install` used to write.
+function registerCodexHooks(root, deps) {
+  const { registerCodexUserHooks } = require('../src/services/integrations/codex-user-hooks.ts');
+  const result = registerCodexUserHooks({
+    codexHome: deps.env.CODEX_HOME,
+    hookDefinitionsPath: path.join(root, 'plugin', 'hooks', 'codex-hooks.json'),
+    launcherPath: deps.launcherPath,
+  });
+  if (result.changed) {
+    deps.log(`Registered claude-mem hooks in ${result.hooksPath}; approve them in Codex (/hooks) before they run.`);
+  }
+}
+
 function syncCodexHome(root, selectors, deps) {
   deps.log(`Codex home: ${deps.env.CODEX_HOME}`);
   ensureCodexMarketplace(root, selectors[0].marketplaceName, deps);
@@ -155,10 +169,18 @@ function syncCodexHome(root, selectors, deps) {
   const failures = [];
   for (const candidate of selectors) {
     const result = tryInstallCodexPlugin(candidate.selector, deps);
-    if (result.ok) return null;
+    if (result.ok) {
+      registerCodexHooks(root, deps);
+      return null;
+    }
     failures.push(result.message);
   }
   return failures.join('; ');
+}
+
+function defaultLauncherPath() {
+  const { currentLauncherHostEnvironment, resolveLauncherBinaryPath } = require('../src/launcher/install-launcher.ts');
+  return resolveLauncherBinaryPath(currentLauncherHostEnvironment());
 }
 
 function syncCodexPlugin(options = {}) {
@@ -167,6 +189,7 @@ function syncCodexPlugin(options = {}) {
     log: options.log || console.log,
     stdout: options.stdout || process.stdout,
     stderr: options.stderr || process.stderr,
+    launcherPath: options.launcherPath || defaultLauncherPath(),
   };
   // Codex re-copies ./plugin from the registered source whenever its version
   // changes, so never register the working tree: a mid-merge checkout would
