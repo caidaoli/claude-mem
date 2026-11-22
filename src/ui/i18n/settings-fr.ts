@@ -169,6 +169,7 @@ export const settingsFr: Record<string, string> = {
   'Opper (opper.ai)': 'Opper (opper.ai)',
   'Atlas Cloud (atlascloud.ai)': 'Atlas Cloud (atlascloud.ai)',
   'Runcrate (runcrate.ai)': 'Runcrate (runcrate.ai)',
+  'AIGROW (aigrow.gg)': 'AIGROW (aigrow.gg)',
   'DeepSeek': 'DeepSeek',
   'OpenCode Go (opencode.ai)': 'OpenCode Go (opencode.ai)',
   'OpenCode Zen (opencode.ai)': 'OpenCode Zen (opencode.ai)',
