@@ -222,5 +222,69 @@ describe('DataRoutes tool_uses (progressive disclosure layer 4)', () => {
         toolName: ['Read', 'Edit'],
       }));
     });
+
+    it('passes epoch-ms date bounds through to the store', () => {
+      const { req, res } = createMockReqRes(undefined, { dateStart: '1757203200000', dateEnd: '1757289600000' });
+      handler(req as Request, res as Response);
+
+      expect(mockQueryToolUses).toHaveBeenCalledWith(expect.objectContaining({
+        dateStart: 1757203200000,
+        dateEnd: 1757289600000,
+      }));
+    });
+
+    it.each([
+      ['0', 0],
+      ['-1', -1],
+      ['1e3', 1000],
+      ['1757289600000.0', 1757289600000],
+    ])('keeps %s as epoch milliseconds', (dateBound, epochMs) => {
+      const { req, res } = createMockReqRes(undefined, { dateStart: dateBound, dateEnd: dateBound });
+      handler(req as Request, res as Response);
+
+      expect(mockQueryToolUses).toHaveBeenCalledWith(expect.objectContaining({
+        dateStart: epochMs,
+        dateEnd: epochMs,
+      }));
+    });
+
+    it('includes the entire day for date-only bounds', () => {
+      const { req, res } = createMockReqRes(undefined, { dateStart: '2025-09-07', dateEnd: '2025-09-07' });
+      handler(req as Request, res as Response);
+
+      expect(mockQueryToolUses).toHaveBeenCalledWith(expect.objectContaining({
+        dateStart: Date.UTC(2025, 8, 7),
+        dateEnd: Date.UTC(2025, 8, 8) - 1,
+      }));
+    });
+
+    it('rejects a repeated date bound instead of dropping it', () => {
+      const { req, res, statusSpy, jsonSpy } = createMockReqRes(undefined, { dateStart: ['1757203200000', 'last-week'] });
+      handler(req as Request, res as Response);
+
+      expect(statusSpy).toHaveBeenCalledWith(400);
+      expect((jsonSpy.mock.calls[0] as any[])[0].code).toBe('INVALID_DATE');
+      expect(mockQueryToolUses).not.toHaveBeenCalled();
+    });
+
+    it('rejects epoch milliseconds outside the supported date range', () => {
+      const { req, res, statusSpy, jsonSpy } = createMockReqRes(undefined, { dateStart: '8640000000000001' });
+      handler(req as Request, res as Response);
+
+      expect(statusSpy).toHaveBeenCalledWith(400);
+      expect((jsonSpy.mock.calls[0] as any[])[0].code).toBe('INVALID_DATE');
+      expect(mockQueryToolUses).not.toHaveBeenCalled();
+    });
+
+    for (const bound of ['dateStart', 'dateEnd']) {
+      it(`rejects a ${bound} that is not a date instead of listing every row`, () => {
+        const { req, res, statusSpy, jsonSpy } = createMockReqRes(undefined, { [bound]: 'last-week' });
+        handler(req as Request, res as Response);
+
+        expect(statusSpy).toHaveBeenCalledWith(400);
+        expect((jsonSpy.mock.calls[0] as any[])[0].code).toBe('INVALID_DATE');
+        expect(mockQueryToolUses).not.toHaveBeenCalled();
+      });
+    }
   });
 });

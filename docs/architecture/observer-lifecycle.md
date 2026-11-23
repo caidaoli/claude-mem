@@ -19,7 +19,8 @@ The worker skips events with a capture timestamp at least five minutes old
 before admission. The RAM buffer holds at most 512 messages per session and
 4,096 per worker. Unsent inputs expire 30 minutes after entering the buffer.
 In-flight paid requests may finish. Releasing a failed claim preserves its
-original buffer age.
+original buffer age. The worker reports the number of inputs removed by buffer
+expiry over its lifetime as `expiredObserverInputs` in its processing status.
 
 The common hook handoff sends observations, file edits, and summaries directly
 to the existing worker endpoints, with a transport deadline

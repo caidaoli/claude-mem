@@ -1,4 +1,5 @@
 import { afterEach, describe, test, expect, jest } from 'bun:test';
+import { LIVE_OBSERVER_BUFFER_MAX_AGE_MS } from '../../../src/shared/observer-work-policy.js';
 import { SessionMessageBuffer } from '../../../src/services/worker/SessionMessageBuffer.js';
 import type { PendingMessage, PendingMessageWithId } from '../../../src/services/worker-types.js';
 
@@ -22,7 +23,10 @@ async function drainAll(buffer: SessionMessageBuffer, sessionDbId: number): Prom
 }
 
 describe('SessionMessageBuffer (in-RAM observation buffer)', () => {
-  afterEach(() => jest.useRealTimers());
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
 
   test('enqueue assigns increasing ids and reports depth', () => {
     const buffer = new SessionMessageBuffer();
@@ -225,5 +229,40 @@ describe('SessionMessageBuffer (in-RAM observation buffer)', () => {
       { message_type: 'observation', tool_name: 'Read' },
       { message_type: 'summarize', tool_name: null },
     ]);
+  });
+
+  describe('expiry', () => {
+    const START_MS = 1_700_000_000_000;
+    // A fixed clock: bufferedAt and the cutoff both read Date.now(), so a spy
+    // advances the buffer's own notion of age without real waiting.
+    const startClock = () => jest.spyOn(Date, 'now').mockReturnValue(START_MS);
+
+    test('expires an unclaimed input only after the default TTL and counts it', () => {
+      const now = startClock();
+      const buffer = new SessionMessageBuffer();
+      buffer.enqueue(1, obs('Read', 'a'));
+
+      now.mockReturnValue(START_MS + LIVE_OBSERVER_BUFFER_MAX_AGE_MS - 1);
+      buffer.enqueue(1, obs('Write', 'b'));
+      expect(buffer.getPendingCount(1)).toBe(2);
+      expect(buffer.getExpiredInputCount()).toBe(0);
+
+      now.mockReturnValue(START_MS + LIVE_OBSERVER_BUFFER_MAX_AGE_MS);
+      buffer.enqueue(1, obs('Edit', 'c'));
+      expect(buffer.getPendingCount(1)).toBe(2);
+      expect(buffer.getExpiredInputCount()).toBe(1);
+    });
+
+    test('never expires claimed work: an in-flight paid request may finish', () => {
+      const now = startClock();
+      const buffer = new SessionMessageBuffer();
+      buffer.enqueue(1, obs('Read', 'a'));
+      expect(buffer.claimNextMatching(1, () => true)?.tool_name).toBe('Read');
+
+      now.mockReturnValue(START_MS + LIVE_OBSERVER_BUFFER_MAX_AGE_MS + 1);
+      buffer.enqueue(1, obs('Write', 'b'));
+      expect(buffer.getPendingCount(1)).toBe(2);
+      expect(buffer.getExpiredInputCount()).toBe(0);
+    });
   });
 });
