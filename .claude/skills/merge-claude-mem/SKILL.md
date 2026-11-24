@@ -201,21 +201,23 @@ bun test tests/worker/custom-agent-*.test.ts \
   tests/sdk/parser.test.ts tests/sdk/prompts.test.ts
 ```
 
-全量测试有既有失败，所以不看 `npm test` 的退出码，而是看日志。这一块要跑六七分钟，放到后台执行：
+全量测试有既有失败，所以不看 `npm test` 的退出码，而是看日志。用并行模式跑，约一分钟，前台执行即可（超时给到 10 分钟）：
 
 ```bash
 set -euo pipefail
 STATE_DIR=$(git rev-parse --git-path merge-claude-mem)
 LOG="$STATE_DIR/npm-test.log"
-npm test >"$LOG" 2>&1 || printf 'npm test exit=%s\n' "$?"
+npm test -- --parallel=12 >"$LOG" 2>&1 || printf 'npm test exit=%s\n' "$?"
 
 # 每批的文件数加起来要等于计划的文件数，汇总的失败数要等于 (fail) 行数，且没有测试之外的 error。
+# 只统计带 PARALLEL 标题的批次：有些测试会自己起嵌套的 bun test，它们的 Ran 汇总不算数。
 awk '
   /^\[test-lanes\] fast: [0-9]+ files in / { expected = $3 }
+  /^bun test v/ && !/PARALLEL/ { nested = 1 }
   /^ *[0-9]+ fail$/ { fail = $1 }
   /^ *[0-9]+ errors?$/ { error = $1 }
-  /^Ran [0-9]+ tests across [0-9]+ files\./ { ran += $5; failed += fail; errors += error }
-  /^Ran / { fail = 0; error = 0 }
+  /^Ran [0-9]+ tests across [0-9]+ files\./ && !nested { ran += $5; failed += fail; errors += error }
+  /^Ran / { fail = 0; error = 0; nested = 0 }
   /^\(fail\) / { listed++ }
   END {
     printf "files expected=%d ran=%d failed=%d listed=%d errors=%d\n",
