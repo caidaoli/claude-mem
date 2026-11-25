@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import { useI18n, interpolate } from '../i18n';
 import { Header } from './components/Header';
+import { TimelineGift, useTimelineGiftDismissal } from './components/TimelineGift';
 import { Feed, type FeedEmptyHint } from './components/Feed';
 import { CategoryFilter } from './components/CategoryFilter';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -78,6 +79,8 @@ export function App() {
   const loadMoreErrorRef = useRef<string | null>(null);
   const [timelineKinds, setTimelineKinds] = useState<Set<Category>>(() => new Set());
   const [timelineQuery, setTimelineQuery] = useState('');
+  const timelineSearchRef = useRef<HTMLInputElement>(null);
+  const timelineGift = useTimelineGiftDismissal();
   const [showLatestRefresh, setShowLatestRefresh] = useState(false);
   const [feedRefreshNotice, setFeedRefreshNotice] = useState<string | null>(null);
   const handledDeletionsRef = useRef(new Set<string>());
@@ -309,6 +312,11 @@ export function App() {
 
   const timelineCounts = useMemo(() => countByCategory(feedItems), [feedItems]);
   const timelineFiltered = timelineKinds.size > 0 || timelineQuery.trim() !== '';
+  const plan = settings.CLAUDE_MEM_PRO_PLAN?.trim() || 'none';
+  const showTimelineGift = route.view === 'timeline' && !currentFilter && !timelineFiltered
+    && !timelineGift.dismissed && settingsLoaded && plan === 'none'
+    && !settings.CLAUDE_MEM_TEAMBRAIN_URL?.trim() && !settings.CLAUDE_MEM_CLOUD_SYNC_HUB_URL?.trim()
+    && syncStatus.state === 'unconfigured';
   // The kinds and the search. The feed applies them after folding prompt repeats over the whole timeline (G2), so
   // "<n> times in a row" stays true under a search; the counts below are the memories that match.
   const timelineMatches = useMemo(() => timelineFiltered
@@ -563,6 +571,7 @@ export function App() {
         <div className="timeline-search">
           <SearchIcon size={16} />
           <input
+            ref={timelineSearchRef}
             type="search"
             value={timelineQuery}
             onChange={event => setTimelineQuery(event.target.value)}
@@ -578,6 +587,10 @@ export function App() {
           </p>
         )}
       </div>
+      {showTimelineGift && <TimelineGift onDismiss={() => {
+        timelineGift.dismiss();
+        timelineSearchRef.current?.focus({ preventScroll: true });
+      }} />}
     </>
   );
   const timelineEmptyHint: FeedEmptyHint | undefined = timelineFiltered
@@ -663,6 +676,7 @@ export function App() {
           setStoredWelcomeDismissed(false);
           setWelcomeDismissed(false);
         }}
+        showProTrialLink={route.view !== 'timeline'}
         showTeamBrainLink={settingsLoaded && !settings.CLAUDE_MEM_TEAMBRAIN_URL?.trim()}
         onOpenLogs={() => setLogsModalOpen(true)}
       />
